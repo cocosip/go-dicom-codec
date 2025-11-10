@@ -7,6 +7,8 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
+var _ codec.Codec = (*ExtendedCodec)(nil)
+
 // ExtendedCodec implements the external codec.Codec interface for JPEG Extended
 type ExtendedCodec struct {
 	quality  int
@@ -134,4 +136,8 @@ func RegisterExtendedCodec(bitDepth int, quality int) {
 	c := NewExtendedCodec(bitDepth, quality)
 	registry := codec.GetGlobalRegistry()
 	registry.RegisterCodec(transfer.JPEGExtended12Bit, c)
+}
+
+func init() {
+	RegisterExtendedCodec(12, 85)
 }

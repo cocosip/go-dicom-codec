@@ -245,21 +245,26 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			// Get neighbors
 			a, b, c, d := dec.getNeighbors(pixels, x, y, comp)
 
-			// Quantize neighbors
+			// Compute context on ORIGINAL values (before quantization)
+			// This ensures thresholds work correctly
+			q1, q2, q3 := lossless.ComputeContext(a, b, c, d)
+			ctx := dec.contextTable.GetContext(q1, q2, q3)
+
+			// Quantize neighbors for prediction
 			qa := dec.quantize(a)
 			qb := dec.quantize(b)
 			qc := dec.quantize(c)
-			qd := dec.quantize(d)
 
 			// Compute prediction on quantized values
 			prediction := lossless.Predict(qa, qb, qc)
 
-			// Compute context
-			q1, q2, q3 := lossless.ComputeContext(qa, qb, qc, qd)
-			ctx := dec.contextTable.GetContext(q1, q2, q3)
-
-			// Apply bias correction
-			bias := ctx.GetBias()
+			// Apply bias correction (only for lossless mode)
+			// In near-lossless mode, bias correction causes encoder/decoder desync
+			// because quantized errors don't match the gradient-based context selection
+			bias := 0
+			if dec.near == 0 {
+				bias = ctx.GetBias()
+			}
 			correctedPred := dec.correctPrediction(prediction, bias)
 
 			// Reconstruct prediction to original range
@@ -338,6 +343,7 @@ func (dec *Decoder) unmapErrorValue(mappedError int) int {
 func (dec *Decoder) correctPrediction(prediction, bias int) int {
 	prediction += bias
 
+	// Clamp to quantized range
 	if prediction < 0 {
 		prediction = 0
 	} else if prediction >= dec.range_ {

@@ -224,21 +224,26 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 			// Get neighbors
 			a, b, c, d := enc.getNeighbors(pixels, x, y, comp)
 
-			// Quantize neighbors for near-lossless
-			a = enc.quantize(a)
-			b = enc.quantize(b)
-			c = enc.quantize(c)
-			d = enc.quantize(d)
-
-			// Compute prediction on quantized values
-			prediction := lossless.Predict(a, b, c)
-
-			// Compute context
+			// Compute context on ORIGINAL values (before quantization)
+			// This ensures thresholds work correctly
 			q1, q2, q3 := lossless.ComputeContext(a, b, c, d)
 			ctx := enc.contextTable.GetContext(q1, q2, q3)
 
-			// Apply bias correction
-			bias := ctx.GetBias()
+			// Quantize neighbors for prediction
+			qa := enc.quantize(a)
+			qb := enc.quantize(b)
+			qc := enc.quantize(c)
+
+			// Compute prediction on quantized values
+			prediction := lossless.Predict(qa, qb, qc)
+
+			// Apply bias correction (only for lossless mode)
+			// In near-lossless mode, bias correction causes encoder/decoder desync
+			// because quantized errors don't match the gradient-based context selection
+			bias := 0
+			if enc.near == 0 {
+				bias = ctx.GetBias()
+			}
 			correctedPred := enc.correctPrediction(prediction, bias)
 
 			// Reconstruct prediction to original range

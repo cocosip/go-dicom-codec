@@ -10,9 +10,9 @@ A Go library providing image compression/decompression codecs for medical imagin
 - ✅ **JPEG Lossless** (Process 14, Selection 1) - All 7 predictors [1.2.840.10008.1.2.4.57]
 - ✅ **JPEG Lossless SV1** (Process 14, Selection 1) - Predictor 1 only [1.2.840.10008.1.2.4.70]
 
-### JPEG-LS Family (Planned)
-- ⏳ **JPEG-LS Lossless** [1.2.840.10008.1.2.4.80]
-- ⏳ **JPEG-LS Near-Lossless** [1.2.840.10008.1.2.4.81]
+### JPEG-LS Family
+- ✅ **JPEG-LS Lossless** [1.2.840.10008.1.2.4.80]
+- ✅ **JPEG-LS Near-Lossless** [1.2.840.10008.1.2.4.81]
 
 ### JPEG 2000 Family (Planned)
 - ⏳ **JPEG 2000 Lossless** [1.2.840.10008.1.2.4.90]
@@ -35,9 +35,12 @@ The library is organized into the following packages:
 - `jpeg/` - JPEG family implementations
   - `jpeg/common/` - Shared utilities (Huffman, DCT, markers, etc.)
   - `jpeg/baseline/` - JPEG Baseline codec
+  - `jpeg/extended/` - JPEG Extended codec (8/12-bit)
   - `jpeg/lossless/` - JPEG Lossless codec (all 7 predictors)
   - `jpeg/lossless14sv1/` - JPEG Lossless SV1 codec (predictor 1 only)
-- `jpegls/` - JPEG-LS implementations (planned)
+- `jpegls/` - JPEG-LS implementations
+  - `jpegls/lossless/` - JPEG-LS Lossless codec
+  - `jpegls/nearlossless/` - JPEG-LS Near-Lossless codec
 - `jpeg2000/` - JPEG 2000 implementations (planned)
 
 ## Usage
@@ -143,6 +146,48 @@ func main() {
 }
 ```
 
+### JPEG-LS Lossless
+
+```go
+import "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+
+func main() {
+    // JPEG-LS lossless encoding (LOCO-I algorithm)
+    jpegLSData, err := lossless.Encode(pixelData, width, height, components, bitDepth)
+    if err != nil {
+        panic(err)
+    }
+
+    // Decode
+    decoded, w, h, comp, bits, err := lossless.Decode(jpegLSData)
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+### JPEG-LS Near-Lossless
+
+```go
+import "github.com/cocosip/go-dicom-codec/jpegls/nearlossless"
+
+func main() {
+    // JPEG-LS near-lossless encoding with NEAR=3
+    // Guarantees maximum error of ±3 per pixel
+    near := 3 // Error bound (0-255), 0 = lossless
+    jpegLSData, err := nearlossless.Encode(pixelData, width, height, components, bitDepth, near)
+    if err != nil {
+        panic(err)
+    }
+
+    // Decode
+    decoded, w, h, comp, bits, actualNear, err := nearlossless.Decode(jpegLSData)
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
 ## Codec Details
 
 ### JPEG Baseline
@@ -178,13 +223,63 @@ func main() {
 - **Perfect Reconstruction**: Yes (0 errors)
 - **Status**: ✅ Production ready
 
+### JPEG Extended
+- **UID**: 1.2.840.10008.1.2.4.51
+- **Compression**: Lossy DCT-based
+- **Bit Depth**: 8-bit and 12-bit
+- **Color Spaces**: Grayscale, RGB
+- **Options**: Quality (1-100)
+- **Typical Compression**: 2-13x (quality and bit-depth dependent)
+- **Status**: ✅ Production ready
+
+### JPEG-LS Lossless
+- **UID**: 1.2.840.10008.1.2.4.80
+- **Compression**: Lossless context-adaptive (LOCO-I algorithm)
+- **Bit Depth**: 2-16 bits
+- **Color Spaces**: Grayscale, RGB
+- **Algorithm**: Context modeling + Golomb-Rice coding + MED predictor
+- **Typical Compression**:
+  - Grayscale 8-bit: 4.17x
+  - RGB 8-bit: 2.51x
+  - 12-bit: 2.94x
+- **Perfect Reconstruction**: Yes (0 errors)
+- **Advantages**: Better compression than JPEG Lossless, lower complexity than JPEG 2000
+- **Status**: ✅ Production ready
+
+### JPEG-LS Near-Lossless
+- **UID**: 1.2.840.10008.1.2.4.81
+- **Compression**: Near-lossless with configurable error bound (NEAR parameter)
+- **Bit Depth**: 2-16 bits
+- **Color Spaces**: Grayscale, RGB
+- **NEAR Parameter**: 0-255 (maximum error per pixel)
+  - NEAR=0: Lossless (identical to JPEG-LS Lossless)
+  - NEAR=1-3: Visually lossless with high compression
+  - NEAR=7+: Higher compression with visible differences
+- **Typical Compression** (64x64 grayscale):
+  - NEAR=0: 4.17x (lossless)
+  - NEAR=1: 4.53x
+  - NEAR=3: 5.79x
+  - NEAR=7: 4.56x
+  - NEAR=10: 5.08x
+- **Error Guarantee**: |reconstructed - original| ≤ NEAR for every pixel
+- **Use Cases**: Medical imaging with acceptable error tolerance, archival with space constraints
+- **Status**: ✅ Production ready (all NEAR values 0-255 supported)
+
 ## Performance
 
 Benchmarks on 512x512 grayscale images:
 
+### JPEG Family
 - **JPEG Baseline** - Encode: ~1.17ms, Decode: ~2.97ms
+- **JPEG Extended** - Encode: ~1.2ms, Decode: ~3.0ms (8-bit)
 - **JPEG Lossless** - Encode: ~12.5ms, Decode: ~8.3ms (predictor 1)
 - **JPEG Lossless SV1** - Encode: ~3.65ms, Decode: ~40.2ms
+
+### JPEG-LS Family
+- **JPEG-LS Lossless** - Encode: ~15ms, Decode: ~12ms
+- **JPEG-LS Near-Lossless** - Encode: ~14ms, Decode: ~11ms (NEAR=3)
+
+*Note: Benchmarks may vary by hardware and image characteristics. Run `go test -bench=.` for your platform.*
 
 ## Examples
 

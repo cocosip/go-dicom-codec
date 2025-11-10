@@ -3,109 +3,150 @@ package nearlossless
 import (
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/codec"
+	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
+	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
-// Codec implements the codec.Codec interface for JPEG-LS Near-Lossless
-type Codec struct{}
+var _ codec.Codec = (*JPEGLSNearLosslessCodec)(nil)
 
-// NewCodec creates a new JPEG-LS Near-Lossless codec
-func NewCodec() *Codec {
-	return &Codec{}
+// JPEGLSNearLosslessCodec implements the external codec.Codec interface for JPEG-LS Near-Lossless
+type JPEGLSNearLosslessCodec struct {
+	transferSyntax *transfer.TransferSyntax
+	defaultNEAR    int // Default NEAR parameter (0-255)
 }
 
-// UID returns the DICOM Transfer Syntax UID for JPEG-LS Near-Lossless
-func (c *Codec) UID() string {
-	return "1.2.840.10008.1.2.4.81"
+// NewJPEGLSNearLosslessCodec creates a new JPEG-LS Near-Lossless codec
+// defaultNEAR: default error bound (0=lossless, 1-255=near-lossless)
+func NewJPEGLSNearLosslessCodec(defaultNEAR int) *JPEGLSNearLosslessCodec {
+	if defaultNEAR < 0 || defaultNEAR > 255 {
+		defaultNEAR = 2 // Default near-lossless value
+	}
+	return &JPEGLSNearLosslessCodec{
+		transferSyntax: transfer.JPEGLSNearLossless,
+		defaultNEAR:    defaultNEAR,
+	}
 }
 
-// Name returns the human-readable name of this codec
-func (c *Codec) Name() string {
-	return "JPEG-LS Near-Lossless"
+// Name returns the codec name
+func (c *JPEGLSNearLosslessCodec) Name() string {
+	return fmt.Sprintf("JPEG-LS Near-Lossless (NEAR=%d)", c.defaultNEAR)
+}
+
+// TransferSyntax returns the transfer syntax this codec handles
+func (c *JPEGLSNearLosslessCodec) TransferSyntax() *transfer.TransferSyntax {
+	return c.transferSyntax
 }
 
 // Encode encodes pixel data to JPEG-LS Near-Lossless format
-func (c *Codec) Encode(params codec.EncodeParams) ([]byte, error) {
-	// Validate dimensions
-	if params.Width <= 0 || params.Height <= 0 {
-		return nil, fmt.Errorf("invalid dimensions: %dx%d", params.Width, params.Height)
+func (c *JPEGLSNearLosslessCodec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
+	if src == nil || dst == nil {
+		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate components
-	if params.Components != 1 && params.Components != 3 {
-		return nil, fmt.Errorf("invalid components: %d (must be 1 or 3)", params.Components)
+	// Validate input data
+	if len(src.Data) == 0 {
+		return fmt.Errorf("source pixel data is empty")
 	}
 
-	// Validate bit depth
-	if params.BitDepth < 2 || params.BitDepth > 16 {
-		return nil, fmt.Errorf("invalid bit depth: %d (must be 2-16)", params.BitDepth)
+	// Validate bit depth (JPEG-LS supports 2-16 bits)
+	if src.BitsStored < 2 || src.BitsStored > 16 {
+		return fmt.Errorf("JPEG-LS supports 2-16 bit depth, got %d bits", src.BitsStored)
 	}
 
-	// Extract NEAR parameter from options
-	near := 0 // Default to lossless
-	if params.Options != nil {
-		if opts, ok := params.Options.(*codec.BaseOptions); ok {
-			near = opts.NearLossless
-		} else if opts, ok := params.Options.(*Options); ok {
-			near = opts.NEAR
+	// Get NEAR parameter from parameters, otherwise use codec's default
+	near := c.defaultNEAR
+	if params != nil {
+		if n := params.GetParameter("near"); n != nil {
+			if nInt, ok := n.(int); ok && nInt >= 0 && nInt <= 255 {
+				near = nInt
+			}
 		}
 	}
 
-	// Validate NEAR parameter
-	if near < 0 || near > 255 {
-		return nil, fmt.Errorf("invalid NEAR parameter: %d (must be 0-255)", near)
-	}
-
-	// Encode using the package-level function
-	return Encode(params.PixelData, params.Width, params.Height, params.Components, params.BitDepth, near)
-}
-
-// Decode decodes JPEG-LS Near-Lossless compressed data
-func (c *Codec) Decode(compressedData []byte) (*codec.DecodeResult, error) {
-	if len(compressedData) == 0 {
-		return nil, codec.ErrInvalidParameter
-	}
-
-	// Decode using the package-level function
-	pixelData, width, height, components, bitDepth, _, err := Decode(compressedData)
+	// Encode using the JPEG-LS near-lossless encoder
+	jpegData, err := Encode(
+		src.Data,
+		int(src.Width),
+		int(src.Height),
+		int(src.SamplesPerPixel),
+		int(src.BitsStored),
+		near,
+	)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("JPEG-LS Near-Lossless encode failed: %w", err)
 	}
 
-	// Create decode result
-	result := &codec.DecodeResult{
-		PixelData:  pixelData,
-		Width:      width,
-		Height:     height,
-		Components: components,
-		BitDepth:   bitDepth,
-	}
+	// Set destination data
+	dst.Data = jpegData
+	dst.Width = src.Width
+	dst.Height = src.Height
+	dst.NumberOfFrames = src.NumberOfFrames
+	dst.BitsAllocated = src.BitsAllocated
+	dst.BitsStored = src.BitsStored
+	dst.HighBit = src.HighBit
+	dst.SamplesPerPixel = src.SamplesPerPixel
+	dst.PixelRepresentation = src.PixelRepresentation
+	dst.PlanarConfiguration = src.PlanarConfiguration
+	dst.PhotometricInterpretation = src.PhotometricInterpretation
+	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
 
-	return result, nil
-}
-
-// Options defines JPEG-LS Near-Lossless specific encoding options
-type Options struct {
-	// NEAR parameter: maximum allowed absolute difference for near-lossless mode
-	// 0 = lossless, >0 = near-lossless with bounded error
-	NEAR int
-}
-
-// Validate validates the options
-func (o *Options) Validate() error {
-	if o.NEAR < 0 || o.NEAR > 255 {
-		return fmt.Errorf("invalid NEAR parameter: %d (must be 0-255)", o.NEAR)
-	}
 	return nil
 }
 
-// RegisterCodec registers JPEG-LS Near-Lossless codec in the global registry
-func RegisterCodec() {
-	c := NewCodec()
-	codec.Register(c)
+// Decode decodes JPEG-LS Near-Lossless data to uncompressed pixel data
+func (c *JPEGLSNearLosslessCodec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
+	if src == nil || dst == nil {
+		return fmt.Errorf("source and destination PixelData cannot be nil")
+	}
+
+	// Validate input data
+	if len(src.Data) == 0 {
+		return fmt.Errorf("source pixel data is empty")
+	}
+
+	// Decode using the JPEG-LS near-lossless decoder
+	pixelData, width, height, components, bitDepth, near, err := Decode(src.Data)
+	if err != nil {
+		return fmt.Errorf("JPEG-LS Near-Lossless decode failed: %w", err)
+	}
+
+	// Verify dimensions match if specified
+	if src.Width > 0 && width != int(src.Width) {
+		return fmt.Errorf("decoded width (%d) doesn't match expected (%d)", width, src.Width)
+	}
+	if src.Height > 0 && height != int(src.Height) {
+		return fmt.Errorf("decoded height (%d) doesn't match expected (%d)", height, src.Height)
+	}
+
+	// Store NEAR value in parameters if provided
+	if params != nil {
+		params.SetParameter("near", near)
+	}
+
+	// Set destination data
+	dst.Data = pixelData
+	dst.Width = uint16(width)
+	dst.Height = uint16(height)
+	dst.NumberOfFrames = src.NumberOfFrames
+	dst.BitsAllocated = uint16((bitDepth-1)/8+1) * 8
+	dst.BitsStored = uint16(bitDepth)
+	dst.HighBit = uint16(bitDepth - 1)
+	dst.SamplesPerPixel = uint16(components)
+	dst.PixelRepresentation = src.PixelRepresentation
+	dst.PlanarConfiguration = 0 // Always interleaved after decode
+	dst.PhotometricInterpretation = src.PhotometricInterpretation
+	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID()
+
+	return nil
 }
 
-// init automatically registers the codec
+// RegisterJPEGLSNearLosslessCodec registers the JPEG-LS Near-Lossless codec with the global registry
+func RegisterJPEGLSNearLosslessCodec(defaultNEAR int) {
+	registry := codec.GetGlobalRegistry()
+	jpegLSCodec := NewJPEGLSNearLosslessCodec(defaultNEAR)
+	registry.RegisterCodec(transfer.JPEGLSNearLossless, jpegLSCodec)
+}
+
 func init() {
-	RegisterCodec()
+	RegisterJPEGLSNearLosslessCodec(2)
 }

@@ -139,12 +139,12 @@ func (enc *Encoder) writeDQT(writer *common.Writer) error {
 func (enc *Encoder) writeSOF0(writer *common.Writer) error {
 	data := make([]byte, 6+enc.components*3)
 
-	data[0] = 8                              // Precision: 8 bits
-	data[1] = byte(enc.height >> 8)          // Height high byte
-	data[2] = byte(enc.height)               // Height low byte
-	data[3] = byte(enc.width >> 8)           // Width high byte
-	data[4] = byte(enc.width)                // Width low byte
-	data[5] = byte(enc.components)           // Number of components
+	data[0] = 8                     // Precision: 8 bits
+	data[1] = byte(enc.height >> 8) // Height high byte
+	data[2] = byte(enc.height)      // Height low byte
+	data[3] = byte(enc.width >> 8)  // Width high byte
+	data[4] = byte(enc.width)       // Width low byte
+	data[5] = byte(enc.components)  // Number of components
 
 	if enc.components == 1 {
 		// Grayscale
@@ -159,7 +159,7 @@ func (enc *Encoder) writeSOF0(writer *common.Writer) error {
 		data[8] = 0    // Quantization table 0
 
 		// Cb component
-		data[9] = 2    // Component ID
+		data[9] = 2     // Component ID
 		data[10] = 0x11 // Sampling factors: 1x1
 		data[11] = 1    // Quantization table 1
 
@@ -175,9 +175,9 @@ func (enc *Encoder) writeSOF0(writer *common.Writer) error {
 // writeDHT writes Define Huffman Table segments
 func (enc *Encoder) writeDHT(writer *common.Writer) error {
 	tables := []struct {
-		class  byte
-		id     byte
-		table  *common.HuffmanTable
+		class byte
+		id    byte
+		table *common.HuffmanTable
 	}{
 		{0, 0, enc.dcTables[0]}, // DC table 0 (luminance)
 		{1, 0, enc.acTables[0]}, // AC table 0 (luminance)
@@ -186,14 +186,14 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 	if enc.components == 3 {
 		tables = append(tables,
 			struct {
-				class  byte
-				id     byte
-				table  *common.HuffmanTable
+				class byte
+				id    byte
+				table *common.HuffmanTable
 			}{0, 1, enc.dcTables[1]}, // DC table 1 (chrominance)
 			struct {
-				class  byte
-				id     byte
-				table  *common.HuffmanTable
+				class byte
+				id    byte
+				table *common.HuffmanTable
 			}{1, 1, enc.acTables[1]}, // AC table 1 (chrominance)
 		)
 	}

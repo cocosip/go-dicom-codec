@@ -129,11 +129,7 @@ func TestEncodeDecodeNEAR3(t *testing.T) {
 }
 
 // TestEncodeDecodeNEAR7 tests with NEAR=7
-// KNOWN ISSUE: Currently fails for large images (>32x32) due to bias correction divergence
-// Smaller images work correctly. This is under investigation.
 func TestEncodeDecodeNEAR7(t *testing.T) {
-	t.Skip("NEAR=7 has known issues with large images - under investigation")
-
 	width, height := 64, 64
 	bitDepth := 8
 	components := 1

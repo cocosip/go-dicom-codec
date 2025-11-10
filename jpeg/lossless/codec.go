@@ -7,6 +7,8 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
+var _ codec.Codec = (*LosslessCodec)(nil)
+
 // LosslessCodec implements the external codec.Codec interface for JPEG Lossless (Process 14)
 type LosslessCodec struct {
 	transferSyntax *transfer.TransferSyntax
@@ -119,7 +121,7 @@ func (c *LosslessCodec) Decode(src *codec.PixelData, dst *codec.PixelData, param
 	dst.Width = uint16(width)
 	dst.Height = uint16(height)
 	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = uint16((bitDepth-1)/8 + 1) * 8
+	dst.BitsAllocated = uint16((bitDepth-1)/8+1) * 8
 	dst.BitsStored = uint16(bitDepth)
 	dst.HighBit = uint16(bitDepth - 1)
 	dst.SamplesPerPixel = uint16(components)
@@ -136,4 +138,8 @@ func RegisterLosslessCodec(predictor int) {
 	registry := codec.GetGlobalRegistry()
 	losslessCodec := NewLosslessCodec(predictor)
 	registry.RegisterCodec(transfer.JPEGLossless, losslessCodec)
+}
+
+func init() {
+	RegisterLosslessCodec(0)
 }
