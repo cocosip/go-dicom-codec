@@ -143,6 +143,6 @@ func BuildStandardHuffmanTable(bits [16]int, values []byte) *HuffmanTable {
 		Bits:   bits,
 		Values: values,
 	}
-	table.Build()
+	_ = table.Build() // Build() always succeeds for standard tables
 	return table
 }

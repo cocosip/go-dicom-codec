@@ -514,7 +514,8 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 	numComponents := len(d.components)
 	pixelData := make([]byte, d.width*d.height*numComponents)
 
-	if numComponents == 1 {
+	switch numComponents {
+	case 1:
 		// Grayscale
 		comp := d.components[0]
 		for y := 0; y < d.height; y++ {
@@ -531,7 +532,7 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 				}
 			}
 		}
-	} else if numComponents == 3 {
+	case 3:
 		// YCbCr to RGB conversion
 		for y := 0; y < d.height; y++ {
 			for x := 0; x < d.width; x++ {

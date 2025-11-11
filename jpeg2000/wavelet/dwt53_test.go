@@ -1,7 +1,7 @@
 package wavelet
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 )
 
@@ -129,9 +129,9 @@ func TestForwardInverseMultilevel(t *testing.T) {
 
 			// Create test image
 			original := make([]int32, size)
-			rand.Seed(42) // Deterministic
+			rng := rand.New(rand.NewPCG(42, 0)) // Deterministic
 			for i := range original {
-				original[i] = int32(rand.Intn(256))
+				original[i] = int32(rng.IntN(256))
 			}
 
 			// Copy for transform

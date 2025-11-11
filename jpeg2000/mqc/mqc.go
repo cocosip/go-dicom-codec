@@ -9,7 +9,6 @@ type MQDecoder struct {
 	// Input data
 	data   []byte
 	pos    int  // Current byte position
-	bitPos int  // Bit position within current byte
 
 	// State variables
 	a   uint32 // Probability interval

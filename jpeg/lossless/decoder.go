@@ -253,7 +253,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) ([][]int, error) {
 
 				table := d.dcTables[tableIdx]
 				if table == nil {
-					return nil, fmt.Errorf("Huffman table %d not defined", tableIdx)
+					return nil, fmt.Errorf("huffman table %d not defined", tableIdx)
 				}
 
 				// Decode category

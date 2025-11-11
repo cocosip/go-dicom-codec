@@ -206,6 +206,7 @@ To add a new codec (e.g., JPEG-LS):
 - **Documentation**: Document public APIs
 - **Testing**: Maintain high test coverage
 - **Compatibility**: Follow DICOM standards strictly
+- **Code Quality**: All code must pass golangci-lint without errors. Run `golangci-lint run` before committing changes
 
 ## Roadmap
 

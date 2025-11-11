@@ -12,47 +12,47 @@ func TestParserBasic(t *testing.T) {
 	var buf bytes.Buffer
 
 	// SOC marker
-	binary.Write(&buf, binary.BigEndian, MarkerSOC)
+	_ = binary.Write(&buf, binary.BigEndian, MarkerSOC)
 
 	// SIZ segment
-	binary.Write(&buf, binary.BigEndian, MarkerSIZ)
-	binary.Write(&buf, binary.BigEndian, uint16(41)) // Length: 38 + 3*1 components
-	binary.Write(&buf, binary.BigEndian, uint16(0))  // Rsiz (baseline)
-	binary.Write(&buf, binary.BigEndian, uint32(256)) // Xsiz
-	binary.Write(&buf, binary.BigEndian, uint32(256)) // Ysiz
-	binary.Write(&buf, binary.BigEndian, uint32(0))   // XOsiz
-	binary.Write(&buf, binary.BigEndian, uint32(0))   // YOsiz
-	binary.Write(&buf, binary.BigEndian, uint32(256)) // XTsiz
-	binary.Write(&buf, binary.BigEndian, uint32(256)) // YTsiz
-	binary.Write(&buf, binary.BigEndian, uint32(0))   // XTOsiz
-	binary.Write(&buf, binary.BigEndian, uint32(0))   // YTOsiz
-	binary.Write(&buf, binary.BigEndian, uint16(1))   // Csiz (1 component)
+	_ = binary.Write(&buf, binary.BigEndian, MarkerSIZ)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(41)) // Length: 38 + 3*1 components
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0))  // Rsiz (baseline)
+	_ = binary.Write(&buf, binary.BigEndian, uint32(256)) // Xsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(256)) // Ysiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))   // XOsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))   // YOsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(256)) // XTsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(256)) // YTsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))   // XTOsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint32(0))   // YTOsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint16(1))   // Csiz (1 component)
 	// Component 0
-	binary.Write(&buf, binary.BigEndian, uint8(7))  // Ssiz (8-bit unsigned)
-	binary.Write(&buf, binary.BigEndian, uint8(1))  // XRsiz
-	binary.Write(&buf, binary.BigEndian, uint8(1))  // YRsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint8(7))  // Ssiz (8-bit unsigned)
+	_ = binary.Write(&buf, binary.BigEndian, uint8(1))  // XRsiz
+	_ = binary.Write(&buf, binary.BigEndian, uint8(1))  // YRsiz
 
 	// COD segment
-	binary.Write(&buf, binary.BigEndian, MarkerCOD)
-	binary.Write(&buf, binary.BigEndian, uint16(12)) // Length
-	binary.Write(&buf, binary.BigEndian, uint8(0))   // Scod
-	binary.Write(&buf, binary.BigEndian, uint8(0))   // Progression order (LRCP)
-	binary.Write(&buf, binary.BigEndian, uint16(1))  // Number of layers
-	binary.Write(&buf, binary.BigEndian, uint8(0))   // MCT
-	binary.Write(&buf, binary.BigEndian, uint8(5))   // Decomposition levels
-	binary.Write(&buf, binary.BigEndian, uint8(2))   // Code-block width (2^4 = 16)
-	binary.Write(&buf, binary.BigEndian, uint8(2))   // Code-block height (2^4 = 16)
-	binary.Write(&buf, binary.BigEndian, uint8(0))   // Code-block style
-	binary.Write(&buf, binary.BigEndian, uint8(1))   // Transformation (5-3 reversible)
+	_ = binary.Write(&buf, binary.BigEndian, MarkerCOD)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(12)) // Length
+	_ = binary.Write(&buf, binary.BigEndian, uint8(0))   // Scod
+	_ = binary.Write(&buf, binary.BigEndian, uint8(0))   // Progression order (LRCP)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(1))  // Number of layers
+	_ = binary.Write(&buf, binary.BigEndian, uint8(0))   // MCT
+	_ = binary.Write(&buf, binary.BigEndian, uint8(5))   // Decomposition levels
+	_ = binary.Write(&buf, binary.BigEndian, uint8(2))   // Code-block width (2^4 = 16)
+	_ = binary.Write(&buf, binary.BigEndian, uint8(2))   // Code-block height (2^4 = 16)
+	_ = binary.Write(&buf, binary.BigEndian, uint8(0))   // Code-block style
+	_ = binary.Write(&buf, binary.BigEndian, uint8(1))   // Transformation (5-3 reversible)
 
 	// QCD segment
-	binary.Write(&buf, binary.BigEndian, MarkerQCD)
-	binary.Write(&buf, binary.BigEndian, uint16(5)) // Length (2 + 1 Sqcd + 2 data)
-	binary.Write(&buf, binary.BigEndian, uint8(0))  // Sqcd (no quantization)
-	binary.Write(&buf, binary.BigEndian, uint16(0)) // Dummy quantization data
+	_ = binary.Write(&buf, binary.BigEndian, MarkerQCD)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(5)) // Length (2 + 1 Sqcd + 2 data)
+	_ = binary.Write(&buf, binary.BigEndian, uint8(0))  // Sqcd (no quantization)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0)) // Dummy quantization data
 
 	// EOC marker
-	binary.Write(&buf, binary.BigEndian, MarkerEOC)
+	_ = binary.Write(&buf, binary.BigEndian, MarkerEOC)
 
 	// Parse
 	parser := NewParser(buf.Bytes())

@@ -328,56 +328,6 @@ func (enc *Encoder) dequantizeError(qerr int) int {
 	return qerr * (2*enc.near + 1)
 }
 
-// selectBestQuantizedError selects the quantized error value that gives
-// the best reconstruction within the ±NEAR bound
-func (enc *Encoder) selectBestQuantizedError(qerr int, originalError int, near int) int {
-	if near == 0 {
-		return qerr
-	}
-
-	// Helper function for absolute value
-	absVal := func(x int) int {
-		if x < 0 {
-			return -x
-		}
-		return x
-	}
-
-	// The quantized error qerr might dequantize to a value outside ±NEAR
-	// Try qerr-1, qerr, qerr+1 and pick the one that gives reconstruction
-	// closest to original while staying within ±NEAR
-
-	bestQerr := qerr
-	bestDist := absVal(enc.dequantizeError(qerr) - originalError)
-
-	// Check qerr - 1
-	if qerr > 0 || (qerr <= 0 && qerr-1 >= -128) {
-		candidate := qerr - 1
-		candidateErr := enc.dequantizeError(candidate)
-		if absVal(candidateErr) <= near {
-			dist := absVal(candidateErr - originalError)
-			if dist < bestDist {
-				bestDist = dist
-				bestQerr = candidate
-			}
-		}
-	}
-
-	// Check qerr + 1
-	if qerr < 0 || (qerr >= 0 && qerr+1 <= 127) {
-		candidate := qerr + 1
-		candidateErr := enc.dequantizeError(candidate)
-		if absVal(candidateErr) <= near {
-			dist := absVal(candidateErr - originalError)
-			if dist < bestDist {
-				bestQerr = candidate
-			}
-		}
-	}
-
-	return bestQerr
-}
-
 // mapErrorValue maps signed error to non-negative for Golomb coding
 func (enc *Encoder) mapErrorValue(errValue int) int {
 	if errValue >= 0 {

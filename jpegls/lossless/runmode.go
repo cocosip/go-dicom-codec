@@ -118,7 +118,6 @@ func (rmd *RunModeDecoder) DecodeRun(bits []int) int {
 			// End run: read remainder
 			if idx < len(bits) {
 				remainder := bits[idx]
-				idx++
 				runLength += remainder
 			}
 			rmd.updateRunIndex(false)

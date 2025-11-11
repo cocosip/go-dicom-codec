@@ -52,7 +52,7 @@ func (p *Parser) Parse() (*Codestream, error) {
 
 		if marker == MarkerEOC {
 			// End of codestream
-			p.readMarker() // consume EOC
+			_, _ = p.readMarker() // consume EOC
 			break
 		}
 
@@ -171,7 +171,7 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 
 		if marker == MarkerSOD {
 			// Start of data - tile header complete
-			p.readMarker() // consume SOD
+			_, _ = p.readMarker() // consume SOD
 			break
 		}
 

@@ -20,6 +20,6 @@ var (
 	ErrInvalidPrecision   = errors.New("invalid precision")
 	ErrInvalidQuality     = errors.New("invalid quality factor")
 	ErrInvalidPredictor   = errors.New("invalid predictor value")
-	ErrHuffmanDecode      = errors.New("Huffman decode error")
+	ErrHuffmanDecode      = errors.New("huffman decode error")
 	ErrBufferTooSmall     = errors.New("buffer too small")
 )

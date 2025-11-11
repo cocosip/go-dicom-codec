@@ -56,28 +56,6 @@ func abs(x int) int {
 	return x
 }
 
-// sign returns the sign of x (-1, 0, or 1)
-func sign(x int) int {
-	if x < 0 {
-		return -1
-	}
-	if x > 0 {
-		return 1
-	}
-	return 0
-}
-
-// clamp clamps value to range [min, max]
-func clamp(value, minVal, maxVal int) int {
-	if value < minVal {
-		return minVal
-	}
-	if value > maxVal {
-		return maxVal
-	}
-	return value
-}
-
 // ComputeContext computes the context for the current pixel
 // Used to determine which statistical model to use
 // Returns gradient quantization values (Q1, Q2, Q3)
