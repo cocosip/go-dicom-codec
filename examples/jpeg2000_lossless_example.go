@@ -1,0 +1,120 @@
+package main
+
+import (
+	"fmt"
+
+	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
+	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
+	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+)
+
+func main() {
+	fmt.Println("=== JPEG 2000 Lossless Codec Usage Example ===\n")
+
+	// Example 1: Registry-based usage
+	fmt.Println("Example 1: Registry-based decoding (JPEG 2000 Lossless)")
+	registryUsageExample()
+	fmt.Println()
+
+	// Example 2: Codec information
+	fmt.Println("Example 2: Codec information")
+	codecInfoExample()
+	fmt.Println()
+}
+
+func registryUsageExample() {
+	// Get codec from registry
+	// The codec is automatically registered via init() when the package is imported
+	registry := codec.GetGlobalRegistry()
+	j2kCodec, exists := registry.GetCodec(transfer.JPEG2000Lossless)
+	if !exists {
+		fmt.Println("JPEG 2000 Lossless codec not found in registry")
+		return
+	}
+
+	fmt.Printf("Retrieved codec: %s\n", j2kCodec.Name())
+	fmt.Printf("Transfer Syntax UID: %s\n", j2kCodec.TransferSyntax().UID().UID())
+	fmt.Println()
+
+	// Note: Actual decoding requires valid JPEG 2000 compressed data
+	// This example demonstrates the API usage pattern
+
+	// In a real scenario, you would:
+	// 1. Load JPEG 2000 compressed pixel data from a DICOM file
+	// 2. Create source PixelData with compressed data and metadata
+	// 3. Decode to get uncompressed pixel data
+
+	fmt.Println("Example workflow:")
+	fmt.Println("  1. Import package: _ \"github.com/cocosip/go-dicom-codec/jpeg2000/lossless\"")
+	fmt.Println("  2. Get codec: registry.GetCodec(transfer.JPEG2000Lossless)")
+	fmt.Println("  3. Create src PixelData with compressed JPEG 2000 data")
+	fmt.Println("  4. Call codec.Decode(src, dst, nil)")
+	fmt.Println("  5. Use dst.Data for uncompressed pixel data")
+	fmt.Println()
+
+	// Example structure (with placeholder data)
+	src := &codec.PixelData{
+		// Data would contain actual JPEG 2000 codestream
+		// Data: j2kCompressedData,
+		Width:                     512,
+		Height:                    512,
+		NumberOfFrames:            1,
+		BitsAllocated:             16,
+		BitsStored:                12,
+		HighBit:                   11,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+		TransferSyntaxUID:         transfer.JPEG2000Lossless.UID().UID(),
+	}
+
+	fmt.Printf("Example source metadata:\n")
+	fmt.Printf("  Dimensions: %dx%d\n", src.Width, src.Height)
+	fmt.Printf("  Bit depth: %d bits (allocated: %d)\n", src.BitsStored, src.BitsAllocated)
+	fmt.Printf("  Components: %d\n", src.SamplesPerPixel)
+	fmt.Printf("  Photometric: %s\n", src.PhotometricInterpretation)
+	fmt.Println()
+
+	fmt.Println("To decode:")
+	fmt.Println("  dst := &codec.PixelData{}")
+	fmt.Println("  err := j2kCodec.Decode(src, dst, nil)")
+	fmt.Println("  if err == nil {")
+	fmt.Println("    // dst.Data contains uncompressed pixel data")
+	fmt.Println("    // dst.TransferSyntaxUID is ExplicitVRLittleEndian")
+	fmt.Println("  }")
+}
+
+func codecInfoExample() {
+	registry := codec.GetGlobalRegistry()
+	j2kCodec, exists := registry.GetCodec(transfer.JPEG2000Lossless)
+	if !exists {
+		fmt.Println("Codec not found")
+		return
+	}
+
+	fmt.Printf("Codec Name: %s\n", j2kCodec.Name())
+
+	ts := j2kCodec.TransferSyntax()
+	fmt.Printf("Transfer Syntax:\n")
+	fmt.Printf("  UID: %s\n", ts.UID().UID())
+
+	fmt.Println()
+	fmt.Println("Capabilities:")
+	fmt.Println("  ✓ Decode: Supported (JPEG 2000 Part 1 codestreams)")
+	fmt.Println("  ✗ Encode: Not yet implemented")
+	fmt.Println()
+	fmt.Println("Supported features:")
+	fmt.Println("  • Grayscale and RGB images")
+	fmt.Println("  • 8-bit and 16-bit pixel data")
+	fmt.Println("  • 5/3 reversible wavelet transform")
+	fmt.Println("  • EBCOT Tier-1 decoding (MQ arithmetic coding)")
+	fmt.Println("  • EBCOT Tier-2 packet parsing")
+	fmt.Println("  • Single-tile codestreams")
+	fmt.Println()
+	fmt.Println("Limitations (current MVP):")
+	fmt.Println("  • Multi-tile images: Only first tile decoded")
+	fmt.Println("  • 9/7 irreversible wavelet: Not supported")
+	fmt.Println("  • ROI coding: Not fully implemented")
+	fmt.Println("  • Encoding: Not yet implemented")
+}

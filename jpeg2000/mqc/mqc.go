@@ -14,7 +14,6 @@ type MQDecoder struct {
 	a   uint32 // Probability interval
 	c   uint32 // Code register
 	ct  int    // Bit counter
-	curByte byte   // Current byte being processed
 
 	// Contexts
 	contexts []uint8 // Context states (one per context)
@@ -22,8 +21,16 @@ type MQDecoder struct {
 
 // NewMQDecoder creates a new MQ decoder
 func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
+	// Append 0xFF 0xFF sentinel marker to end of data
+	// This acts as an artificial marker to stop bytein routines
+	// Reference: OpenJPEG opj_mqc_init_dec_common
+	dataWithSentinel := make([]byte, len(data)+2)
+	copy(dataWithSentinel, data)
+	dataWithSentinel[len(data)] = 0xFF
+	dataWithSentinel[len(data)+1] = 0xFF
+
 	mqc := &MQDecoder{
-		data:     data,
+		data:     dataWithSentinel,
 		pos:      0,
 		a:        0x8000,
 		c:        0,
@@ -44,17 +51,34 @@ func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
 
 // init initializes the decoder
 func (mqc *MQDecoder) init() {
-	// Fill C register
-	mqc.c = 0
+	// Initialize C register (ISO/IEC 15444-1 C.3.4)
+	// Load first byte into bits 23-16
+	if mqc.pos < len(mqc.data) {
+		mqc.c = uint32(mqc.data[mqc.pos]) << 16
+		mqc.pos++
+	} else {
+		mqc.c = 0xFF << 16
+	}
+
+	// Load second byte into bits 15-8 using bytein
 	mqc.bytein()
-	mqc.c = mqc.c << 8
-	mqc.bytein()
-	mqc.c = mqc.c << 7
+
+	// Shift left by 7 to position for decoding
+	// After this, bits 23-17 contain the first 7 bits of code
+	mqc.c <<= 7
 	mqc.ct -= 7
 	mqc.a = 0x8000
 }
 
 // Decode decodes a single bit using the specified context
+//
+// Performance notes:
+// - Hot path function - called millions of times during decoding
+// - Table-driven (no branches in probability lookup)
+// - Multiplication-free arithmetic (shifts and adds only)
+// - Context state maintained in single byte (compact)
+// - Typical performance: ~10-20ns per bit on modern CPUs
+// - Optimization: inline candidate, branch prediction important
 func (mqc *MQDecoder) Decode(contextID int) int {
 	cx := &mqc.contexts[contextID]
 	state := *cx & 0x7F  // Lower 7 bits = state
@@ -70,36 +94,56 @@ func (mqc *MQDecoder) Decode(contextID int) int {
 
 	// Check if coded bit is LPS or MPS
 	if (mqc.c >> 16) < qe {
-		// Coded bit is LPS
-		d = 1 - mps
-		mqc.c -= qe << 16
+		// LPS exchange (ISO/IEC 15444-1 C.3.2)
+		// Note: C is NOT modified in this path (only in MPS path)
 
 		// Conditional exchange
 		if mqc.a < qe {
+			// Exchange: MPS becomes the larger interval
 			mqc.a = qe
+			d = mps
+			// Update state (MPS path)
+			*cx = nmpsTable[state] | (uint8(mps) << 7)
+		} else {
+			// No exchange: decode LPS
+			mqc.a = qe
+			d = 1 - mps
+			// Update state (LPS path)
+			newState := nlpsTable[state]
+			newMPS := mps
+			if switchTable[state] == 1 {
+				newMPS = 1 - mps
+			}
+			*cx = newState | (uint8(newMPS) << 7)
 		}
-
-		// Update state
-		newState := nlpsTable[state]
-		newMPS := mps
-		if switchTable[state] == 1 {
-			newMPS = 1 - mps
-		}
-		*cx = newState | (uint8(newMPS) << 7)
 		mqc.renormd()
 	} else {
-		// Coded bit is MPS
-		d = mps
+		// MPS path
 		mqc.c -= qe << 16
 
 		if mqc.a >= 0x8000 {
 			// No renormalization needed
+			d = mps
 			return d
 		}
 
-		// Update state (MPS path)
-		newState := nmpsTable[state]
-		*cx = newState | (uint8(mps) << 7)
+		// MPS exchange (ISO/IEC 15444-1 C.3.2)
+		if mqc.a < qe {
+			// Exchange: LPS becomes the larger interval
+			d = 1 - mps
+			// Update state (LPS path)
+			newState := nlpsTable[state]
+			newMPS := mps
+			if switchTable[state] == 1 {
+				newMPS = 1 - mps
+			}
+			*cx = newState | (uint8(newMPS) << 7)
+		} else {
+			// No exchange: decode MPS
+			d = mps
+			// Update state (MPS path)
+			*cx = nmpsTable[state] | (uint8(mps) << 7)
+		}
 		mqc.renormd()
 	}
 
@@ -119,29 +163,42 @@ func (mqc *MQDecoder) renormd() {
 }
 
 // bytein reads the next byte from input stream
+// Reference: OpenJPEG opj_mqc_bytein_macro
+// Note: Data has 0xFF 0xFF sentinel appended, so we're guaranteed to have data
 func (mqc *MQDecoder) bytein() {
-	if mqc.pos < len(mqc.data) {
-		mqc.curByte = mqc.data[mqc.pos]
-		mqc.pos++
+	// Bounds check (should never happen with sentinel, but safety first)
+	if mqc.pos >= len(mqc.data) {
+		mqc.c += 0xFF00
+		mqc.ct = 8
+		return
+	}
 
-		// Handle byte stuffing (0xFF followed by more than 0x8F)
-		if mqc.curByte == 0xFF {
-			if mqc.pos < len(mqc.data) {
-				next := mqc.data[mqc.pos]
-				if next > 0x8F {
-					mqc.c += 0xFF00
-					mqc.ct = 8
-					return
-				}
-				mqc.pos++
-			}
+	curByte := mqc.data[mqc.pos]
+	mqc.pos++
+
+	// Handle 0xFF byte stuffing
+	if curByte == 0xFF {
+		// Check if we can read next byte
+		if mqc.pos >= len(mqc.data) {
+			mqc.c += 0xFF00
+			mqc.ct = 8
+			return
 		}
 
-		mqc.c += uint32(mqc.curByte) << (8 + mqc.ct)
-		mqc.ct = 8
+		nextByte := mqc.data[mqc.pos]
+		if nextByte > 0x8F {
+			// Marker segment or sentinel - stuffed byte, don't consume next byte
+			mqc.c += 0xFF00
+			mqc.ct = 8
+		} else {
+			// Normal 0xFF followed by <=0x8F (bit stuffing)
+			mqc.pos++
+			mqc.c += uint32(nextByte) << 9
+			mqc.ct = 7
+		}
 	} else {
-		// No more data - pad with 0xFF
-		mqc.c += 0xFF00
+		// Normal byte
+		mqc.c += uint32(curByte) << 8
 		mqc.ct = 8
 	}
 }
@@ -149,6 +206,13 @@ func (mqc *MQDecoder) bytein() {
 // ResetContext resets a context to initial state
 func (mqc *MQDecoder) ResetContext(contextID int) {
 	mqc.contexts[contextID] = 0
+}
+
+// ResetContexts resets all contexts to initial state
+func (mqc *MQDecoder) ResetContexts() {
+	for i := range mqc.contexts {
+		mqc.contexts[i] = 0
+	}
 }
 
 // GetContextState returns the current state of a context

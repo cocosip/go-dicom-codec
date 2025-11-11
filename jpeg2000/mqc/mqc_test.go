@@ -51,10 +51,11 @@ func TestMQDecoderStateTransitions(t *testing.T) {
 		bit := mqc.Decode(ctx)
 		_ = bit // We just want to ensure no panics
 
-		// Get state after decode
-		state := mqc.GetContextState(ctx)
+		// Get state after decode (lower 7 bits only, bit 7 is MPS)
+		contextByte := mqc.GetContextState(ctx)
+		state := contextByte & 0x7F
 		if state > 46 {
-			t.Errorf("Invalid state: %d (max is 46)", state)
+			t.Errorf("Invalid state: %d (max is 46), full context byte: 0x%02x", state, contextByte)
 		}
 	}
 }

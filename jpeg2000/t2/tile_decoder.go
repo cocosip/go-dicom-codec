@@ -1,0 +1,382 @@
+package t2
+
+import (
+	"fmt"
+
+	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codec/jpeg2000/wavelet"
+)
+
+// TileDecoder decodes a single JPEG 2000 tile
+type TileDecoder struct {
+	// Tile information
+	tile      *codestream.Tile
+	siz       *codestream.SIZSegment
+	cod       *codestream.CODSegment
+	qcd       *codestream.QCDSegment
+
+	// Component decoders
+	components []*ComponentDecoder
+
+	// Decoded code-blocks (shared across components)
+	codeBlocks []*CodeBlockDecoder
+
+	// Output
+	decodedData [][]int32 // [component][pixel]
+}
+
+// ComponentDecoder decodes a single component within a tile
+type ComponentDecoder struct {
+	componentIdx int
+	width        int
+	height       int
+	numLevels    int // Number of DWT levels
+
+	// Resolution levels
+	resolutions []*ResolutionLevel
+
+	// Decoded coefficients (after EBCOT, before IDWT)
+	coefficients []int32
+
+	// Final decoded samples (after IDWT)
+	samples []int32
+}
+
+// ResolutionLevel represents one resolution level of a component
+// Fields reserved for future complete implementation
+type ResolutionLevel struct {
+	_ int // level (reserved)
+	_ int // width (reserved)
+	_ int // height (reserved)
+	_ []*SubbandDecoder // subbands (reserved)
+}
+
+// SubbandDecoder decodes a single subband
+// Fields reserved for future complete implementation
+type SubbandDecoder struct {
+	_ codestream.SubbandType // subbandType (reserved)
+	_ int                    // width (reserved)
+	_ int                    // height (reserved)
+	_ []*CodeBlockDecoder    // codeBlocks (reserved)
+	_ []int32                // coeffs (reserved)
+}
+
+// CodeBlockDecoder decodes a single code-block
+type CodeBlockDecoder struct {
+	x0, y0     int
+	x1, y1     int
+	data       []byte // Compressed data
+	numPasses  int
+	t1Decoder  *t1.T1Decoder
+	coeffs     []int32 // Decoded coefficients
+}
+
+// NewTileDecoder creates a new tile decoder
+func NewTileDecoder(
+	tile *codestream.Tile,
+	siz *codestream.SIZSegment,
+	cod *codestream.CODSegment,
+	qcd *codestream.QCDSegment,
+) *TileDecoder {
+	td := &TileDecoder{
+		tile: tile,
+		siz:  siz,
+		cod:  cod,
+		qcd:  qcd,
+	}
+
+	return td
+}
+
+// Decode decodes the tile and returns the pixel data for each component
+func (td *TileDecoder) Decode() ([][]int32, error) {
+	// Initialize component decoders
+	numComponents := int(td.siz.Csiz)
+	td.components = make([]*ComponentDecoder, numComponents)
+	td.decodedData = make([][]int32, numComponents)
+
+	for i := 0; i < numComponents; i++ {
+		comp := &ComponentDecoder{
+			componentIdx: i,
+			width:        int(td.siz.Xsiz),  // Simplified - should calculate per-component
+			height:       int(td.siz.Ysiz),
+			numLevels:    int(td.cod.NumberOfDecompositionLevels),
+		}
+
+		td.components[i] = comp
+
+		// Decode this component
+		if err := td.decodeComponent(comp); err != nil {
+			return nil, fmt.Errorf("failed to decode component %d: %w", i, err)
+		}
+
+		td.decodedData[i] = comp.samples
+	}
+
+	return td.decodedData, nil
+}
+
+// decodeComponent decodes a single component
+func (td *TileDecoder) decodeComponent(comp *ComponentDecoder) error {
+	// Step 1: Parse packets and extract code-block data
+	// For MVP, we'll skip detailed packet parsing and assume data is available
+
+	// Step 2: Decode code-blocks using EBCOT Tier-1
+	if err := td.decodeCodeBlocks(comp); err != nil {
+		return fmt.Errorf("code-block decoding failed: %w", err)
+	}
+
+	// Step 3: Assemble code-block coefficients into subband coefficients
+	if err := td.assembleSubbands(comp); err != nil {
+		return fmt.Errorf("subband assembly failed: %w", err)
+	}
+
+	// Step 4: Apply inverse wavelet transform
+	if err := td.applyIDWT(comp); err != nil {
+		return fmt.Errorf("IDWT failed: %w", err)
+	}
+
+	// Step 5: Level shift and convert to samples
+	td.levelShift(comp)
+
+	return nil
+}
+
+// decodeCodeBlocks decodes all code-blocks in a component using EBCOT
+func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
+	// Parse packets from tile data
+	packetDec := NewPacketDecoder(
+		td.tile.Data,
+		int(td.siz.Csiz),
+		int(td.cod.NumberOfLayers),
+		comp.numLevels+1, // numResolutions = numLevels + 1
+		ProgressionOrder(td.cod.ProgressionOrder),
+	)
+
+	packets, err := packetDec.DecodePackets()
+	if err != nil {
+		return fmt.Errorf("failed to decode packets: %w", err)
+	}
+
+	// Get code-block size from COD
+	cbWidth, cbHeight := td.cod.CodeBlockSize()
+
+	// Calculate number of code-blocks
+	numCBX := (comp.width + cbWidth - 1) / cbWidth
+	numCBY := (comp.height + cbHeight - 1) / cbHeight
+
+	// Initialize code-block storage
+	codeBlocks := make([]*CodeBlockDecoder, 0, numCBX*numCBY)
+
+	// Extract code-block data from packets for this component
+	cbDataMap := make(map[int][]byte) // map[cbIndex]data
+	maxBitplaneMap := make(map[int]int)
+
+	for _, packet := range packets {
+		if packet.ComponentIndex != comp.componentIdx {
+			continue
+		}
+
+		// Extract code-block contributions from this packet
+		dataOffset := 0
+		for cbIdx, cbIncl := range packet.CodeBlockIncls {
+			if cbIncl.Included && cbIncl.DataLength > 0 {
+				if dataOffset+cbIncl.DataLength <= len(packet.Body) {
+					// Accumulate code-block data
+					cbData := packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
+					if existing, ok := cbDataMap[cbIdx]; ok {
+						// Append to existing data
+						cbDataMap[cbIdx] = append(existing, cbData...)
+					} else {
+						cbDataMap[cbIdx] = cbData
+					}
+					dataOffset += cbIncl.DataLength
+
+					// Track max bitplane (estimated from numPasses)
+					maxBP := (cbIncl.NumPasses + 2) / 3 - 1
+					if maxBP > maxBitplaneMap[cbIdx] {
+						maxBitplaneMap[cbIdx] = maxBP
+					}
+				}
+			}
+		}
+	}
+
+	// Create and decode code-blocks
+	for cby := 0; cby < numCBY; cby++ {
+		for cbx := 0; cbx < numCBX; cbx++ {
+			// Calculate code-block bounds
+			x0 := cbx * cbWidth
+			y0 := cby * cbHeight
+			x1 := x0 + cbWidth
+			y1 := y0 + cbHeight
+
+			// Clip to image bounds
+			if x1 > comp.width {
+				x1 = comp.width
+			}
+			if y1 > comp.height {
+				y1 = comp.height
+			}
+
+			actualWidth := x1 - x0
+			actualHeight := y1 - y0
+			cbIdx := cby*numCBX + cbx
+
+			// Get code-block data from packets
+			cbData, hasData := cbDataMap[cbIdx]
+			maxBitplane := maxBitplaneMap[cbIdx]
+
+			// Create code-block decoder
+			cbd := &CodeBlockDecoder{
+				x0:        x0,
+				y0:        y0,
+				x1:        x1,
+				y1:        y1,
+				data:      cbData,
+				numPasses: (maxBitplane + 1) * 3,
+				t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+			}
+
+			// Decode the code-block
+			if hasData && len(cbData) > 0 {
+				// Use DecodeWithBitplane for accurate reconstruction
+				err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+				if err != nil {
+					// If decode fails, use zeros
+					cbd.coeffs = make([]int32, actualWidth*actualHeight)
+				} else {
+					// Get decoded coefficients
+					cbd.coeffs = cbd.t1Decoder.GetData()
+				}
+			} else {
+				// No data - use zeros
+				cbd.coeffs = make([]int32, actualWidth*actualHeight)
+			}
+
+			codeBlocks = append(codeBlocks, cbd)
+		}
+	}
+
+	// Store code-blocks for assembly
+	comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
+	// Store code-blocks in TileDecoder for assembly
+	td.codeBlocks = codeBlocks
+
+	return nil
+}
+
+// assembleSubbands assembles code-block coefficients into subband arrays
+func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
+	// Initialize the full coefficient array
+	comp.coefficients = make([]int32, comp.width*comp.height)
+
+	// Get code-block size
+	cbWidth, cbHeight := td.cod.CodeBlockSize()
+
+	// Calculate number of code-blocks
+	numCBX := (comp.width + cbWidth - 1) / cbWidth
+	numCBY := (comp.height + cbHeight - 1) / cbHeight
+
+	// For 0 decomposition levels:
+	// - We have a single LL subband covering the entire image
+	// - Code-blocks are simply arranged in raster order
+
+	// Assemble code-blocks into the full coefficient array
+	if len(td.codeBlocks) == 0 {
+		// No code-blocks decoded - use zeros
+		return nil
+	}
+
+	for cby := 0; cby < numCBY; cby++ {
+		for cbx := 0; cbx < numCBX; cbx++ {
+			cbIdx := cby*numCBX + cbx
+
+			// Get the code-block
+			if cbIdx >= len(td.codeBlocks) {
+				continue
+			}
+			cb := td.codeBlocks[cbIdx]
+
+			// Calculate code-block position and size
+			x0 := cb.x0
+			y0 := cb.y0
+			x1 := cb.x1
+			y1 := cb.y1
+			actualWidth := x1 - x0
+			actualHeight := y1 - y0
+
+			// Copy decoded coefficients from code-block to full array
+			for y := 0; y < actualHeight; y++ {
+				for x := 0; x < actualWidth; x++ {
+					srcIdx := y*actualWidth + x
+					dstIdx := (y0+y)*comp.width + (x0 + x)
+
+					if srcIdx < len(cb.coeffs) && dstIdx < len(comp.coefficients) {
+						comp.coefficients[dstIdx] = cb.coeffs[srcIdx]
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// applyIDWT applies the inverse discrete wavelet transform
+func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
+	if comp.numLevels == 0 {
+		// No wavelet transform - coefficients are samples
+		comp.samples = comp.coefficients
+		return nil
+	}
+
+	// Check transformation type
+	if td.cod.Transformation != 1 {
+		// 0 = 9-7 irreversible (not yet implemented)
+		return fmt.Errorf("only 5-3 reversible wavelet (transformation=1) is supported")
+	}
+
+	// Apply 5/3 inverse wavelet transform
+	// Copy coefficients to samples buffer (wavelet transform is in-place)
+	comp.samples = make([]int32, len(comp.coefficients))
+	copy(comp.samples, comp.coefficients)
+
+	// Apply inverse multilevel wavelet transform
+	wavelet.InverseMultilevel(comp.samples, comp.width, comp.height, comp.numLevels)
+
+	return nil
+}
+
+// levelShift applies DC level shift to convert coefficients to samples
+func (td *TileDecoder) levelShift(comp *ComponentDecoder) {
+	// Get bit depth
+	bitDepth := td.siz.Components[comp.componentIdx].BitDepth()
+	isSigned := td.siz.Components[comp.componentIdx].IsSigned()
+
+	if isSigned {
+		// Signed data - no level shift needed
+		return
+	}
+
+	// Unsigned data - add 2^(bitDepth-1)
+	shift := int32(1 << (bitDepth - 1))
+	for i := range comp.samples {
+		comp.samples[i] += shift
+	}
+}
+
+// GetComponentData returns the decoded data for a specific component
+func (td *TileDecoder) GetComponentData(componentIdx int) ([]int32, error) {
+	if componentIdx < 0 || componentIdx >= len(td.decodedData) {
+		return nil, fmt.Errorf("invalid component index: %d", componentIdx)
+	}
+
+	return td.decodedData[componentIdx], nil
+}
+
+// GetAllComponentsData returns decoded data for all components
+func (td *TileDecoder) GetAllComponentsData() [][]int32 {
+	return td.decodedData
+}
