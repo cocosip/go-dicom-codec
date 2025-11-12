@@ -258,8 +258,8 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 			ctx := getMagRefinementContext(flags)
 			t1.mqe.Encode(int(refBit), int(ctx))
 
-			// Mark as refined
-			t1.flags[idx] |= T1_REFINE
+			// Mark as refined and visited
+			t1.flags[idx] |= T1_REFINE | T1_VISIT
 		}
 	}
 
@@ -330,13 +330,52 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					t1.mqe.Encode((rlSigPos>>1)&1, CTX_UNI)
 					t1.mqe.Encode(rlSigPos&1, CTX_UNI)
 
-					// Skip to the significant coefficient
-					x += rlSigPos
-					idx = (y+1)*paddedWidth + (x + 1)
-					flags = t1.flags[idx]
+					// Process all coefficients from rlSigPos to 3
+					// This is similar to OpenJPEG's switch fall-through pattern
+					for dx := rlSigPos; dx < 4; dx++ {
+						xPos := x + dx
+						checkIdx := (y+1)*paddedWidth + (xPos + 1)
+						checkFlags := t1.flags[checkIdx]
+
+						// Check if coefficient is significant at this bit-plane
+						absVal := t1.data[checkIdx]
+						if absVal < 0 {
+							absVal = -absVal
+						}
+						isSig := (absVal >> uint(t1.bitplane)) & 1
+
+						// Encode significance bit
+						ctx := getZeroCodingContext(checkFlags)
+						t1.mqe.Encode(int(isSig), int(ctx))
+
+						if isSig != 0 {
+							// Coefficient becomes significant
+							// Encode sign bit (uniform context in cleanup pass)
+							signBit := 0
+							if t1.data[checkIdx] < 0 {
+								signBit = 1
+								t1.flags[checkIdx] |= T1_SIGN
+							}
+							t1.mqe.Encode(signBit, CTX_UNI)
+
+							// Mark as significant
+							t1.flags[checkIdx] |= T1_SIG
+
+							// Update neighbor flags
+							t1.updateNeighborFlags(xPos, y, checkIdx)
+						}
+
+						// Clear visit flag
+						t1.flags[checkIdx] &^= T1_VISIT
+					}
+
+					// Skip the entire 4-run (loop will increment x by 1, so skip 3 more)
+					x += 3
+					continue
 				}
 			}
 
+			// Normal processing (not part of RL encoding)
 			// Check if coefficient is significant at this bit-plane
 			absVal := t1.data[idx]
 			if absVal < 0 {

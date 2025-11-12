@@ -110,7 +110,15 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 		}
 	}
 
-	e.data = componentData
+	// Copy component data (we need to modify it for DC level shift)
+	e.data = make([][]int32, len(componentData))
+	for i := range componentData {
+		e.data[i] = make([]int32, len(componentData[i]))
+		copy(e.data[i], componentData[i])
+	}
+
+	// Apply DC level shift for unsigned data
+	e.applyDCLevelShift()
 
 	// Build codestream
 	codestream, err := e.buildCodestream()
@@ -676,15 +684,21 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 	return subbands
 }
 
+type codeBlockInfo struct {
+	data   []int32
+	width  int
+	height int
+}
+
 // partitionIntoCodeBlocks partitions a subband into code-blocks
-func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) [][]int32 {
+func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
 	cbWidth := e.params.CodeBlockWidth
 	cbHeight := e.params.CodeBlockHeight
 
 	numCBX := (subband.width + cbWidth - 1) / cbWidth
 	numCBY := (subband.height + cbHeight - 1) / cbHeight
 
-	codeBlocks := make([][]int32, 0, numCBX*numCBY)
+	codeBlocks := make([]codeBlockInfo, 0, numCBX*numCBY)
 
 	for cby := 0; cby < numCBY; cby++ {
 		for cbx := 0; cbx < numCBX; cbx++ {
@@ -714,7 +728,12 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) [][]int32 {
 				}
 			}
 
-			codeBlocks = append(codeBlocks, cbData)
+			// Store code-block with its dimensions
+			codeBlocks = append(codeBlocks, codeBlockInfo{
+				data:   cbData,
+				width:  actualWidth,
+				height: actualHeight,
+			})
 		}
 	}
 
@@ -722,18 +741,11 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) [][]int32 {
 }
 
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder
-func (e *Encoder) encodeCodeBlock(cbData []int32) *t2.PrecinctCodeBlock {
-	// Determine code-block dimensions
-	cbWidth := e.params.CodeBlockWidth
-	cbHeight := e.params.CodeBlockHeight
-
-	// Adjust for actual data size
-	actualSize := len(cbData)
-	actualHeight := (actualSize + cbWidth - 1) / cbWidth
-	if actualHeight > cbHeight {
-		actualHeight = cbHeight
-	}
-	actualWidth := (actualSize + actualHeight - 1) / actualHeight
+func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
+	// Use provided dimensions
+	actualWidth := cb.width
+	actualHeight := cb.height
+	cbData := cb.data
 
 	// Calculate max bitplane from data
 	maxBitplane := calculateMaxBitplane(cbData)
@@ -814,4 +826,28 @@ func log2(n int) int {
 		result++
 	}
 	return result
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// applyDCLevelShift applies DC level shift for unsigned data
+// For unsigned data: subtract 2^(bitDepth-1) to convert to signed range
+func (e *Encoder) applyDCLevelShift() {
+	if e.params.IsSigned {
+		// Signed data - no level shift needed
+		return
+	}
+
+	// Unsigned data - subtract 2^(bitDepth-1)
+	shift := int32(1 << (e.params.BitDepth - 1))
+	for comp := range e.data {
+		for i := range e.data[comp] {
+			e.data[comp][i] -= shift
+		}
+	}
 }

@@ -36,6 +36,9 @@ type ComponentDecoder struct {
 	// Resolution levels
 	resolutions []*ResolutionLevel
 
+	// Code-blocks for this component
+	codeBlocks []*CodeBlockDecoder
+
 	// Decoded coefficients (after EBCOT, before IDWT)
 	coefficients []int32
 
@@ -105,11 +108,43 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		}
 
 		td.components[i] = comp
+	}
 
-		// Decode this component
-		if err := td.decodeComponent(comp); err != nil {
-			return nil, fmt.Errorf("failed to decode component %d: %w", i, err)
+	// Parse packets ONCE for all components
+	packetDec := NewPacketDecoder(
+		td.tile.Data,
+		int(td.siz.Csiz),
+		int(td.cod.NumberOfLayers),
+		int(td.cod.NumberOfDecompositionLevels)+1, // numResolutions = numLevels + 1
+		ProgressionOrder(td.cod.ProgressionOrder),
+	)
+
+	packets, err := packetDec.DecodePackets()
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode packets: %w", err)
+	}
+
+	// Decode code-blocks for all components from the parsed packets
+	if err := td.decodeAllCodeBlocks(packets); err != nil {
+		return nil, fmt.Errorf("failed to decode code-blocks: %w", err)
+	}
+
+	// Process each component
+	for i := 0; i < numComponents; i++ {
+		comp := td.components[i]
+
+		// Assemble subbands
+		if err := td.assembleSubbands(comp); err != nil {
+			return nil, fmt.Errorf("failed to assemble subbands for component %d: %w", i, err)
 		}
+
+		// Apply IDWT
+		if err := td.applyIDWT(comp); err != nil {
+			return nil, fmt.Errorf("IDWT failed for component %d: %w", i, err)
+		}
+
+		// Level shift
+		td.levelShift(comp)
 
 		td.decodedData[i] = comp.samples
 	}
@@ -117,7 +152,118 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	return td.decodedData, nil
 }
 
-// decodeComponent decodes a single component
+// decodeAllCodeBlocks decodes code-blocks for all components from packets
+func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
+	cbWidth, cbHeight := td.cod.CodeBlockSize()
+
+	// Process each component
+	for _, comp := range td.components {
+		// Calculate number of code-blocks for this component
+		numCBX := (comp.width + cbWidth - 1) / cbWidth
+		numCBY := (comp.height + cbHeight - 1) / cbHeight
+
+		// Accumulate code-block data from packets for this component
+		cbDataMap := make(map[int][]byte) // map[cbIndex]data
+		maxBitplaneMap := make(map[int]int)
+
+		for i := range packets {
+			packet := &packets[i]
+			if packet.ComponentIndex != comp.componentIdx {
+				continue
+			}
+
+			// Extract code-block contributions from this packet
+			dataOffset := 0
+			for cbIdx, cbIncl := range packet.CodeBlockIncls {
+				if cbIncl.Included && cbIncl.DataLength > 0 {
+					if dataOffset+cbIncl.DataLength <= len(packet.Body) {
+						// Accumulate code-block data
+						cbData := packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
+						if existing, ok := cbDataMap[cbIdx]; ok {
+							// Append to existing data
+							cbDataMap[cbIdx] = append(existing, cbData...)
+						} else {
+							cbDataMap[cbIdx] = cbData
+						}
+						dataOffset += cbIncl.DataLength
+
+						// Track max bitplane (estimated from numPasses)
+						maxBP := (cbIncl.NumPasses + 2) / 3 - 1
+						if maxBP > maxBitplaneMap[cbIdx] {
+							maxBitplaneMap[cbIdx] = maxBP
+						}
+					}
+				}
+			}
+		}
+
+		// Create and decode code-blocks for this component
+		codeBlocks := make([]*CodeBlockDecoder, 0, numCBX*numCBY)
+
+		for cby := 0; cby < numCBY; cby++ {
+			for cbx := 0; cbx < numCBX; cbx++ {
+				// Calculate code-block bounds
+				x0 := cbx * cbWidth
+				y0 := cby * cbHeight
+				x1 := x0 + cbWidth
+				y1 := y0 + cbHeight
+
+				// Clip to image bounds
+				if x1 > comp.width {
+					x1 = comp.width
+				}
+				if y1 > comp.height {
+					y1 = comp.height
+				}
+
+				actualWidth := x1 - x0
+				actualHeight := y1 - y0
+				cbIdx := cby*numCBX + cbx
+
+				// Get code-block data from packets
+				cbData, hasData := cbDataMap[cbIdx]
+				maxBitplane := maxBitplaneMap[cbIdx]
+
+				// Create code-block decoder
+				cbd := &CodeBlockDecoder{
+					x0:        x0,
+					y0:        y0,
+					x1:        x1,
+					y1:        y1,
+					data:      cbData,
+					numPasses: (maxBitplane + 1) * 3,
+					t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+				}
+
+				// Decode the code-block
+				if hasData && len(cbData) > 0 {
+					// Use DecodeWithBitplane for accurate reconstruction
+					err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+					if err != nil {
+						// If decode fails, use zeros
+						cbd.coeffs = make([]int32, actualWidth*actualHeight)
+					} else {
+						// Get decoded coefficients
+						cbd.coeffs = cbd.t1Decoder.GetData()
+					}
+				} else {
+					// No data - use zeros
+					cbd.coeffs = make([]int32, actualWidth*actualHeight)
+				}
+
+				codeBlocks = append(codeBlocks, cbd)
+			}
+		}
+
+		// Store code-blocks in component
+		comp.codeBlocks = codeBlocks
+		comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
+	}
+
+	return nil
+}
+
+// decodeComponent decodes a single component (deprecated - use decodeAllCodeBlocks)
 func (td *TileDecoder) decodeComponent(comp *ComponentDecoder) error {
 	// Step 1: Parse packets and extract code-block data
 	// For MVP, we'll skip detailed packet parsing and assume data is available
@@ -261,8 +407,8 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 	// Store code-blocks for assembly
 	comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
-	// Store code-blocks in TileDecoder for assembly
-	td.codeBlocks = codeBlocks
+	// Store code-blocks in ComponentDecoder for assembly
+	comp.codeBlocks = codeBlocks
 
 	return nil
 }
@@ -284,7 +430,7 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 	// - Code-blocks are simply arranged in raster order
 
 	// Assemble code-blocks into the full coefficient array
-	if len(td.codeBlocks) == 0 {
+	if len(comp.codeBlocks) == 0 {
 		// No code-blocks decoded - use zeros
 		return nil
 	}
@@ -294,10 +440,10 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 			cbIdx := cby*numCBX + cbx
 
 			// Get the code-block
-			if cbIdx >= len(td.codeBlocks) {
+			if cbIdx >= len(comp.codeBlocks) {
 				continue
 			}
-			cb := td.codeBlocks[cbIdx]
+			cb := comp.codeBlocks[cbIdx]
 
 			// Calculate code-block position and size
 			x0 := cb.x0

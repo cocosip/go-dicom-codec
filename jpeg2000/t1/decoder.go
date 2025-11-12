@@ -242,13 +242,18 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 				signPred := getSignPrediction(flags)
 				sign := signBit ^ signPred
 
-				// Set coefficient value (2^bitplane)
+				// Set coefficient value (2^bitplane) and sign
+				// Note: This is the first time this coefficient becomes significant
 				val := int32(1) << uint(t1.bitplane)
 				if sign != 0 {
-					val = -val
 					t1.flags[idx] |= T1_SIGN
 				}
-				t1.data[idx] = val
+				// Apply sign to value
+				if t1.flags[idx]&T1_SIGN != 0 {
+					t1.data[idx] = -val
+				} else {
+					t1.data[idx] = val
+				}
 
 				// Mark as significant
 				t1.flags[idx] |= T1_SIG
@@ -293,8 +298,8 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 				}
 			}
 
-			// Mark as refined
-			t1.flags[idx] |= T1_REFINE
+			// Mark as refined and visited
+			t1.flags[idx] |= T1_REFINE | T1_VISIT
 		}
 	}
 
@@ -334,7 +339,11 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					// Decode run-length bit
 					rlBit := t1.mqc.Decode(CTX_RL)
 					if rlBit == 0 {
-						// All 4 remain insignificant
+						// All 4 remain insignificant, clear visit flags and continue
+						for dx := 0; dx < 4; dx++ {
+							checkIdx := (y+1)*paddedWidth + (x + dx + 1)
+							t1.flags[checkIdx] &^= T1_VISIT
+						}
 						x += 3 // Skip next 3 (loop will increment by 1)
 						continue
 					}
@@ -344,13 +353,53 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					runlen |= t1.mqc.Decode(CTX_UNI) << 1
 					runlen |= t1.mqc.Decode(CTX_UNI)
 
-					// Skip to the significant coefficient
-					x += runlen
-					idx = (y+1)*paddedWidth + (x + 1)
-					flags = t1.flags[idx]
+					// Process all coefficients from runlen to 3
+					// This matches OpenJPEG's switch fall-through pattern
+					for dx := runlen; dx < 4; dx++ {
+						xPos := x + dx
+						checkIdx := (y+1)*paddedWidth + (xPos + 1)
+						checkFlags := t1.flags[checkIdx]
+
+						// Decode significance bit
+						ctx := getZeroCodingContext(checkFlags)
+						bit := t1.mqc.Decode(int(ctx))
+
+						if bit != 0 {
+							// Coefficient becomes significant
+							// Decode sign bit
+							signBit := t1.mqc.Decode(CTX_UNI)
+
+							// Set coefficient value (2^bitplane) and sign
+							// Note: This is the first time this coefficient becomes significant
+							val := int32(1) << uint(t1.bitplane)
+							if signBit != 0 {
+								t1.flags[checkIdx] |= T1_SIGN
+							}
+							// Apply sign to value
+							if t1.flags[checkIdx]&T1_SIGN != 0 {
+								t1.data[checkIdx] = -val
+							} else {
+								t1.data[checkIdx] = val
+							}
+
+							// Mark as significant
+							t1.flags[checkIdx] |= T1_SIG
+
+							// Update neighbor flags
+							t1.updateNeighborFlags(xPos, y, checkIdx)
+						}
+
+						// Clear visit flag
+						t1.flags[checkIdx] &^= T1_VISIT
+					}
+
+					// Skip the entire 4-run (loop will increment x by 1, so skip 3 more)
+					x += 3
+					continue
 				}
 			}
 
+			// Normal processing (not part of RL encoding)
 			// Decode significance bit
 			ctx := getZeroCodingContext(flags)
 			bit := t1.mqc.Decode(int(ctx))
@@ -360,13 +409,18 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				// Decode sign bit
 				signBit := t1.mqc.Decode(CTX_UNI)
 
-				// Set coefficient value
+				// Set coefficient value (2^bitplane) and sign
+				// Note: This is the first time this coefficient becomes significant
 				val := int32(1) << uint(t1.bitplane)
 				if signBit != 0 {
-					val = -val
 					t1.flags[idx] |= T1_SIGN
 				}
-				t1.data[idx] = val
+				// Apply sign to value
+				if t1.flags[idx]&T1_SIGN != 0 {
+					t1.data[idx] = -val
+				} else {
+					t1.data[idx] = val
+				}
 
 				// Mark as significant
 				t1.flags[idx] |= T1_SIG

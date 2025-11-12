@@ -24,11 +24,12 @@ type Packet struct {
 
 // CodeBlockIncl represents code-block inclusion and contribution information
 type CodeBlockIncl struct {
-	Included       bool  // Whether this code-block is included in this packet
-	FirstInclusion bool  // Whether this is the first packet to include this code-block
-	NumPasses      int   // Number of coding passes contributed
-	DataLength     int   // Length of compressed data in bytes
+	Included       bool   // Whether this code-block is included in this packet
+	FirstInclusion bool   // Whether this is the first packet to include this code-block
+	NumPasses      int    // Number of coding passes contributed
+	DataLength     int    // Length of compressed data in bytes
 	Data           []byte // Compressed code-block data
+	ZeroBitplanes  int    // Number of missing MSB bit-planes (from tag tree)
 }
 
 // Precinct represents a precinct in the codestream
@@ -104,89 +105,7 @@ func (p ProgressionOrder) String() string {
 	}
 }
 
-// TagTree represents a tag tree used in packet headers
-// Tag trees efficiently encode incremental information
-type TagTree struct {
-	Width  int      // Number of leaves horizontally
-	Height int      // Number of leaves vertically
-	Nodes  []int    // Node values (-1 = unknown)
-	States []int    // Node states (decoding state)
-}
-
-// NewTagTree creates a new tag tree
-func NewTagTree(width, height int) *TagTree {
-	// Calculate total number of nodes in the tree
-	// The tree is a quad-tree structure
-	numNodes := 0
-	w, h := width, height
-	for w > 0 && h > 0 {
-		numNodes += w * h
-		w = (w + 1) / 2
-		h = (h + 1) / 2
-		if w == 1 && h == 1 {
-			// Reached root node
-			break
-		}
-	}
-
-	// Ensure at least one node
-	if numNodes == 0 {
-		numNodes = 1
-	}
-
-	nodes := make([]int, numNodes)
-	// Initialize all nodes to -1 (unknown)
-	for i := range nodes {
-		nodes[i] = -1
-	}
-
-	return &TagTree{
-		Width:  width,
-		Height: height,
-		Nodes:  nodes,
-		States: make([]int, numNodes),
-	}
-}
-
-// Reset resets the tag tree to initial state
-func (tt *TagTree) Reset() {
-	for i := range tt.Nodes {
-		tt.Nodes[i] = -1
-		tt.States[i] = 0
-	}
-}
-
-// GetValue returns the decoded value for a leaf node
-// Returns -1 if not yet decoded
-func (tt *TagTree) GetValue(leafX, leafY int) int {
-	if leafX < 0 || leafX >= tt.Width || leafY < 0 || leafY >= tt.Height {
-		return -1
-	}
-	return tt.Nodes[leafY*tt.Width+leafX]
-}
-
-// SetValue sets the value for a leaf node (used during encoding)
-func (tt *TagTree) SetValue(leafX, leafY, value int) {
-	if leafX < 0 || leafX >= tt.Width || leafY < 0 || leafY >= tt.Height {
-		return
-	}
-	tt.Nodes[leafY*tt.Width+leafX] = value
-}
-
-// GetNumLevels returns the number of levels in the tag tree
-func (tt *TagTree) GetNumLevels() int {
-	levels := 0
-	w, h := tt.Width, tt.Height
-	for w > 0 && h > 0 {
-		levels++
-		w = (w + 1) / 2
-		h = (h + 1) / 2
-		if w == 1 && h == 1 {
-			break
-		}
-	}
-	return levels
-}
+// Note: TagTree implementation moved to tagtree.go
 
 // PacketIterator iterates through packets in a specific progression order
 type PacketIterator struct {

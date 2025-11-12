@@ -153,18 +153,16 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 }
 
 // decodePacketHeader decodes a packet header
-// This is a simplified implementation matching our encoder
+// This is a simplified implementation matching our simplified encoder
 func (pd *PacketDecoder) decodePacketHeader() ([]byte, []CodeBlockIncl, error) {
 	headerStart := pd.offset
 	bitReader := newBitReader(pd.data[pd.offset:])
 	cbIncls := make([]CodeBlockIncl, 0)
 
-	// For simplified implementation, assume we know the number of code-blocks
-	// In production, this would come from precinct structure
-	// For now, decode until we hit a pattern that indicates end of header
-
-	// Try to decode code-block inclusions
-	maxCodeBlocks := 64 // Safety limit
+	// For simplified implementation, read only the first code-block
+	// In production, we would calculate from precinct/tile structure
+	// For now, assume single code-block per packet (matching encoder for numLevels=0)
+	maxCodeBlocks := 1 // Simplified: only one code-block
 	for i := 0; i < maxCodeBlocks; i++ {
 		// Read inclusion bit
 		inclBit, err := bitReader.readBit()
@@ -184,13 +182,16 @@ func (pd *PacketDecoder) decodePacketHeader() ([]byte, []CodeBlockIncl, error) {
 		// Code-block is included
 		cbIncl.FirstInclusion = true // Simplified
 
-		// Read zero bitplanes (simplified: skip tag tree, read termination)
+		// Read zero bitplanes (simplified: unary encoding, read until we see a 1 bit)
+		zbp := 0
 		for {
 			bit, err := bitReader.readBit()
 			if err != nil || bit == 1 {
 				break
 			}
+			zbp++
 		}
+		cbIncl.ZeroBitplanes = zbp
 
 		// Read number of coding passes (simplified unary code)
 		numPasses := 1
@@ -289,4 +290,11 @@ func removeByteStuffing(data []byte) []byte {
 // GetPackets returns the decoded packets
 func (pd *PacketDecoder) GetPackets() []Packet {
 	return pd.packets
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
