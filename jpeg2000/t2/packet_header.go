@@ -127,10 +127,18 @@ func (php *PacketHeaderParser) ParseHeader() (*Packet, error) {
 				cbState.Included = true
 				cbState.FirstLayer = firstLayer
 
-				// Decode number of zero bit-planes
-				zbp, err := php.zbpTagTree.DecodeZeroBitPlanes(cbx, cby, php.readBit)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decode ZBP for CB[%d,%d]: %w", cbx, cby, err)
+				// Decode number of zero bit-planes (simplified format)
+				// Count zeros until we see a 1
+				zbp := 0
+				for {
+					bit, err := php.readBit()
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode ZBP for CB[%d,%d]: %w", cbx, cby, err)
+					}
+					if bit == 1 {
+						break
+					}
+					zbp++
 				}
 				cbState.ZeroBitPlanes = zbp
 			} else {

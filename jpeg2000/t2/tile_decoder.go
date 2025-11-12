@@ -187,8 +187,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 						}
 						dataOffset += cbIncl.DataLength
 
-						// Track max bitplane (estimated from numPasses)
-						maxBP := (cbIncl.NumPasses + 2) / 3 - 1
+						// Calculate max bitplane from zero bitplanes
+						// maxBitplane = bitDepth - 1 - zeroBitplanes
+						componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+						maxBP := componentBitDepth - 1 - cbIncl.ZeroBitplanes
 						if maxBP > maxBitplaneMap[cbIdx] {
 							maxBitplaneMap[cbIdx] = maxBP
 						}
@@ -225,13 +227,19 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 				maxBitplane := maxBitplaneMap[cbIdx]
 
 				// Create code-block decoder
+				numPasses := (maxBitplane + 1) * 3
+				// DEBUG: Log CodeBlockStyle for first codeblock
+				if cbx == 0 && cby == 0 {
+					fmt.Printf("[CB init] CodeBlockStyle=%d resetctx=%v\n", td.cod.CodeBlockStyle, (td.cod.CodeBlockStyle&0x01) != 0)
+				}
+
 				cbd := &CodeBlockDecoder{
 					x0:        x0,
 					y0:        y0,
 					x1:        x1,
 					y1:        y1,
 					data:      cbData,
-					numPasses: (maxBitplane + 1) * 3,
+					numPasses: numPasses,
 					t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
 				}
 
@@ -339,8 +347,10 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 					}
 					dataOffset += cbIncl.DataLength
 
-					// Track max bitplane (estimated from numPasses)
-					maxBP := (cbIncl.NumPasses + 2) / 3 - 1
+					// Calculate max bitplane from zero bitplanes
+					// maxBitplane = bitDepth - 1 - zeroBitplanes
+					componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+					maxBP := componentBitDepth - 1 - cbIncl.ZeroBitplanes
 					if maxBP > maxBitplaneMap[cbIdx] {
 						maxBitplaneMap[cbIdx] = maxBP
 					}

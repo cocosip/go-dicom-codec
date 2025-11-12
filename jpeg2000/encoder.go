@@ -758,6 +758,18 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		numPasses = 0
 	}
 
+	// Calculate zero bit-planes
+	// ZeroBitPlanes = number of MSB bit-planes that are all zero
+	// Formula: bitDepth - 1 - maxBitplane
+	// Example: 8-bit data with maxBitplane=0 (value=1) => ZeroBitPlanes=7 (bit-planes 1-7 are zero)
+	zeroBitPlanes := 0
+	if maxBitplane < 0 {
+		// All data is zero, all bit-planes are zero
+		zeroBitPlanes = e.params.BitDepth
+	} else {
+		zeroBitPlanes = e.params.BitDepth - 1 - maxBitplane
+	}
+
 	// Create T1 encoder
 	t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
 
@@ -768,6 +780,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		encodedData = []byte{0x00}
 		numPasses = 0
 		maxBitplane = 0
+		zeroBitPlanes = e.params.BitDepth
 	}
 
 	// Create PrecinctCodeBlock structure
@@ -779,7 +792,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		Y1:             actualHeight,
 		Included:       false, // First inclusion in packet
 		NumPassesTotal: numPasses,
-		ZeroBitPlanes:  0, // For lossless, typically 0
+		ZeroBitPlanes:  zeroBitPlanes,
 		Data:           encodedData,
 	}
 

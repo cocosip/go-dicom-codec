@@ -852,6 +852,97 @@ codestream 包: 6/6 测试通过
 
 ---
 
-**最后更新**: 2025-11-11 (Day 6 - 编码器完成!)
-**下次更新**: 完善tag tree实现，支持更多数据模式
+### 2025-11-12 (Day 7 - DC Level Shift & 调试)
+**完成**:
+- ✅ 创建尺寸边界测试 (8x8 到 64x64) - TestSizeBoundary
+- ✅ 创建简单模式测试 (zeros, ones) - TestDebugSimplePatterns
+- ✅ 创建uniform数据测试 - TestDebugUniform
+- ✅ 修复T1 Cleanup Pass循环方向 - 从横向改为纵向(column-first)
+- ✅ 修复ZeroBitPlanes编码/解码 - 简化格式(zeros+1)
+- ✅ 实现inverse DC level shift - decoder端添加
+- ✅ 修复encoder/decoder ZBP计算 - bitDepth-1-maxBitplane
+- ✅ 清理VISIT flags bug - RL encoding跳过的coefficients
+
+**发现的关键问题**:
+1. **T1 Loop方向错误** - ✅ 已修复
+   - 问题: Cleanup Pass使用横向循环(row-by-row)
+   - 正确: 应该纵向循环(column-by-column, 4 rows/group)
+   - 影响: 导致8x8,16x16以外的尺寸全部失败
+   - 状态: 已修复，8x8和16x16通过
+
+2. **DC Level Shift缺失** - ✅ 已添加
+   - 问题: Decoder缺少inverse DC level shift
+   - 症状: Unsigned数据解码后偏移+128
+   - 修复: 添加applyInverseDCLevelShift()
+   - 位置: decoder.go line 241-257
+
+3. **ZeroBitPlanes格式不匹配** - ✅ 已修复
+   - 问题: Encoder用简化格式，Decoder用TagTree格式
+   - 修复: Decoder改用简化格式(count zeros until 1)
+   - 位置: packet_header.go line 130-143
+
+4. **Magnitude Refinement Pass Bug** - ⚠️ 调查中
+   - 问题: T1 decoder不能正确累加bit-planes
+   - 症状: 值1 → -127(encoded) → 64(decoded) → 192(after DC shift)
+   - 期望: 值1 → -127(encoded) → -127(decoded) → 1(after DC shift)
+   - 分析:
+     - Encoder正确: 1 → DC shift → -127 ✓
+     - maxBitplane=6, numPasses=21, ZBP=1 ✓
+     - T1 decoder执行所有21个passes ✓
+     - 但MRP没有累加bit-planes 5,4,3,2,1,0的贡献
+     - 只保留了bit-plane 6的初始值(64)
+   - 状态: 需要深入调试decodeMagRefPass()
+
+**测试状态**:
+```
+当前失败模式 (添加inverse DC shift后):
+- 8x8 gradient: 100% errors (max error: 128)
+- 16x16 gradient: 100% errors (max error: 128)
+- 20x20 gradient: 100% errors (max error: 128)
+- 24x24 gradient: 100% errors (max error: 139)
+- 所有尺寸uniform: 100% errors
+- Solid zeros: orig=0, decoded=128 (正好+128偏移)
+- Solid ones: orig=1, decoded=129或192 (取决于尺寸)
+```
+
+**调试发现**:
+通过添加详细日志追踪：
+1. Encoder DC shift工作正常: 1 → -127
+2. maxBitplane计算正确: maxBitplane=6 (for -127)
+3. ZeroBitPlanes计算正确: ZBP=1 (8-1-6=1)
+4. T1 decoder执行流程正确: 21 passes全部执行
+5. **问题定位**: 第一个coefficient解码后=64，不是-127
+   - 64 = 2^6，说明只有bit-plane 6被设置
+   - Magnitude Refinement Pass没有累加后续bit-planes
+
+**下一步**:
+- [ ] 深入调试decodeMagRefPass()实现
+- [ ] 检查magnitude refinement的bit累加逻辑
+- [ ] 对比OpenJPEG的参考实现
+- [ ] 验证coefficient更新是否使用正确的索引
+- [ ] 检查T1_REFINE标志是否正确设置
+
+**代码修改**:
+- jpeg2000/t1/encoder.go: Cleanup Pass循环方向 (line 269-426)
+- jpeg2000/t1/decoder.go: Cleanup Pass循环方向 (line 309-453)
+- jpeg2000/t1/encoder.go: VISIT flags清理 (line 336-341)
+- jpeg2000/decoder.go: inverse DC level shift (line 241-257)
+- jpeg2000/t2/packet_header.go: ZBP简化格式 (line 130-143)
+- jpeg2000/t2/tile_decoder.go: maxBitplane计算 (line 190-196, 342-348)
+- jpeg2000/encoder.go: ZeroBitPlanes计算 (line 761-771)
+
+**新增测试文件**:
+- jpeg2000/size_boundary_test.go
+- jpeg2000/debug_simple_test.go
+- jpeg2000/debug_uniform_test.go
+- jpeg2000/debug_comparison_test.go
+- jpeg2000/debug_zbp_test.go
+
+**工作时间**: ~4小时
+**代码提交**: 待提交
+
+---
+
+**最后更新**: 2025-11-12 (Day 7 - DC Level Shift调试)
+**下次更新**: 修复Magnitude Refinement Pass，完成lossless往返测试
 

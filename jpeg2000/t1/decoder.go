@@ -66,6 +66,9 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 
 	t1.roishift = roishift
 
+	// DEBUG: Log resetctx
+	fmt.Printf("[T1-DEC] resetctx=%v\n", t1.resetctx)
+
 	// Initialize MQ decoder
 	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
 
@@ -78,6 +81,11 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 			// Skip this bit-plane (ROI region)
 			continue
 		}
+
+		// DEBUG: Log first coefficient value at start of bit-plane
+		paddedWidth := t1.width + 2
+		firstIdx := paddedWidth + 1
+		fmt.Printf("[BP %d START] First coeff data=%d\n", t1.bitplane, t1.data[firstIdx])
 
 		// Three coding passes per bit-plane:
 		// 1. Significance Propagation Pass (SPP)
@@ -171,6 +179,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
+			fmt.Printf("[T1-DEC]   MRP done, passIdx=%d\n", passIdx)
 		}
 
 		if passIdx < numPasses {
@@ -178,6 +187,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
 			passIdx++
+			fmt.Printf("[T1-DEC]   CP done, passIdx=%d\n", passIdx)
 		}
 
 		// Reset context if required
@@ -213,10 +223,16 @@ func (t1 *T1Decoder) GetData() []int32 {
 func (t1 *T1Decoder) decodeSigPropPass() error {
 	paddedWidth := t1.width + 2
 
+	// DEBUG: Track if SPP processes anything for first coefficient
+	sppProcessed := false
+
 	for y := 0; y < t1.height; y++ {
 		for x := 0; x < t1.width; x++ {
 			idx := (y+1)*paddedWidth + (x + 1)
 			flags := t1.flags[idx]
+
+			// DEBUG: Track first coefficient
+			isFirst := (x == 0 && y == 0)
 
 			// Skip if already significant
 			if flags&T1_SIG != 0 {
@@ -228,9 +244,23 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 				continue
 			}
 
+			if isFirst {
+				sppProcessed = true
+				fmt.Printf("[SPP bp=%d] Processing first coeff: SIG_NEIGHBORS=1 ctx=", t1.bitplane)
+			}
+
 			// Decode significance bit
 			ctx := getZeroCodingContext(flags)
+
+			if isFirst {
+				fmt.Printf("%d ", ctx)
+			}
+
 			bit := t1.mqc.Decode(int(ctx))
+
+			if isFirst {
+				fmt.Printf("sigBit=%d\n", bit)
+			}
 
 			if bit != 0 {
 				// Coefficient becomes significant
@@ -262,9 +292,14 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 				t1.updateNeighborFlags(x, y, idx)
 			}
 
-			// Mark as visited
-			t1.flags[idx] |= T1_VISIT
+			// Clear visit flag (ready for next pass/bit-plane)
+			t1.flags[idx] &^= T1_VISIT
 		}
+	}
+
+	// DEBUG: Log if SPP didn't process first coefficient
+	if !sppProcessed {
+		fmt.Printf("[SPP bp=%d] Skip first coeff (no SIG_NEIGHBORS or already SIG)\n", t1.bitplane)
 	}
 
 	return nil
@@ -280,14 +315,30 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 			idx := (y+1)*paddedWidth + (x + 1)
 			flags := t1.flags[idx]
 
+			// DEBUG: Track first coefficient (0,0)
+			isFirst := (x == 0 && y == 0)
+
 			// Only refine significant coefficients not visited in this bit-plane
 			if (flags&T1_SIG) == 0 || (flags&T1_VISIT) != 0 {
+				if isFirst {
+					fmt.Printf("[MRP bp=%d] Skip first coeff: SIG=%d VISIT=%d data=%d\n",
+						t1.bitplane, flags&T1_SIG, flags&T1_VISIT, t1.data[idx])
+				}
 				continue
 			}
 
 			// Decode refinement bit
 			ctx := getMagRefinementContext(flags)
+
+			if isFirst {
+				fmt.Printf("[MRP bp=%d] Process first coeff: data_before=%d ctx=%d ", t1.bitplane, t1.data[idx], ctx)
+			}
+
 			bit := t1.mqc.Decode(int(ctx))
+
+			if isFirst {
+				fmt.Printf("refBit=%d ", bit)
+			}
 
 			// Update coefficient magnitude
 			if bit != 0 {
@@ -298,8 +349,15 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 				}
 			}
 
-			// Mark as refined and visited
-			t1.flags[idx] |= T1_REFINE | T1_VISIT
+			if isFirst {
+				fmt.Printf("data_after=%d\n", t1.data[idx])
+			}
+
+			// Mark as refined
+			t1.flags[idx] |= T1_REFINE
+
+			// Clear visit flag (ready for next bit-plane)
+			t1.flags[idx] &^= T1_VISIT
 		}
 	}
 
@@ -307,29 +365,32 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 }
 
 // decodeCleanupPass decodes the Cleanup Pass
-// This pass encodes all remaining coefficients not encoded in previous passes
+// IMPORTANT: Process in VERTICAL order (column-first) with 4-row groups for RL decoding
+// This matches OpenJPEG's opj_t1_dec_clnpass() implementation and the encoder
 func (t1 *T1Decoder) decodeCleanupPass() error {
 	paddedWidth := t1.width + 2
 
-	for y := 0; y < t1.height; y++ {
-		for x := 0; x < t1.width; x += 1 {
-			idx := (y+1)*paddedWidth + (x + 1)
-			flags := t1.flags[idx]
-
-			// Skip if already visited or significant
-			if (flags & T1_VISIT) != 0 {
-				t1.flags[idx] &^= T1_VISIT // Clear visit flag
-				continue
-			}
-
-			// Run-length coding for sequences of 4 coefficients
-			// If x is aligned to 4 and next 4 are all non-significant with no significant neighbors
-			if x%4 == 0 && x+3 < t1.width {
-				// Check if run-length coding can be applied
+	// Process in groups of 4 rows (vertical RL decoding)
+	for k := 0; k < t1.height; k += 4 {
+		for i := 0; i < t1.width; i++ {
+			// Try run-length decoding for this column (4 vertical coefficients)
+			// Only if all 4 rows are available
+			if k+3 < t1.height {
+				// Check if run-length coding can be applied to this 4-coeff vertical run
 				canUseRL := true
-				for dx := 0; dx < 4; dx++ {
-					checkIdx := (y+1)*paddedWidth + (x + dx + 1)
-					if (t1.flags[checkIdx]&T1_SIG) != 0 || (t1.flags[checkIdx]&T1_SIG_NEIGHBORS) != 0 {
+
+				for dy := 0; dy < 4; dy++ {
+					y := k + dy
+					idx := (y+1)*paddedWidth + (i + 1)
+
+					// Skip if already visited
+					if (t1.flags[idx] & T1_VISIT) != 0 {
+						canUseRL = false
+						break
+					}
+
+					// Check if coefficient or neighbors are already significant
+					if (t1.flags[idx]&T1_SIG) != 0 || (t1.flags[idx]&T1_SIG_NEIGHBORS) != 0 {
 						canUseRL = false
 						break
 					}
@@ -339,13 +400,13 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					// Decode run-length bit
 					rlBit := t1.mqc.Decode(CTX_RL)
 					if rlBit == 0 {
-						// All 4 remain insignificant, clear visit flags and continue
-						for dx := 0; dx < 4; dx++ {
-							checkIdx := (y+1)*paddedWidth + (x + dx + 1)
-							t1.flags[checkIdx] &^= T1_VISIT
+						// All 4 remain insignificant, clear visit flags
+						for dy := 0; dy < 4; dy++ {
+							y := k + dy
+							idx := (y+1)*paddedWidth + (i + 1)
+							t1.flags[idx] &^= T1_VISIT
 						}
-						x += 3 // Skip next 3 (loop will increment by 1)
-						continue
+						continue // Move to next column
 					}
 
 					// At least one is significant, decode uniformly which one
@@ -353,84 +414,128 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					runlen |= t1.mqc.Decode(CTX_UNI) << 1
 					runlen |= t1.mqc.Decode(CTX_UNI)
 
+					// Clear VISIT flags for all coefficients before runlen (they remain insignificant)
+					for dy := 0; dy < runlen; dy++ {
+						y := k + dy
+						idx := (y+1)*paddedWidth + (i + 1)
+						t1.flags[idx] &^= T1_VISIT
+					}
+
 					// Process all coefficients from runlen to 3
-					// This matches OpenJPEG's switch fall-through pattern
-					for dx := runlen; dx < 4; dx++ {
-						xPos := x + dx
-						checkIdx := (y+1)*paddedWidth + (xPos + 1)
-						checkFlags := t1.flags[checkIdx]
+					for dy := runlen; dy < 4; dy++ {
+						y := k + dy
+						idx := (y+1)*paddedWidth + (i + 1)
+						flags := t1.flags[idx]
+
+						// DEBUG: Track first coefficient (0,0)
+						isFirst := (i == 0 && y == 0)
 
 						// Decode significance bit
-						ctx := getZeroCodingContext(checkFlags)
+						ctx := getZeroCodingContext(flags)
+
+						if isFirst {
+							fmt.Printf("[CP bp=%d] RL path: decode sigBit ctx=%d ", t1.bitplane, ctx)
+						}
+
 						bit := t1.mqc.Decode(int(ctx))
+
+						if isFirst {
+							fmt.Printf("sigBit=%d ", bit)
+						}
 
 						if bit != 0 {
 							// Coefficient becomes significant
 							// Decode sign bit
 							signBit := t1.mqc.Decode(CTX_UNI)
 
+							if isFirst {
+								fmt.Printf("signBit=%d ", signBit)
+							}
+
 							// Set coefficient value (2^bitplane) and sign
 							// Note: This is the first time this coefficient becomes significant
 							val := int32(1) << uint(t1.bitplane)
 							if signBit != 0 {
-								t1.flags[checkIdx] |= T1_SIGN
+								t1.flags[idx] |= T1_SIGN
 							}
 							// Apply sign to value
-							if t1.flags[checkIdx]&T1_SIGN != 0 {
-								t1.data[checkIdx] = -val
+							if t1.flags[idx]&T1_SIGN != 0 {
+								t1.data[idx] = -val
 							} else {
-								t1.data[checkIdx] = val
+								t1.data[idx] = val
+							}
+
+							if isFirst {
+								fmt.Printf("data=%d\n", t1.data[idx])
 							}
 
 							// Mark as significant
-							t1.flags[checkIdx] |= T1_SIG
+							t1.flags[idx] |= T1_SIG
 
 							// Update neighbor flags
-							t1.updateNeighborFlags(xPos, y, checkIdx)
+							t1.updateNeighborFlags(i, y, idx)
+						} else if isFirst {
+							fmt.Printf("insignificant\n")
 						}
 
 						// Clear visit flag
-						t1.flags[checkIdx] &^= T1_VISIT
+						t1.flags[idx] &^= T1_VISIT
 					}
 
-					// Skip the entire 4-run (loop will increment x by 1, so skip 3 more)
-					x += 3
+					continue // RL decoding handled this column, move to next
+				}
+			}
+
+			// Normal processing (not part of RL decoding, or partial row group)
+			// Process remaining rows in this group
+			for dy := 0; dy < 4 && k+dy < t1.height; dy++ {
+				y := k + dy
+				idx := (y+1)*paddedWidth + (i + 1)
+				flags := t1.flags[idx]
+
+				// Skip if already visited
+				if (flags & T1_VISIT) != 0 {
+					t1.flags[idx] &^= T1_VISIT
 					continue
 				}
-			}
 
-			// Normal processing (not part of RL encoding)
-			// Decode significance bit
-			ctx := getZeroCodingContext(flags)
-			bit := t1.mqc.Decode(int(ctx))
-
-			if bit != 0 {
-				// Coefficient becomes significant
-				// Decode sign bit
-				signBit := t1.mqc.Decode(CTX_UNI)
-
-				// Set coefficient value (2^bitplane) and sign
-				// Note: This is the first time this coefficient becomes significant
-				val := int32(1) << uint(t1.bitplane)
-				if signBit != 0 {
-					t1.flags[idx] |= T1_SIGN
-				}
-				// Apply sign to value
-				if t1.flags[idx]&T1_SIGN != 0 {
-					t1.data[idx] = -val
-				} else {
-					t1.data[idx] = val
+				// Skip if already significant
+				if (flags & T1_SIG) != 0 {
+					continue
 				}
 
-				// Mark as significant
-				t1.flags[idx] |= T1_SIG
+				// Decode significance bit
+				ctx := getZeroCodingContext(flags)
+				bit := t1.mqc.Decode(int(ctx))
 
-				// Update neighbor flags
-				t1.updateNeighborFlags(x, y, idx)
+				if bit != 0 {
+					// Coefficient becomes significant
+					// Decode sign bit
+					signBit := t1.mqc.Decode(CTX_UNI)
+
+					// Set coefficient value (2^bitplane) and sign
+					// Note: This is the first time this coefficient becomes significant
+					val := int32(1) << uint(t1.bitplane)
+					if signBit != 0 {
+						t1.flags[idx] |= T1_SIGN
+					}
+					// Apply sign to value
+					if t1.flags[idx]&T1_SIGN != 0 {
+						t1.data[idx] = -val
+					} else {
+						t1.data[idx] = val
+					}
+
+					// Mark as significant
+					t1.flags[idx] |= T1_SIG
+
+					// Update neighbor flags
+					t1.updateNeighborFlags(i, y, idx)
+				}
+
+				// Clear visit flag
+				t1.flags[idx] &^= T1_VISIT
 			}
-
-			// Clear visit flag
-			t1.flags[idx] &^= T1_VISIT
 		}
 	}
 

@@ -8,11 +8,13 @@ import (
 // inclusion and zero bitplane information in JPEG 2000 packet headers.
 // Implementation follows ISO/IEC 15444-1 Section B.10.2
 type TagTree struct {
-	width   int       // Width of the leaf level (number of code-blocks)
-	height  int       // Height of the leaf level
-	levels  int       // Number of levels in the tree
-	nodes   [][]int   // Node values at each level [level][index]
-	states  [][]int   // Node states (decoded value so far) [level][index]
+	width       int       // Width of the leaf level (number of code-blocks)
+	height      int       // Height of the leaf level
+	levels      int       // Number of levels in the tree
+	nodes       [][]int   // Node values at each level [level][index]
+	states      [][]int   // Node states (decoded value so far) [level][index]
+	levelWidths []int     // Width of each level [level]
+	levelHeights []int    // Height of each level [level]
 }
 
 // NewTagTree creates a new tag tree with the given leaf dimensions
@@ -28,6 +30,7 @@ func NewTagTree(width, height int) *TagTree {
 
 	// Calculate number of levels needed
 	// Each level reduces dimensions by half (rounded up)
+	// Level 0 = leaf, Level N-1 = root (1x1)
 	levels := 0
 	w, h := width, height
 	for w > 1 || h > 1 {
@@ -38,13 +41,24 @@ func NewTagTree(width, height int) *TagTree {
 	levels++ // Include root level
 	tt.levels = levels
 
+	// Pre-calculate dimensions for each level
+	tt.levelWidths = make([]int, levels)
+	tt.levelHeights = make([]int, levels)
+
+	w, h = width, height
+	for i := 0; i < levels; i++ {
+		tt.levelWidths[i] = w
+		tt.levelHeights[i] = h
+		w = (w + 1) / 2
+		h = (h + 1) / 2
+	}
+
 	// Allocate nodes and states for each level
 	tt.nodes = make([][]int, levels)
 	tt.states = make([][]int, levels)
 
-	w, h = width, height
 	for i := 0; i < levels; i++ {
-		size := w * h
+		size := tt.levelWidths[i] * tt.levelHeights[i]
 		tt.nodes[i] = make([]int, size)
 		tt.states[i] = make([]int, size)
 
@@ -52,10 +66,6 @@ func NewTagTree(width, height int) *TagTree {
 		for j := 0; j < size; j++ {
 			tt.states[i][j] = 0
 		}
-
-		// Move to next level (parent level)
-		w = (w + 1) / 2
-		h = (h + 1) / 2
 	}
 
 	return tt
@@ -69,41 +79,70 @@ type BitReader interface {
 // Decode decodes the tag tree value for the specified leaf position (x, y)
 // up to the threshold value. Returns the decoded value.
 // The threshold parameter indicates we only need to know if value < threshold.
+// Implementation follows ISO/IEC 15444-1 Section B.10.2
 func (tt *TagTree) Decode(br BitReader, x, y, threshold int) (int, error) {
 	if x < 0 || x >= tt.width || y < 0 || y >= tt.height {
 		return 0, fmt.Errorf("tag tree position out of bounds: (%d,%d) not in [0,%d)x[0,%d)",
 			x, y, tt.width, tt.height)
 	}
 
-	// Start from root level and work down to leaf
+	// Traverse from root (level = levels-1) down to leaf (level = 0)
+	// maintaining the path to the target leaf node
 	level := tt.levels - 1
-	levelWidth := (tt.width + (1 << level) - 1) >> level
 
-	// Position at root
-	px, py := 0, 0
+	// Position in current level
+	px := x
+	py := y
+
+	// Parent node value (minimum value for child nodes)
+	parentValue := 0
+	parentKnown := false // Whether parent value is exactly known (read a 1 bit)
 
 	// Decode from root to leaf
 	for level >= 0 {
-		// Get node index at current level
-		idx := py*levelWidth + px
+		// Calculate position at current level
+		// Each parent covers a 2x2 block of children
+		shift := level
+		px = x >> shift
+		py = y >> shift
 
-		if idx >= len(tt.states[level]) {
-			// Out of bounds - use default value
-			value := 0
-			if level > 0 {
-				// Move to child level
-				level--
-				levelWidth = (tt.width + (1 << level) - 1) >> level
-				px = (x >> level)
-				py = (y >> level)
-			} else {
-				// At leaf level
-				return value, nil
+		// Ensure position is within bounds for this level
+		if px >= tt.levelWidths[level] {
+			px = tt.levelWidths[level] - 1
+		}
+		if py >= tt.levelHeights[level] {
+			py = tt.levelHeights[level] - 1
+		}
+
+		// Get node index at current level
+		idx := py*tt.levelWidths[level] + px
+
+		// Ensure the node state is at least the parent value
+		if tt.states[level][idx] < parentValue {
+			tt.states[level][idx] = parentValue
+			tt.nodes[level][idx] = parentValue
+		}
+
+		// If parent value is known and >= threshold, return it
+		// (all descendants have value >= parent value >= threshold)
+		if parentValue >= threshold {
+			return parentValue, nil
+		}
+
+		// If parent value is exactly known (from reading 1-bit)
+		// children inherit this value directly
+		if parentKnown {
+			if level == 0 {
+				return tt.states[level][idx], nil
 			}
+			// Continue to next level with inherited value
+			parentValue = tt.states[level][idx]
+			level--
 			continue
 		}
 
 		// Decode bits until state[idx] >= threshold or we read a 1 bit
+		valueKnown := false
 		for tt.states[level][idx] < threshold {
 			bit, err := br.ReadBit()
 			if err != nil {
@@ -115,7 +154,8 @@ func (tt *TagTree) Decode(br BitReader, x, y, threshold int) (int, error) {
 				// 0 bit means value is at least states[idx]+1
 				tt.states[level][idx]++
 			} else {
-				// 1 bit means value equals states[idx]
+				// 1 bit means value equals states[idx] exactly
+				valueKnown = true
 				break
 			}
 		}
@@ -128,13 +168,17 @@ func (tt *TagTree) Decode(br BitReader, x, y, threshold int) (int, error) {
 			return tt.states[level][idx], nil
 		}
 
+		// If current node value >= threshold, all descendants >= threshold
+		if tt.states[level][idx] >= threshold {
+			return tt.states[level][idx], nil
+		}
+
+		// Store parent value and whether it's exactly known for next level
+		parentValue = tt.states[level][idx]
+		parentKnown = valueKnown
+
 		// Move to child level
 		level--
-		levelWidth = (tt.width + (1 << level) - 1) >> level
-
-		// Calculate child position
-		px = (x >> level)
-		py = (y >> level)
 	}
 
 	return 0, nil
@@ -204,6 +248,8 @@ func NewTagTreeDecoder(tree *TagTree) *TagTreeDecoder {
 
 // DecodeInclusion decodes code-block inclusion information from tag tree
 // Returns (included, firstLayer, error)
+// If included=false, firstLayer=-1 (not yet known)
+// If included=true, firstLayer is the layer where code-block is first included
 func (tt *TagTree) DecodeInclusion(x, y, currentLayer int, readBit func() (int, error)) (bool, int, error) {
 	// Create a bit reader wrapper
 	br := &bitReaderFunc{readBit: readBit}
@@ -211,12 +257,12 @@ func (tt *TagTree) DecodeInclusion(x, y, currentLayer int, readBit func() (int, 
 	// Decode tag tree value up to currentLayer+1
 	value, err := tt.Decode(br, x, y, currentLayer+1)
 	if err != nil {
-		return false, 0, err
+		return false, -1, err
 	}
 
 	// If value > currentLayer, code-block is not included in this layer
 	if value > currentLayer {
-		return false, value, nil
+		return false, -1, nil
 	}
 
 	// Code-block is included, value is the first layer

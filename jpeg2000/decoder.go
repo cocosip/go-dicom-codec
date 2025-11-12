@@ -105,6 +105,9 @@ func (d *Decoder) decodeTiles() error {
 	// Get assembled image data
 	d.data = assembler.GetImageData()
 
+	// Note: Inverse DC level shift is already applied in tile decoder
+	// Do not apply it again here to avoid double shifting
+
 	return nil
 }
 
@@ -233,4 +236,32 @@ func (d *Decoder) getInterleavedPixelData() []byte {
 		}
 	}
 	return result
+}
+
+// applyInverseDCLevelShift applies inverse DC level shift for unsigned data
+// For unsigned data: add 2^(bitDepth-1) to convert back from signed range
+func (d *Decoder) applyInverseDCLevelShift() {
+	if d.isSigned {
+		// Signed data - no level shift needed
+		return
+	}
+
+	// Unsigned data - add 2^(bitDepth-1)
+	shift := int32(1 << (d.bitDepth - 1))
+
+	// DEBUG: Log first pixel before and after shift
+	if len(d.data) > 0 && len(d.data[0]) > 0 {
+		fmt.Printf("[Inverse DC Shift] First pixel before=%d shift=%d ", d.data[0][0], shift)
+	}
+
+	for c := 0; c < d.components; c++ {
+		for i := 0; i < len(d.data[c]); i++ {
+			d.data[c][i] += shift
+		}
+	}
+
+	// DEBUG: Log first pixel after shift
+	if len(d.data) > 0 && len(d.data[0]) > 0 {
+		fmt.Printf("after=%d\n", d.data[0][0])
+	}
 }
