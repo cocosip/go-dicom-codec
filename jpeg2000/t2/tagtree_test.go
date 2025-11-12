@@ -1,8 +1,25 @@
 package t2
 
 import (
+	"fmt"
 	"testing"
 )
+
+// mockBitReader implements BitReader interface for testing
+type mockBitReader struct {
+	bits []int
+	idx  int
+	t    *testing.T
+}
+
+func (m *mockBitReader) ReadBit() (int, error) {
+	if m.idx >= len(m.bits) {
+		return 0, fmt.Errorf("ran out of test bits")
+	}
+	bit := m.bits[m.idx]
+	m.idx++
+	return bit, nil
+}
 
 // TestTagTreeDecoderBasic tests basic tag tree decoding
 func TestTagTreeDecoderBasic(t *testing.T) {
@@ -53,17 +70,13 @@ func TestTagTreeDecoderBasic(t *testing.T) {
 			tree := NewTagTree(tt.width, tt.height)
 			decoder := NewTagTreeDecoder(tree)
 
-			bitIdx := 0
-			bitReader := func() (int, error) {
-				if bitIdx >= len(tt.bits) {
-					t.Fatalf("Ran out of test bits")
-				}
-				bit := tt.bits[bitIdx]
-				bitIdx++
-				return bit, nil
+			bitReader := &mockBitReader{
+				bits: tt.bits,
+				idx:  0,
+				t:    t,
 			}
 
-			value, err := decoder.Decode(tt.leafX, tt.leafY, tt.threshold, bitReader)
+			value, err := decoder.Decode(bitReader, tt.leafX, tt.leafY, tt.threshold)
 			if err != nil {
 				t.Fatalf("Decode failed: %v", err)
 			}
@@ -226,15 +239,13 @@ func TestTagTreeDecoderReset(t *testing.T) {
 	decoder := NewTagTreeDecoder(tree)
 
 	// Decode a value
-	bitIdx := 0
-	bits := []int{0, 0, 1} // Value 2
-	bitReader := func() (int, error) {
-		bit := bits[bitIdx]
-		bitIdx++
-		return bit, nil
+	bitReader1 := &mockBitReader{
+		bits: []int{0, 0, 1}, // Value 2
+		idx:  0,
+		t:    t,
 	}
 
-	value, err := decoder.Decode(0, 0, 5, bitReader)
+	value, err := decoder.Decode(bitReader1, 0, 0, 5)
 	if err != nil || value != 2 {
 		t.Fatalf("Initial decode failed: value=%d, err=%v", value, err)
 	}
@@ -243,9 +254,12 @@ func TestTagTreeDecoderReset(t *testing.T) {
 	decoder.Reset()
 
 	// Decode again - should decode from scratch
-	bitIdx = 0
-	bits = []int{1} // Value 0
-	value, err = decoder.Decode(0, 0, 5, bitReader)
+	bitReader2 := &mockBitReader{
+		bits: []int{1}, // Value 0
+		idx:  0,
+		t:    t,
+	}
+	value, err = decoder.Decode(bitReader2, 0, 0, 5)
 	if err != nil || value != 0 {
 		t.Errorf("After reset, expected value 0, got %d (err=%v)", value, err)
 	}
@@ -268,18 +282,14 @@ func TestTagTreeDecoderMultipleLeaves(t *testing.T) {
 		leafX := leafIdx % 4
 		leafY := leafIdx / 4
 
-		bitIdx := 0
-		bitReader := func() (int, error) {
-			if bitIdx >= len(expectedBits) {
-				t.Fatalf("Ran out of bits for leaf %d", leafIdx)
-			}
-			bit := expectedBits[bitIdx]
-			bitIdx++
-			return bit, nil
+		bitReader := &mockBitReader{
+			bits: expectedBits,
+			idx:  0,
+			t:    t,
 		}
 
 		expectedValue := len(expectedBits) - 1 // Number of 0s before the 1
-		value, err := decoder.Decode(leafX, leafY, 10, bitReader)
+		value, err := decoder.Decode(bitReader, leafX, leafY, 10)
 		if err != nil {
 			t.Fatalf("Decode failed for leaf %d: %v", leafIdx, err)
 		}
@@ -296,30 +306,31 @@ func TestTagTreeDecoderBoundaryConditions(t *testing.T) {
 		tree := NewTagTree(2, 2)
 		decoder := NewTagTreeDecoder(tree)
 
-		bitReader := func() (int, error) {
-			t.Fatal("Should not call bitReader for out of bounds")
-			return 0, nil
+		bitReader := &mockBitReader{
+			bits: []int{},
+			idx:  0,
+			t:    t,
 		}
 
-		// Test out of bounds - should return 0
-		value, err := decoder.Decode(-1, 0, 5, bitReader)
-		if err != nil || value != 0 {
-			t.Errorf("Out of bounds should return 0, got %d (err=%v)", value, err)
+		// Test out of bounds - should return error
+		_, err := decoder.Decode(bitReader, -1, 0, 5)
+		if err == nil {
+			t.Error("Out of bounds x=-1 should return error")
 		}
 
-		value, err = decoder.Decode(0, -1, 5, bitReader)
-		if err != nil || value != 0 {
-			t.Errorf("Out of bounds should return 0, got %d (err=%v)", value, err)
+		_, err = decoder.Decode(bitReader, 0, -1, 5)
+		if err == nil {
+			t.Error("Out of bounds y=-1 should return error")
 		}
 
-		value, err = decoder.Decode(2, 0, 5, bitReader)
-		if err != nil || value != 0 {
-			t.Errorf("Out of bounds should return 0, got %d (err=%v)", value, err)
+		_, err = decoder.Decode(bitReader, 2, 0, 5)
+		if err == nil {
+			t.Error("Out of bounds x=2 should return error")
 		}
 
-		value, err = decoder.Decode(0, 2, 5, bitReader)
-		if err != nil || value != 0 {
-			t.Errorf("Out of bounds should return 0, got %d (err=%v)", value, err)
+		_, err = decoder.Decode(bitReader, 0, 2, 5)
+		if err == nil {
+			t.Error("Out of bounds y=2 should return error")
 		}
 	})
 
@@ -328,32 +339,30 @@ func TestTagTreeDecoderBoundaryConditions(t *testing.T) {
 		decoder := NewTagTreeDecoder(tree)
 
 		// First decode with value 1
-		bitIdx := 0
-		bits := []int{0, 1} // Value 1
-		bitReader := func() (int, error) {
-			bit := bits[bitIdx]
-			bitIdx++
-			return bit, nil
+		bitReader1 := &mockBitReader{
+			bits: []int{0, 1}, // Value 1
+			idx:  0,
+			t:    t,
 		}
 
-		value, _ := decoder.Decode(0, 0, 5, bitReader)
+		value, _ := decoder.Decode(bitReader1, 0, 0, 5)
 		if value != 1 {
 			t.Fatalf("Initial decode should give value 1, got %d", value)
 		}
 
 		// Second decode with same threshold - should return cached value without reading bits
-		callCount := 0
-		bitReader2 := func() (int, error) {
-			callCount++
-			return 0, nil
+		bitReader2 := &mockBitReader{
+			bits: []int{},
+			idx:  0,
+			t:    t,
 		}
 
-		value, _ = decoder.Decode(0, 0, 5, bitReader2)
+		value, _ = decoder.Decode(bitReader2, 0, 0, 5)
 		if value != 1 {
 			t.Errorf("Cached decode should give value 1, got %d", value)
 		}
-		if callCount > 0 {
-			t.Errorf("Should not read new bits for cached value, but read %d bits", callCount)
+		if bitReader2.idx > 0 {
+			t.Errorf("Should not read new bits for cached value, but read %d bits", bitReader2.idx)
 		}
 	})
 }

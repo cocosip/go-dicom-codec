@@ -50,25 +50,16 @@ func TestTagTreeCreation(t *testing.T) {
 				t.Fatal("NewTagTree returned nil")
 			}
 
-			if tree.Width != tt.width {
-				t.Errorf("Width = %d, want %d", tree.Width, tt.width)
+			if tree.Width() != tt.width {
+				t.Errorf("Width = %d, want %d", tree.Width(), tt.width)
 			}
 
-			if tree.Height != tt.height {
-				t.Errorf("Height = %d, want %d", tree.Height, tt.height)
+			if tree.Height() != tt.height {
+				t.Errorf("Height = %d, want %d", tree.Height(), tt.height)
 			}
 
-			if len(tree.Nodes) == 0 {
-				t.Error("Nodes array is empty")
-			}
-
-			if len(tree.States) == 0 {
-				t.Error("States array is empty")
-			}
-
-			if len(tree.Nodes) != len(tree.States) {
-				t.Errorf("Nodes and States have different lengths: %d vs %d",
-					len(tree.Nodes), len(tree.States))
+			if tree.GetNumLevels() == 0 {
+				t.Error("Number of levels is 0")
 			}
 		})
 	}
@@ -78,23 +69,28 @@ func TestTagTreeCreation(t *testing.T) {
 func TestTagTreeReset(t *testing.T) {
 	tree := NewTagTree(4, 4)
 
-	// Modify some values
-	for i := range tree.Nodes {
-		tree.Nodes[i] = i
-		tree.States[i] = i * 2
+	// Set some values using SetValue
+	tree.SetValue(0, 0, 5)
+	tree.SetValue(1, 1, 10)
+	tree.SetValue(2, 2, 15)
+
+	// Verify values are set
+	if tree.GetValue(0, 0) != 5 {
+		t.Errorf("GetValue(0, 0) = %d, want 5", tree.GetValue(0, 0))
 	}
 
 	// Reset
 	tree.Reset()
 
-	// Verify all values are reset
-	for i := range tree.Nodes {
-		if tree.Nodes[i] != -1 {
-			t.Errorf("Node[%d] = %d, want -1 after reset", i, tree.Nodes[i])
-		}
-		if tree.States[i] != 0 {
-			t.Errorf("State[%d] = %d, want 0 after reset", i, tree.States[i])
-		}
+	// Verify all values are reset to 0
+	if tree.GetValue(0, 0) != 0 {
+		t.Errorf("After reset, GetValue(0, 0) = %d, want 0", tree.GetValue(0, 0))
+	}
+	if tree.GetValue(1, 1) != 0 {
+		t.Errorf("After reset, GetValue(1, 1) = %d, want 0", tree.GetValue(1, 1))
+	}
+	if tree.GetValue(2, 2) != 0 {
+		t.Errorf("After reset, GetValue(2, 2) = %d, want 0", tree.GetValue(2, 2))
 	}
 }
 

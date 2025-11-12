@@ -332,12 +332,12 @@ func TestPacketParserTagTreeIntegration(t *testing.T) {
 	}
 
 	// Verify tag trees have correct dimensions
-	if parser.inclTagTree.Width != 4 {
-		t.Errorf("inclTagTree width = %d, want 4", parser.inclTagTree.Width)
+	if parser.inclTagTree.Width() != 4 {
+		t.Errorf("inclTagTree width = %d, want 4", parser.inclTagTree.Width())
 	}
 
-	if parser.inclTagTree.Height != 4 {
-		t.Errorf("inclTagTree height = %d, want 4", parser.inclTagTree.Height)
+	if parser.inclTagTree.Height() != 4 {
+		t.Errorf("inclTagTree height = %d, want 4", parser.inclTagTree.Height())
 	}
 }
 

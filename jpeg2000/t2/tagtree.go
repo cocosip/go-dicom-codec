@@ -140,6 +140,21 @@ func (tt *TagTree) Decode(br BitReader, x, y, threshold int) (int, error) {
 	return 0, nil
 }
 
+// Width returns the width of the tag tree (number of code-blocks in x direction)
+func (tt *TagTree) Width() int {
+	return tt.width
+}
+
+// Height returns the height of the tag tree (number of code-blocks in y direction)
+func (tt *TagTree) Height() int {
+	return tt.height
+}
+
+// GetNumLevels returns the number of levels in the tag tree
+func (tt *TagTree) GetNumLevels() int {
+	return tt.levels
+}
+
 // GetValue returns the current decoded value at position (x, y)
 // without reading any additional bits
 func (tt *TagTree) GetValue(x, y int) int {
