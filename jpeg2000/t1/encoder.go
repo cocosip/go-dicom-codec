@@ -217,8 +217,8 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 				signPred := getSignPrediction(flags)
 				t1.mqe.Encode(signBit^signPred, int(signCtx))
 
-				// Mark as significant
-				t1.flags[idx] |= T1_SIG
+				// Mark as significant and visited (visited in this bit-plane)
+				t1.flags[idx] |= T1_SIG | T1_VISIT
 
 				// Update neighbor flags
 				t1.updateNeighborFlags(x, y, idx)
@@ -253,6 +253,12 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 				absVal = -absVal
 			}
 			refBit := (absVal >> uint(t1.bitplane)) & 1
+
+			// DEBUG
+			isFirst := (x == 0 && y == 0)
+			if isFirst {
+				fmt.Printf("[ENC MRP bp=%d] absVal=%d refBit=%d\n", t1.bitplane, absVal, refBit)
+			}
 
 			// Encode refinement bit
 			ctx := getMagRefinementContext(flags)
@@ -388,7 +394,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 								t1.mqe.Encode(signBit, CTX_UNI)
 	
 								// Mark as significant
-								t1.flags[idx] |= T1_SIG
+								t1.flags[idx] |= T1_SIG | T1_VISIT
 	
 								// Update neighbor flags
 								t1.updateNeighborFlags(i, y, idx)
@@ -445,7 +451,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						t1.mqe.Encode(signBit, CTX_UNI)
 	
 						// Mark as significant
-						t1.flags[idx] |= T1_SIG
+						t1.flags[idx] |= T1_SIG | T1_VISIT
 	
 						// Update neighbor flags
 						t1.updateNeighborFlags(i, y, idx)

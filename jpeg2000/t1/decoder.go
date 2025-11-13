@@ -167,7 +167,10 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		// 2. Magnitude Refinement Pass (MRP)
 		// 3. Cleanup Pass (CP)
 
+		fmt.Printf("[T1-DEC] BP %d: passIdx=%d, numPasses=%d\n", t1.bitplane, passIdx, numPasses)
+
 		if passIdx < numPasses {
+			fmt.Printf("[T1-DEC]   Executing SPP\n")
 			if err := t1.decodeSigPropPass(); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
@@ -175,14 +178,15 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		}
 
 		if passIdx < numPasses {
+			fmt.Printf("[T1-DEC]   Executing MRP\n")
 			if err := t1.decodeMagRefPass(); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
-			fmt.Printf("[T1-DEC]   MRP done, passIdx=%d\n", passIdx)
 		}
 
 		if passIdx < numPasses {
+			fmt.Printf("[T1-DEC]   Executing CP\n")
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
@@ -286,7 +290,7 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 				}
 
 				// Mark as significant
-				t1.flags[idx] |= T1_SIG
+				t1.flags[idx] |= T1_SIG | T1_VISIT
 
 				// Update neighbor flags
 				t1.updateNeighborFlags(x, y, idx)
@@ -474,7 +478,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 								}
 	
 								// Mark as significant
-								t1.flags[idx] |= T1_SIG
+								t1.flags[idx] |= T1_SIG | T1_VISIT
 	
 								// Update neighbor flags
 								t1.updateNeighborFlags(i, y, idx)
@@ -546,7 +550,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					}
 
 					// Mark as significant
-					t1.flags[idx] |= T1_SIG
+					t1.flags[idx] |= T1_SIG | T1_VISIT
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(i, y, idx)
