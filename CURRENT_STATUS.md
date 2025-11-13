@@ -100,18 +100,22 @@ cd jpeg2000 && go test -run TestEncoderDecoderRoundTrip -v
 
 ## Next Steps
 
-1. **CRITICAL**: Apply the encoder Cleanup Pass fix to `jpeg2000/t1/encoder.go` (documented above)
-2. **HIGH**: Verify decoder RL path also handles already-significant coefficients correctly
-3. **MEDIUM**: Run full test suite and verify gradient data decoding improves
-4. **MEDIUM**: Complete tag tree decoder implementation
-5. **LOW**: Address RL encoding edge cases
+1. **CRITICAL**: ✅ ~~Apply the encoder Cleanup Pass fix~~ - DONE
+2. **CRITICAL**: ✅ ~~Fix decoder RL path~~ - DONE
+3. **HIGH**: Investigate remaining synchronization issues - tests still fail
+   - MRP appears to be reading wrong refinement bits
+   - Possible issue with bit-plane traversal order or context modeling
+   - Need to add more detailed MQ encode/decode logging
+4. **MEDIUM**: Run full JPEG2000 codec tests after T1 fixes
+5. **MEDIUM**: Complete tag tree decoder implementation
+6. **LOW**: Address RL encoding edge cases
 
-## Files Modified (Not Yet Committed)
+## Files Modified (Committed)
 
 - `jpeg2000/mqc/encoder.go` - Added debug counter (EncodeCount)
 - `jpeg2000/mqc/mqc.go` - Added debug counter (DecodeCount)
-- `jpeg2000/t1/decoder.go` - Fixed Cleanup Pass for already-sig coeffs (normal path)
-- `jpeg2000/t1/encoder.go` - **NEEDS FIX** - Must add alreadySig checks
+- `jpeg2000/t1/decoder.go` - ✅ Fixed Cleanup Pass for already-sig coeffs (both RL and normal paths)
+- `jpeg2000/t1/encoder.go` - ✅ Fixed Cleanup Pass for already-sig coeffs (both RL and normal paths)
 
 ## Test Results
 
