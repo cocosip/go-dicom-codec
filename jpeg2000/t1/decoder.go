@@ -516,44 +516,71 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				idx := (y+1)*paddedWidth + (i + 1)
 				flags := t1.flags[idx]
 
+				// DEBUG
+				isFirst := (i == 0 && y == 0)
+
 				// Skip if already visited
 				if (flags & T1_VISIT) != 0 {
+					if isFirst {
+						fmt.Printf("[DEC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
+					}
 					t1.flags[idx] &^= T1_VISIT
 					continue
 				}
 
-				// Skip if already significant
-				if (flags & T1_SIG) != 0 {
-					continue
+				// Check if already significant
+				alreadySig := (flags & T1_SIG) != 0
+
+				if isFirst {
+					fmt.Printf("[DEC CP bp=%d] Normal: alreadySig=%v decode sigBit ", t1.bitplane, alreadySig)
 				}
 
-				// Decode significance bit
+				// Decode significance bit (always, even for already-significant coefficients)
 				ctx := getZeroCodingContext(flags)
 				bit := t1.mqc.Decode(int(ctx))
 
+				if isFirst {
+					fmt.Printf("ctx=%d bit=%d\n", ctx, bit)
+				}
+
 				if bit != 0 {
-					// Coefficient becomes significant
-					// Decode sign bit
-					signBit := t1.mqc.Decode(CTX_UNI)
+					if !alreadySig {
+						// Coefficient becomes significant for the first time
+						// Decode sign bit
+						signBit := t1.mqc.Decode(CTX_UNI)
 
-					// Set coefficient value (2^bitplane) and sign
-					// Note: This is the first time this coefficient becomes significant
-					val := int32(1) << uint(t1.bitplane)
-					if signBit != 0 {
-						t1.flags[idx] |= T1_SIGN
-					}
-					// Apply sign to value
-					if t1.flags[idx]&T1_SIGN != 0 {
-						t1.data[idx] = -val
+						// Set coefficient value (2^bitplane) and sign
+						// Note: This is the first time this coefficient becomes significant
+						val := int32(1) << uint(t1.bitplane)
+						if signBit != 0 {
+							t1.flags[idx] |= T1_SIGN
+						}
+						// Apply sign to value
+						if t1.flags[idx]&T1_SIGN != 0 {
+							t1.data[idx] = -val
+						} else {
+							t1.data[idx] = val
+						}
+
+						// Mark as significant
+						t1.flags[idx] |= T1_SIG | T1_VISIT
+
+						// Update neighbor flags
+						t1.updateNeighborFlags(i, y, idx)
 					} else {
-						t1.data[idx] = val
+						// Already-significant coefficient - update bit-plane value
+						// Encoder encoded the bit-plane value, no sign bit
+						absVal := t1.data[idx]
+						if absVal < 0 {
+							absVal = -absVal
+						}
+						absVal |= (1 << uint(t1.bitplane))
+						if t1.flags[idx]&T1_SIGN != 0 {
+							t1.data[idx] = -absVal
+						} else {
+							t1.data[idx] = absVal
+						}
 					}
-
-					// Mark as significant
-					t1.flags[idx] |= T1_SIG | T1_VISIT
-
-					// Update neighbor flags
-					t1.updateNeighborFlags(i, y, idx)
 				}
 
 				// Clear visit flag

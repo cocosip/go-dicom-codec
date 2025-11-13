@@ -419,8 +419,14 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				idx := (y+1)*paddedWidth + (i + 1)
 				flags := t1.flags[idx]
 
+				// DEBUG
+				isFirst := (i == 0 && y == 0)
+
 				// Skip if already visited
 				if (flags & T1_VISIT) != 0 {
+					if isFirst {
+						fmt.Printf("[ENC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
+					}
 					t1.flags[idx] &^= T1_VISIT
 					continue
 				}
@@ -432,9 +438,18 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				}
 				isSig := (absVal >> uint(t1.bitplane)) & 1
 
+				// DEBUG
+				if isFirst {
+					fmt.Printf("[ENC CP bp=%d] Normal: absVal=%d isSig=%d ", t1.bitplane, absVal, isSig)
+				}
+
 				// Encode significance bit
 				ctx := getZeroCodingContext(flags)
 				t1.mqe.Encode(int(isSig), int(ctx))
+
+				if isFirst {
+					fmt.Printf("ctx=%d\n", ctx)
+				}
 
 				if isSig != 0 {
 				// Check if already significant
