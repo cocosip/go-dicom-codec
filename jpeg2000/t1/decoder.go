@@ -444,36 +444,55 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 						}
 
 						if bit != 0 {
-							// Coefficient becomes significant
-							// Decode sign bit
-							signBit := t1.mqc.Decode(CTX_UNI)
+						// Check if already significant
+						alreadySig := (flags & T1_SIG) != 0
 
-							if isFirst {
-								fmt.Printf("signBit=%d ", signBit)
+						if !alreadySig {
+								// Coefficient becomes significant
+								// Decode sign bit
+								signBit := t1.mqc.Decode(CTX_UNI)
+	
+								if isFirst {
+									fmt.Printf("signBit=%d ", signBit)
+								}
+	
+								// Set coefficient value (2^bitplane) and sign
+								// Note: This is the first time this coefficient becomes significant
+								val := int32(1) << uint(t1.bitplane)
+								if signBit != 0 {
+									t1.flags[idx] |= T1_SIGN
+								}
+								// Apply sign to value
+								if t1.flags[idx]&T1_SIGN != 0 {
+									t1.data[idx] = -val
+								} else {
+									t1.data[idx] = val
+								}
+	
+								if isFirst {
+									fmt.Printf("data=%d\n", t1.data[idx])
+								}
+	
+								// Mark as significant
+								t1.flags[idx] |= T1_SIG
+	
+								// Update neighbor flags
+								t1.updateNeighborFlags(i, y, idx)
+						} else {
+							// Already-significant coefficient in CP RL path
+							// Encoder only encodes bit-plane value, no sign bit
+							// Update coefficient value with this bit-plane's bit
+							absVal := t1.data[idx]
+							if absVal < 0 {
+								absVal = -absVal
 							}
-
-							// Set coefficient value (2^bitplane) and sign
-							// Note: This is the first time this coefficient becomes significant
-							val := int32(1) << uint(t1.bitplane)
-							if signBit != 0 {
-								t1.flags[idx] |= T1_SIGN
-							}
-							// Apply sign to value
+							absVal |= (1 << uint(t1.bitplane))
 							if t1.flags[idx]&T1_SIGN != 0 {
-								t1.data[idx] = -val
+								t1.data[idx] = -absVal
 							} else {
-								t1.data[idx] = val
+								t1.data[idx] = absVal
 							}
-
-							if isFirst {
-								fmt.Printf("data=%d\n", t1.data[idx])
-							}
-
-							// Mark as significant
-							t1.flags[idx] |= T1_SIG
-
-							// Update neighbor flags
-							t1.updateNeighborFlags(i, y, idx)
+						}
 						} else if isFirst {
 							fmt.Printf("insignificant\n")
 						}

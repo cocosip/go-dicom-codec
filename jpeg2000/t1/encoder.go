@@ -369,25 +369,31 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						t1.mqe.Encode(int(isSig), int(ctx))
 
 						if isSig != 0 {
-							// Coefficient becomes significant
-							// Encode sign bit (uniform context in cleanup pass)
-							signBit := 0
-							if t1.data[idx] < 0 {
-								signBit = 1
-								t1.flags[idx] |= T1_SIGN
-							}
+						// Check if already significant
+						alreadySig := (flags & T1_SIG) != 0
 
-							if isFirst {
-								fmt.Printf("signBit=%d\n", signBit)
-							}
-
-							t1.mqe.Encode(signBit, CTX_UNI)
-
-							// Mark as significant
-							t1.flags[idx] |= T1_SIG
-
-							// Update neighbor flags
-							t1.updateNeighborFlags(i, y, idx)
+						if !alreadySig {
+								// Coefficient becomes significant
+								// Encode sign bit (uniform context in cleanup pass)
+								signBit := 0
+								if t1.data[idx] < 0 {
+									signBit = 1
+									t1.flags[idx] |= T1_SIGN
+								}
+	
+								if isFirst {
+									fmt.Printf("signBit=%d\n", signBit)
+								}
+	
+								t1.mqe.Encode(signBit, CTX_UNI)
+	
+								// Mark as significant
+								t1.flags[idx] |= T1_SIG
+	
+								// Update neighbor flags
+								t1.updateNeighborFlags(i, y, idx)
+						}
+						// If already significant: bit was just a refinement, no sign bit needed
 						} else if isFirst {
 							fmt.Printf("insignificant\n")
 						}
@@ -425,20 +431,26 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				t1.mqe.Encode(int(isSig), int(ctx))
 
 				if isSig != 0 {
-					// Coefficient becomes significant
-					// Encode sign bit (uniform context in cleanup pass)
-					signBit := 0
-					if t1.data[idx] < 0 {
-						signBit = 1
-						t1.flags[idx] |= T1_SIGN
-					}
-					t1.mqe.Encode(signBit, CTX_UNI)
+				// Check if already significant
+				alreadySig := (flags & T1_SIG) != 0
 
-					// Mark as significant
-					t1.flags[idx] |= T1_SIG
-
-					// Update neighbor flags
-					t1.updateNeighborFlags(i, y, idx)
+				if !alreadySig {
+						// Coefficient becomes significant
+						// Encode sign bit (uniform context in cleanup pass)
+						signBit := 0
+						if t1.data[idx] < 0 {
+							signBit = 1
+							t1.flags[idx] |= T1_SIGN
+						}
+						t1.mqe.Encode(signBit, CTX_UNI)
+	
+						// Mark as significant
+						t1.flags[idx] |= T1_SIG
+	
+						// Update neighbor flags
+						t1.updateNeighborFlags(i, y, idx)
+				}
+				// If already significant: bit was just a refinement, no sign bit needed
 				}
 
 				// Clear visit flag
