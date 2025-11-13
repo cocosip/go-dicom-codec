@@ -297,7 +297,7 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 			}
 
 			// Clear visit flag (ready for next pass/bit-plane)
-			t1.flags[idx] &^= T1_VISIT
+//			t1.flags[idx] &^= T1_VISIT
 		}
 	}
 
@@ -361,7 +361,7 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 			t1.flags[idx] |= T1_REFINE
 
 			// Clear visit flag (ready for next bit-plane)
-			t1.flags[idx] &^= T1_VISIT
+//			t1.flags[idx] &^= T1_VISIT
 		}
 	}
 
