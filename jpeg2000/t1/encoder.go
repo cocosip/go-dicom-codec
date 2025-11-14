@@ -399,8 +399,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 							fmt.Printf("insignificant\n")
 						}
 
-						// Clear visit flag
-						t1.flags[idx] &^= T1_VISIT
+						// VISIT flag will be cleared at start of next bitplane
 					}
 
 					continue // RL encoding handled this column, move to next
@@ -469,8 +468,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				// If already significant: bit was just a refinement, no sign bit needed
 				}
 
-				// Clear visit flag
-				t1.flags[idx] &^= T1_VISIT
+				// VISIT flag will be cleared at start of next bitplane
 			}
 		}
 	}
