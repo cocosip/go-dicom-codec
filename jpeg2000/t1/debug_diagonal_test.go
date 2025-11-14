@@ -55,7 +55,15 @@ func TestSimpler(t *testing.T) {
 	// Just two values: 1 at (0,0) and 2 at (1,1)
 	data := []int32{1, 0, 0, 2}
 
-	maxBitplane := 1
+	// Calculate maxBitplane from data
+	maxVal := int32(2) // max is 2
+	maxBitplane := 0
+	for maxVal > 0 {
+		maxVal >>= 1
+		maxBitplane++
+	}
+	maxBitplane-- // 2 = binary 10, maxBitplane = 1
+
 	numPasses := (maxBitplane + 1) * 3
 
 	t.Logf("Input: %v, maxBitplane: %d", data, maxBitplane)
