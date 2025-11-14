@@ -99,6 +99,14 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 	// Each bit-plane has up to 3 coding passes
 	passIdx := 0
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
+		// Clear VISIT flags at start of each bitplane
+		// This ensures coefficients can be processed in passes of this bitplane
+		paddedWidth := t1.width + 2
+		paddedHeight := t1.height + 2
+		for i := 0; i < paddedWidth*paddedHeight; i++ {
+			t1.flags[i] &^= T1_VISIT
+		}
+
 		// Check if this bit-plane needs encoding
 		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
 			// Skip this bit-plane (ROI region)
@@ -217,15 +225,13 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 				signPred := getSignPrediction(flags)
 				t1.mqe.Encode(signBit^signPred, int(signCtx))
 
-				// Mark as significant and visited (visited in this bit-plane)
+				// Mark as significant and visited (prevent MRP from processing)
 				t1.flags[idx] |= T1_SIG | T1_VISIT
 
 				// Update neighbor flags
 				t1.updateNeighborFlags(x, y, idx)
 			}
-
-			// Clear visit flag (ready for next pass/bit-plane)
-			t1.flags[idx] &^= T1_VISIT
+			// Note: Do not clear VISIT here - it prevents MRP from re-processing
 		}
 	}
 
@@ -326,12 +332,8 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					t1.mqe.Encode(rlBit, CTX_RL)
 
 					if rlBit == 0 {
-						// All 4 remain insignificant, clear visit flags
-						for dy := 0; dy < 4; dy++ {
-							y := k + dy
-							idx := (y+1)*paddedWidth + (i + 1)
-							t1.flags[idx] &^= T1_VISIT
-						}
+						// All 4 remain insignificant
+						// VISIT flags will be cleared at start of next bitplane
 						continue // Move to next column
 					}
 
@@ -339,12 +341,8 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					t1.mqe.Encode((rlSigPos>>1)&1, CTX_UNI)
 					t1.mqe.Encode(rlSigPos&1, CTX_UNI)
 
-					// Clear VISIT flags for all coefficients before rlSigPos (they remain insignificant)
-					for dy := 0; dy < rlSigPos; dy++ {
-						y := k + dy
-						idx := (y+1)*paddedWidth + (i + 1)
-						t1.flags[idx] &^= T1_VISIT
-					}
+					// Coefficients before rlSigPos remain insignificant
+					// VISIT flags will be cleared at start of next bitplane
 
 					// Process all coefficients from rlSigPos to 3
 					for dy := rlSigPos; dy < 4; dy++ {
@@ -424,7 +422,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					if isFirst {
 						fmt.Printf("[ENC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
 					}
-					t1.flags[idx] &^= T1_VISIT
+					// Do not clear VISIT here - it will be cleared at start of next bitplane
 					continue
 				}
 

@@ -76,6 +76,14 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 	// Each bit-plane has up to 3 coding passes
 	passIdx := 0
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
+		// Clear VISIT flags at start of each bitplane
+		// This ensures coefficients can be processed in passes of this bitplane
+		paddedWidth := t1.width + 2
+		paddedHeight := t1.height + 2
+		for i := 0; i < paddedWidth*paddedHeight; i++ {
+			t1.flags[i] &^= T1_VISIT
+		}
+
 		// Check if this bit-plane needs decoding
 		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
 			// Skip this bit-plane (ROI region)
@@ -83,7 +91,6 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 		}
 
 		// DEBUG: Log first coefficient value at start of bit-plane
-		paddedWidth := t1.width + 2
 		firstIdx := paddedWidth + 1
 		fmt.Printf("[BP %d START] First coeff data=%d\n", t1.bitplane, t1.data[firstIdx])
 
@@ -401,12 +408,8 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					// Decode run-length bit
 					rlBit := t1.mqc.Decode(CTX_RL)
 					if rlBit == 0 {
-						// All 4 remain insignificant, clear visit flags
-						for dy := 0; dy < 4; dy++ {
-							y := k + dy
-							idx := (y+1)*paddedWidth + (i + 1)
-							t1.flags[idx] &^= T1_VISIT
-						}
+						// All 4 remain insignificant
+						// VISIT flags will be cleared at start of next bitplane
 						continue // Move to next column
 					}
 
@@ -415,12 +418,8 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					runlen |= t1.mqc.Decode(CTX_UNI) << 1
 					runlen |= t1.mqc.Decode(CTX_UNI)
 
-					// Clear VISIT flags for all coefficients before runlen (they remain insignificant)
-					for dy := 0; dy < runlen; dy++ {
-						y := k + dy
-						idx := (y+1)*paddedWidth + (i + 1)
-						t1.flags[idx] &^= T1_VISIT
-					}
+					// Coefficients before runlen remain insignificant
+					// VISIT flags will be cleared at start of next bitplane
 
 					// Process all coefficients from runlen to 3
 					for dy := runlen; dy < 4; dy++ {
@@ -498,8 +497,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 							fmt.Printf("insignificant\n")
 						}
 
-						// Clear visit flag
-						t1.flags[idx] &^= T1_VISIT
+						// VISIT flag will be cleared at start of next bitplane
 					}
 
 					continue // RL decoding handled this column, move to next
@@ -521,7 +519,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					if isFirst {
 						fmt.Printf("[DEC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
 					}
-					t1.flags[idx] &^= T1_VISIT
+					// Do not clear VISIT here - it will be cleared at start of next bitplane
 					continue
 				}
 
@@ -580,8 +578,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					}
 				}
 
-				// Clear visit flag
-				t1.flags[idx] &^= T1_VISIT
+				// VISIT flag will be cleared at start of next bitplane
 			}
 		}
 	}

@@ -77,7 +77,25 @@ func TestMinimalTwoCoeffs(t *testing.T) {
 
 	// Encode
 	enc := NewT1Encoder(width, height, 0)
-	maxBitplane := enc.findMaxBitplane()
+
+	// Calculate maxBitplane from input data
+	maxAbs := int32(0)
+	for _, val := range data {
+		if val < 0 {
+			val = -val
+		}
+		if val > maxAbs {
+			maxAbs = val
+		}
+	}
+	maxBitplane := 0
+	if maxAbs > 0 {
+		for maxAbs > 0 {
+			maxAbs >>= 1
+			maxBitplane++
+		}
+		maxBitplane--
+	}
 	numPasses := (maxBitplane + 1) * 3
 
 	t.Logf("Input: %v, maxBitplane: %d", data, maxBitplane)

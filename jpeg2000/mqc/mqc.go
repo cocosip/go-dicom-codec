@@ -1,5 +1,16 @@
 package mqc
 
+import "fmt"
+
+var mqcCallCount = 0
+var mqcDebug = false
+
+// EnableDecoderDebug enables debug logging for MQ decoder
+func EnableDecoderDebug() {
+	mqcDebug = true
+	mqcCallCount = 0
+}
+
 // MQ Arithmetic Decoder for JPEG 2000
 // Reference: ISO/IEC 15444-1:2019 Annex C
 // Based on the MQ-coder (multiplication-free, table-driven arithmetic coder)
@@ -53,15 +64,40 @@ func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
 func (mqc *MQDecoder) init() {
 	// Initialize C register (ISO/IEC 15444-1 C.3.4)
 	// Load first byte into bits 23-16
+	firstByte := byte(0xFF)
 	if mqc.pos < len(mqc.data) {
-		mqc.c = uint32(mqc.data[mqc.pos]) << 16
+		firstByte = mqc.data[mqc.pos]
+		mqc.c = uint32(firstByte) << 16
 		mqc.pos++
 	} else {
 		mqc.c = 0xFF << 16
 	}
 
-	// Load second byte into bits 15-8 using bytein
-	mqc.bytein()
+	// Load second byte into bits 15-8
+	// If first byte is 0xFF, we need special handling (bit stuffing)
+	if firstByte == 0xFF {
+		// Bit stuffing: only 7 bits available from second byte
+		if mqc.pos < len(mqc.data) {
+			secondByte := mqc.data[mqc.pos]
+			// Check if this is a marker (> 0x8F) or bit-stuffed byte
+			if secondByte > 0x8F {
+				// Marker/sentinel: use 0xFF00
+				mqc.c += 0xFF00
+				mqc.ct = 8
+			} else {
+				// Bit-stuffed: consume second byte, only 7 bits
+				mqc.pos++
+				mqc.c += uint32(secondByte) << 9  // Shift by 9 (bit stuffing)
+				mqc.ct = 7
+			}
+		} else {
+			mqc.c += 0xFF00
+			mqc.ct = 8
+		}
+	} else {
+		// Normal case: use bytein for second byte
+		mqc.bytein()
+	}
 
 	// Shift left by 7 to position for decoding
 	// After this, bits 23-17 contain the first 7 bits of code
@@ -80,9 +116,16 @@ func (mqc *MQDecoder) init() {
 // - Typical performance: ~10-20ns per bit on modern CPUs
 // - Optimization: inline candidate, branch prediction important
 func (mqc *MQDecoder) Decode(contextID int) int {
+	mqcCallCount++
+
 	cx := &mqc.contexts[contextID]
 	state := *cx & 0x7F  // Lower 7 bits = state
 	mps := int(*cx >> 7) // Bit 7 = MPS (More Probable Symbol)
+
+	if mqcDebug && mqcCallCount <= 12 {
+		fmt.Printf("[MQC #%02d BEFORE] ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
+			mqcCallCount, contextID, state, mps, mqc.a, mqc.c, mqc.ct)
+	}
 
 	// Get Qe value for this state
 	qe := qeTable[state]
@@ -147,6 +190,11 @@ func (mqc *MQDecoder) Decode(contextID int) int {
 		mqc.renormd()
 	}
 
+	if mqcDebug && mqcCallCount <= 12 {
+		fmt.Printf("[MQC #%02d AFTER ] bit=%d A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
+			mqcCallCount, d, mqc.a, mqc.c, mqc.ct, *cx&0x7F, int(*cx>>7))
+	}
+
 	return d
 }
 
@@ -166,6 +214,10 @@ func (mqc *MQDecoder) renormd() {
 // Reference: OpenJPEG opj_mqc_bytein_macro
 // Note: Data has 0xFF 0xFF sentinel appended, so we're guaranteed to have data
 func (mqc *MQDecoder) bytein() {
+	if mqcDebug {
+		fmt.Printf("[MQC BYTEIN] pos=%d len=%d curByte=0x%02x\n", mqc.pos, len(mqc.data), mqc.data[mqc.pos])
+	}
+
 	// Bounds check (should never happen with sentinel, but safety first)
 	if mqc.pos >= len(mqc.data) {
 		mqc.c += 0xFF00

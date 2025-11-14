@@ -1,6 +1,18 @@
 package mqc
 
-import "bytes"
+import (
+	"bytes"
+	"fmt"
+)
+
+var mqeCallCount = 0
+var mqeDebug = false
+
+// EnableDebug enables debug logging for MQ encoder
+func EnableEncoderDebug() {
+	mqeDebug = true
+	mqeCallCount = 0
+}
 
 // MQEncoder implements the MQ arithmetic encoder
 // Reference: ISO/IEC 15444-1:2019 Annex C
@@ -45,9 +57,16 @@ func NewMQEncoder(numContexts int) *MQEncoder {
 
 // Encode encodes a single bit using the specified context
 func (mqe *MQEncoder) Encode(bit int, contextID int) {
+	mqeCallCount++
+
 	cx := &mqe.contexts[contextID]
 	state := *cx & 0x7F  // Lower 7 bits = state
 	mps := int(*cx >> 7) // Bit 7 = MPS (More Probable Symbol)
+
+	if mqeDebug && mqeCallCount <= 12 {
+		fmt.Printf("[MQE #%02d BEFORE] bit=%d ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
+			mqeCallCount, bit, contextID, state, mps, mqe.a, mqe.c, mqe.ct)
+	}
 
 	// Get Qe value for this state
 	qe := qeTable[state]
@@ -86,6 +105,11 @@ func (mqe *MQEncoder) Encode(bit int, contextID int) {
 		}
 		*cx = newState | (uint8(newMPS) << 7)
 		mqe.renorme()
+	}
+
+	if mqeDebug && mqeCallCount <= 12 {
+		fmt.Printf("[MQE #%02d AFTER ] A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
+			mqeCallCount, mqe.a, mqe.c, mqe.ct, *cx&0x7F, int(*cx>>7))
 	}
 }
 
