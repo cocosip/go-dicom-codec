@@ -264,11 +264,8 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 			ctx := getMagRefinementContext(flags)
 			t1.mqe.Encode(int(refBit), int(ctx))
 
-			// Mark as refined
-			t1.flags[idx] |= T1_REFINE
-
-			// Clear visit flag (ready for next bit-plane)
-			t1.flags[idx] &^= T1_VISIT
+			// Mark as refined and visited (so CP won't refine again)
+			t1.flags[idx] |= T1_REFINE | T1_VISIT
 		}
 	}
 

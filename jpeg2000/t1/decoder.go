@@ -357,11 +357,8 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 				fmt.Printf("data_after=%d\n", t1.data[idx])
 			}
 
-			// Mark as refined
-			t1.flags[idx] |= T1_REFINE
-
-			// Clear visit flag (ready for next bit-plane)
-//			t1.flags[idx] &^= T1_VISIT
+			// Mark as refined and visited (so CP won't refine again)
+			t1.flags[idx] |= T1_REFINE | T1_VISIT
 		}
 	}
 
