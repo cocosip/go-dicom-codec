@@ -63,7 +63,7 @@ func (mqe *MQEncoder) Encode(bit int, contextID int) {
 	state := *cx & 0x7F  // Lower 7 bits = state
 	mps := int(*cx >> 7) // Bit 7 = MPS (More Probable Symbol)
 
-	if mqeDebug && mqeCallCount <= 12 {
+	if mqeDebug && mqeCallCount <= 200 {
 		fmt.Printf("[MQE #%02d BEFORE] bit=%d ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
 			mqeCallCount, bit, contextID, state, mps, mqe.a, mqe.c, mqe.ct)
 	}
@@ -107,7 +107,7 @@ func (mqe *MQEncoder) Encode(bit int, contextID int) {
 		mqe.renorme()
 	}
 
-	if mqeDebug && mqeCallCount <= 12 {
+	if mqeDebug && mqeCallCount <= 200 {
 		fmt.Printf("[MQE #%02d AFTER ] A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
 			mqeCallCount, mqe.a, mqe.c, mqe.ct, *cx&0x7F, int(*cx>>7))
 	}

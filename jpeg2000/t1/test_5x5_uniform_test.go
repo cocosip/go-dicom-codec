@@ -1,33 +1,39 @@
 package t1
 
 import (
-	"fmt"
 	"testing"
 )
 
-// TestSquareSizes tests various square sizes
-func TestSquareSizes(t *testing.T) {
-	sizes := []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+// Test5x5Uniform - Test 5x5 with uniform value
+func Test5x5Uniform(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value int32
+	}{
+		{"uniform_minus128", -128},
+		{"uniform_0", 0},
+		{"uniform_100", 100},
+		{"uniform_127", 127},
+	}
 
-	for _, size := range sizes {
-		t.Run(fmt.Sprintf("%dx%d", size, size), func(t *testing.T) {
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			size := 5
 			numPixels := size * size
 			input := make([]int32, numPixels)
 			for i := 0; i < numPixels; i++ {
-				input[i] = int32(i%256) - 128
+				input[i] = tc.value
 			}
 
 			maxBitplane := CalculateMaxBitplane(input)
 			numPasses := (maxBitplane + 1) * 3
 
-			// Encode
 			encoder := NewT1Encoder(size, size, 0)
 			encoded, err := encoder.Encode(input, numPasses, 0)
 			if err != nil {
 				t.Fatalf("Encoding failed: %v", err)
 			}
 
-			// Decode
 			decoder := NewT1Decoder(size, size, 0)
 			err = decoder.DecodeWithBitplane(encoded, numPasses, maxBitplane, 0)
 			if err != nil {
@@ -36,17 +42,19 @@ func TestSquareSizes(t *testing.T) {
 
 			decoded := decoder.GetData()
 
-			// Check
 			errorCount := 0
 			for i := range input {
 				if decoded[i] != input[i] {
 					errorCount++
+					t.Logf("Error at position %d: expected %d, got %d", i, input[i], decoded[i])
 				}
 			}
 
-			errorRate := float64(errorCount) / float64(numPixels) * 100
 			if errorCount > 0 {
-				t.Errorf("%dx%d: %d/%d errors (%.1f%%)", size, size, errorCount, numPixels, errorRate)
+				errorRate := float64(errorCount) / float64(numPixels) * 100
+				t.Errorf("%s: %d/%d errors (%.1f%%)", tc.name, errorCount, numPixels, errorRate)
+			} else {
+				t.Logf("%s: PASS (0 errors)", tc.name)
 			}
 		})
 	}

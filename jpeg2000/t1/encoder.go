@@ -139,6 +139,20 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 			passIdx++
 		}
 
+		// DEBUG: Count significant coefficients after this bitplane
+		if t1.bitplane == 7 || t1.bitplane == 6 || t1.bitplane == 1 || t1.bitplane == 0 {
+			sigCount := 0
+			for y := 0; y < t1.height; y++ {
+				for x := 0; x < t1.width; x++ {
+					idx := (y+1)*paddedWidth + (x + 1)
+					if t1.flags[idx]&T1_SIG != 0 {
+						sigCount++
+					}
+				}
+			}
+			fmt.Printf("[ENC] After bitplane %d: %d/%d coefficients are significant\n", t1.bitplane, sigCount, t1.width*t1.height)
+		}
+
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
 			t1.mqe.ResetContexts()
@@ -262,12 +276,23 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 
 			// DEBUG
 			isFirst := (x == 0 && y == 0)
+			isTarget := (x == 1 && y == 0) // Position (1,0)
+			if t1.bitplane == 1 {
+				fmt.Printf("[ENC MRP bp=1] pos(%d,%d) absVal=%d refBit=%d\n", x, y, absVal, refBit)
+			}
 			if isFirst {
 				fmt.Printf("[ENC MRP bp=%d] absVal=%d refBit=%d\n", t1.bitplane, absVal, refBit)
+			}
+			if isTarget && t1.bitplane == 0 {
+				fmt.Printf("[ENC MRP bp=0] Position(1,0): absVal=%d refBit=%d\n", absVal, refBit)
+				debugPrintFlags("  flags", flags)
 			}
 
 			// Encode refinement bit
 			ctx := getMagRefinementContext(flags)
+			if isTarget && t1.bitplane == 0 {
+				fmt.Printf("  context=%d\n", ctx)
+			}
 			t1.mqe.Encode(int(refBit), int(ctx))
 
 			// Mark as refined and visited (so CP won't refine again)
@@ -483,61 +508,47 @@ func (t1 *T1Encoder) updateNeighborFlags(x, y, idx int) {
 	sign := t1.flags[idx] & T1_SIGN
 
 	// Update 8 neighbors
+	// Padding ensures all neighbors are valid, no boundary checks needed
+
 	// North
-	if y > 0 {
-		nIdx := (y)*paddedWidth + (x + 1)
-		t1.flags[nIdx] |= T1_SIG_S
-		if sign != 0 {
-			t1.flags[nIdx] |= T1_SIGN_S
-		}
+	nIdx := (y) * paddedWidth + (x + 1)
+	t1.flags[nIdx] |= T1_SIG_S
+	if sign != 0 {
+		t1.flags[nIdx] |= T1_SIGN_S
 	}
 
 	// South
-	if y < t1.height-1 {
-		sIdx := (y+2)*paddedWidth + (x + 1)
-		t1.flags[sIdx] |= T1_SIG_N
-		if sign != 0 {
-			t1.flags[sIdx] |= T1_SIGN_N
-		}
+	sIdx := (y + 2) * paddedWidth + (x + 1)
+	t1.flags[sIdx] |= T1_SIG_N
+	if sign != 0 {
+		t1.flags[sIdx] |= T1_SIGN_N
 	}
 
 	// West
-	if x > 0 {
-		wIdx := (y+1)*paddedWidth + x
-		t1.flags[wIdx] |= T1_SIG_E
-		if sign != 0 {
-			t1.flags[wIdx] |= T1_SIGN_E
-		}
+	wIdx := (y + 1) * paddedWidth + x
+	t1.flags[wIdx] |= T1_SIG_E
+	if sign != 0 {
+		t1.flags[wIdx] |= T1_SIGN_E
 	}
 
 	// East
-	if x < t1.width-1 {
-		eIdx := (y+1)*paddedWidth + (x + 2)
-		t1.flags[eIdx] |= T1_SIG_W
-		if sign != 0 {
-			t1.flags[eIdx] |= T1_SIGN_W
-		}
+	eIdx := (y + 1) * paddedWidth + (x + 2)
+	t1.flags[eIdx] |= T1_SIG_W
+	if sign != 0 {
+		t1.flags[eIdx] |= T1_SIGN_W
 	}
 
 	// Northwest
-	if y > 0 && x > 0 {
-		t1.flags[(y)*paddedWidth+x] |= T1_SIG_SE
-	}
+	t1.flags[(y)*paddedWidth+x] |= T1_SIG_SE
 
 	// Northeast
-	if y > 0 && x < t1.width-1 {
-		t1.flags[(y)*paddedWidth+(x+2)] |= T1_SIG_SW
-	}
+	t1.flags[(y)*paddedWidth+(x+2)] |= T1_SIG_SW
 
 	// Southwest
-	if y < t1.height-1 && x > 0 {
-		t1.flags[(y+2)*paddedWidth+x] |= T1_SIG_NE
-	}
+	t1.flags[(y+2)*paddedWidth+x] |= T1_SIG_NE
 
 	// Southeast
-	if y < t1.height-1 && x < t1.width-1 {
-		t1.flags[(y+2)*paddedWidth+(x+2)] |= T1_SIG_NW
-	}
+	t1.flags[(y+2)*paddedWidth+(x+2)] |= T1_SIG_NW
 }
 
 // ComputeDistortion computes the distortion for rate-distortion optimization

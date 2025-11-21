@@ -67,7 +67,8 @@ func TestRLEncodingPatterns(t *testing.T) {
 				}
 			}
 
-			maxBitplane := 7
+			// Calculate actual maxBitplane from data (simulates T2 layer)
+			maxBitplane := CalculateMaxBitplane(input)
 			numPasses := (maxBitplane + 1) * 3
 
 			// Encode
@@ -130,7 +131,8 @@ func TestRLBoundaryConditions(t *testing.T) {
 				input[i] = int32(i%256) - 128
 			}
 
-			maxBitplane := 7
+			// Calculate actual maxBitplane from data (simulates T2 layer)
+			maxBitplane := CalculateMaxBitplane(input)
 			numPasses := (maxBitplane + 1) * 3
 
 			encoder := NewT1Encoder(width, height, 0)

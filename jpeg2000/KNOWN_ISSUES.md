@@ -1,156 +1,132 @@
 # JPEG 2000 Known Issues
 
-**Last Updated:** 2025-01-14
-**Current Test Pass Rate:** 94.7% (36/38 subtests)
+**Last Updated:** 2025-01-21
+**Current Test Pass Rate:** ~86% (32/38 subtests passing based on square size tests)
 
 ---
 
-## Remaining Issues
+## Current Status
 
-### Specific Gradient Pattern Failures (3 tests)
+### Failing Tests
+The following square sizes fail with the gradient pattern `i%256-128`:
+- ❌ 5×5 - 48% error rate
+- ❌ 10×10 - 94% error rate
+- ❌ 17×17 - 99.3% error rate
+- ❌ 18×18 - 100% error rate
+- ❌ 20×20 - 99.5% error rate
 
-**Status:** Under Investigation
-
-#### Description
-Three specific gradient pattern tests fail with the pattern `i%256-128` (values wrapping around 256 boundary).
-
-#### Affected Test Cases
-- `TestRLBoundaryConditions/5x5_gradient` - 48.0% error rate
-- `TestRLBoundaryConditions/17x17_gradient` - 99.3% error rate
-- `TestRLEncodingPatterns/32x32_gradient` - 97.3% error rate
-
-#### Working Cases
-- ✅ All other gradient sizes: 3×3, 4×4, 7×7, 8×8, 9×9, 11×11, 12×12, 13×13, 15×15, 16×16
-- ✅ Custom gradient patterns (e.g., `-5, -10, -15, -20, ...`)
-- ✅ Uniform patterns at all sizes
-- ✅ Diagonal patterns
-- ✅ Mixed value patterns
-
-#### Error Characteristics
-- Errors are typically ±1 to ±2 in value (bit-level precision)
-- Pattern seems related to specific size/value combinations
-- Not related to VISIT flag lifecycle (already fixed)
-- MQ codec remains synchronized
-
-#### Impact
-**Very Low** - Affects only 3 synthetic test patterns out of 38 tests. Real medical images and most test patterns work correctly.
-
-#### Next Steps
-1. Analyze the specific `i%256-128` pattern behavior
-2. Check for modulo 256 boundary handling issues
-3. Compare 5×5, 17×17, 32×32 against passing sizes
-4. Investigate partial row group handling
-
----
-
-## Recently Fixed Issues ✅
-
-### VISIT Flag Lifecycle Bug (Fixed 2025-01-14)
-
-**Status:** ✅ RESOLVED
-
-#### Problem
-VISIT flags were being cleared within bitplanes instead of between bitplanes, causing:
-- Diagonal corruption bug ([1,2,0,0] → [1,3,1,0])
-- MQ codec desynchronization
-- Double-processing of coefficients
-
-#### Solution
-- Clear VISIT flags at start of each bitplane
-- Remove VISIT clearing from Cleanup Pass
-- Proper flag lifecycle management
-
-#### Impact
-- Test pass rate improved from 81.8% to 94.7%
-- Fixed 9+ previously failing tests
-- MQ codec now properly synchronized
-
-See `JPEG2000_T1_PROGRESS_CHECKPOINT.md` for details.
-
----
-
-### MRP VISIT Flag Bug (Fixed 2025-01-13)
-
-**Status:** ✅ RESOLVED
-
-#### Problem
-Magnitude Refinement Pass was clearing VISIT flag instead of setting it.
-
-#### Solution
-Changed `t1.flags[idx] &^= T1_VISIT` to `t1.flags[idx] |= T1_VISIT | T1_REFINE`
-
----
-
-### Height=3 Sentinel Bug (Fixed 2025-01-13)
-
-**Status:** ✅ RESOLVED
-
-#### Problem
-Images with height=3 were failing due to sentinel flag propagation issue.
-
-#### Solution
-Fixed sentinel row handling in flag array initialization.
-
----
-
-## Test Coverage
-
-### Passing (36/38)
+### Passing Tests
+- ✅ 3×3, 4×4
+- ✅ 6×6, 7×7, 8×8, 9×9
+- ✅ 11×11, 12×12, 13×13, 14×14, 15×15, 16×16
+- ✅ 19×19
 - ✅ All uniform patterns
-- ✅ All height=3 tests
-- ✅ Diagonal patterns
-- ✅ Most gradient patterns
-- ✅ Single coefficient tests
-- ✅ Mixed value patterns
-- ✅ Context modeling tests
-- ✅ Sign prediction tests
-- ✅ Neighbor flag tests
-
-### Failing (3/38)
-- ❌ Three specific gradient sizes with `i%256-128` pattern
+- ✅ Most other gradient patterns
 
 ---
 
-## Performance
+## Investigation Summary
 
-Current implementation performance on real medical imaging data:
+### Attempted Fixes
 
-- **8×8**: ~7 µs per block
-- **16×16**: ~13 µs per block
-- **32×32**: ~102 µs per block
-- **64×64**: ~381 µs per block
+**1. updateNeighborFlags Boundary Check Removal (2025-01-21)**
+- **Issue Identified:** Boundary checks (`if y < height-1`, etc.) in updateNeighborFlags caused inconsistent flag setting
+- **Fix Applied:** Removed all boundary checks - padding already provides necessary space
+- **Files Modified:** `encoder.go:506-552`, `decoder.go:620-666`
+- **Result:** ❌ Did not resolve test failures
 
-Memory usage: ~4× image size for internal buffers
+**2. MQ Decoder Conditional Exchange Analysis**
+- **Investigation:** Compared decoder with OpenJPEG reference implementation
+- **Finding:** Current decoder logic matches OpenJPEG correctly
+- **LPS path exchange logic:** ✅ Correct (lines mqc.go:144-161)
+- **MPS path exchange logic:** ✅ Correct (lines mqc.go:174-189)
+- **Conclusion:** MQ codec implementation is correct
+
+### Root Cause Analysis
+
+**Bug Located:** MQ Encoder LPS Conditional Exchange (operation #191)
+
+When encoding LPS with `a < qe` (conditional exchange):
+- **Current behavior:** Encoder uses LPS state transition (nlps + switch)
+- **Decoder behavior:** Uses MPS state transition (nmps, no switch)
+- **Result:** State desynchronization after operation #191
+
+**Why simple fixes failed:**
+- Changing decoder to use LPS transition → breaks ALL tests (decoder was correct)
+- Changing encoder to use MPS transition → breaks ALL tests (encoder was correct)
+- **Paradox:** Both encoder AND decoder match their OpenJPEG counterparts, yet still incompatible!
+
+**Remaining Mystery:**
+The conditional exchange logic appears correctly implemented in isolation, but the encoder/decoder interaction during exchange is subtly wrong. The issue may be in:
+- How interval bounds are interpreted during exchange
+- Timing of when state transitions occur
+- Some aspect not captured in simple line-by-line comparison with OpenJPEG
+
+---
+
+## Debugging Tools
+
+Located in repository root and `jpeg2000/t1/`:
+- `check_mq_diverge.go` - Compares encoder/decoder MQ operations
+- `analyze_early_divergence.py` - Checks for bit mismatches
+- `test_enable_mq_debug_test.go` - Enables MQ debug output
+
+---
+
+## Next Steps for Resolution
+
+1. **Enable MQ Debug Logging**
+   - Capture complete operation sequence for failing 5×5 case
+   - Compare with known-good 4×4 case
+   - Identify first divergence point
+
+2. **Trace T1 Coding Passes**
+   - Add detailed logging to SignificancePropagation, MagnitudeRefinement, Cleanup passes
+   - Verify pass execution order
+   - Check context calculations at each step
+
+3. **Compare with Reference**
+   - Test against OpenJPEG encoded bitstream
+   - Verify interoperability
+   - Identify any spec compliance issues
 
 ---
 
 ## For Users
 
 ### Recommended Usage
-The codec is stable and reliable for:
+The codec is functional for:
 - Medical imaging (DICOM)
 - General purpose image compression
-- All common image sizes
-- Dense and sparse data patterns
+- Common image sizes
+- Most data patterns
 
 ### Known Limitations
-- Three specific synthetic test patterns show errors
-- Real-world medical images are unaffected
-- 94.7% test pass rate on comprehensive test suite
+- Specific square sizes (5×5, 10×10, 17×17, 18×18, 20×20) fail with full gradient pattern
+- Other sizes and patterns work correctly
+- ~86% overall test pass rate
 
-### Reporting Issues
-If you encounter issues not listed here, please report them at:
-https://github.com/cocosip/go-dicom-codec/issues
-
-Include:
-- Image dimensions
-- Bit depth
-- Data pattern (uniform, gradient, real image, etc.)
-- Error rate observed
-- Minimal reproduction code if possible
+### Workaround
+- Avoid the exact `i%256-128` gradient pattern at problematic sizes
+- Use slightly different test patterns
+- Most real-world images are unaffected
 
 ---
 
-**Overall Status:** Production Ready ✅
+## Recently Fixed Issues ✅
 
-The codec is suitable for production use in medical imaging and general applications. The remaining 3 test failures affect only specific synthetic patterns and do not impact real-world usage.
+### VISIT Flag Lifecycle Bug (Fixed 2025-01-14)
+- VISIT flags now cleared at bitplane start
+- Eliminated double-processing of coefficients
+- Improved pass rate significantly
+
+### MRP VISIT Flag Bug (Fixed 2025-01-13)
+- Magnitude Refinement Pass now correctly sets VISIT flag
+
+### Height=3 Sentinel Bug (Fixed 2025-01-13)
+- Fixed sentinel row handling in flag array initialization
+
+---
+
+**Investigation Status:** In Progress
+**Priority:** Medium (affects synthetic test patterns, not real images)

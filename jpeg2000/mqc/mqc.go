@@ -122,8 +122,8 @@ func (mqc *MQDecoder) Decode(contextID int) int {
 	state := *cx & 0x7F  // Lower 7 bits = state
 	mps := int(*cx >> 7) // Bit 7 = MPS (More Probable Symbol)
 
-	if mqcDebug && mqcCallCount <= 12 {
-		fmt.Printf("[MQC #%02d BEFORE] ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
+	if mqcDebug && mqcCallCount <= 250 {
+		fmt.Printf("[MQC #%03d BEFORE] ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
 			mqcCallCount, contextID, state, mps, mqc.a, mqc.c, mqc.ct)
 	}
 
@@ -190,8 +190,8 @@ func (mqc *MQDecoder) Decode(contextID int) int {
 		mqc.renormd()
 	}
 
-	if mqcDebug && mqcCallCount <= 12 {
-		fmt.Printf("[MQC #%02d AFTER ] bit=%d A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
+	if mqcDebug && mqcCallCount <= 250 {
+		fmt.Printf("[MQC #%03d AFTER ] bit=%d A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
 			mqcCallCount, d, mqc.a, mqc.c, mqc.ct, *cx&0x7F, int(*cx>>7))
 	}
 
