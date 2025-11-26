@@ -1,16 +1,5 @@
 package mqc
 
-import "fmt"
-
-var mqcCallCount = 0
-var mqcDebug = false
-
-// EnableDecoderDebug enables debug logging for MQ decoder
-func EnableDecoderDebug() {
-	mqcDebug = true
-	mqcCallCount = 0
-}
-
 // MQ Arithmetic Decoder for JPEG 2000
 // Reference: ISO/IEC 15444-1:2019 Annex C
 // Based on the MQ-coder (multiplication-free, table-driven arithmetic coder)
@@ -20,6 +9,7 @@ type MQDecoder struct {
 	// Input data
 	data   []byte
 	pos    int  // Current byte position
+	lastByte byte // Last byte read (for 0xFF detection)
 
 	// State variables
 	a   uint32 // Probability interval
@@ -43,6 +33,7 @@ func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
 	mqc := &MQDecoder{
 		data:     dataWithSentinel,
 		pos:      0,
+		lastByte: 0,
 		a:        0x8000,
 		c:        0,
 		ct:       0,
@@ -68,9 +59,11 @@ func (mqc *MQDecoder) init() {
 	if mqc.pos < len(mqc.data) {
 		firstByte = mqc.data[mqc.pos]
 		mqc.c = uint32(firstByte) << 16
+		mqc.lastByte = firstByte
 		mqc.pos++
 	} else {
 		mqc.c = 0xFF << 16
+		mqc.lastByte = 0xFF
 	}
 
 	// Load second byte into bits 15-8
@@ -84,8 +77,10 @@ func (mqc *MQDecoder) init() {
 				// Marker/sentinel: use 0xFF00
 				mqc.c += 0xFF00
 				mqc.ct = 8
+				// Don't update lastByte or pos - marker not consumed
 			} else {
 				// Bit-stuffed: consume second byte, only 7 bits
+				mqc.lastByte = secondByte
 				mqc.pos++
 				mqc.c += uint32(secondByte) << 9  // Shift by 9 (bit stuffing)
 				mqc.ct = 7
@@ -116,16 +111,9 @@ func (mqc *MQDecoder) init() {
 // - Typical performance: ~10-20ns per bit on modern CPUs
 // - Optimization: inline candidate, branch prediction important
 func (mqc *MQDecoder) Decode(contextID int) int {
-	mqcCallCount++
-
 	cx := &mqc.contexts[contextID]
 	state := *cx & 0x7F  // Lower 7 bits = state
 	mps := int(*cx >> 7) // Bit 7 = MPS (More Probable Symbol)
-
-	if mqcDebug && mqcCallCount <= 250 {
-		fmt.Printf("[MQC #%03d BEFORE] ctx=%d state=%d mps=%d A=0x%04x C=0x%08x ct=%d\n",
-			mqcCallCount, contextID, state, mps, mqc.a, mqc.c, mqc.ct)
-	}
 
 	// Get Qe value for this state
 	qe := qeTable[state]
@@ -190,11 +178,6 @@ func (mqc *MQDecoder) Decode(contextID int) int {
 		mqc.renormd()
 	}
 
-	if mqcDebug && mqcCallCount <= 250 {
-		fmt.Printf("[MQC #%03d AFTER ] bit=%d A=0x%04x C=0x%08x ct=%d newState=%d newMPS=%d\n",
-			mqcCallCount, d, mqc.a, mqc.c, mqc.ct, *cx&0x7F, int(*cx>>7))
-	}
-
 	return d
 }
 
@@ -213,11 +196,11 @@ func (mqc *MQDecoder) renormd() {
 // bytein reads the next byte from input stream
 // Reference: OpenJPEG opj_mqc_bytein_macro
 // Note: Data has 0xFF 0xFF sentinel appended, so we're guaranteed to have data
+//
+// OpenJPEG semantics: bp points to last read byte, reads *(bp+1) as next value
+// Our semantics: pos points to next unread byte, lastByte holds last read byte
+// Mapping: OpenJPEG *bp corresponds to our lastByte, *(bp+1) to data[pos]
 func (mqc *MQDecoder) bytein() {
-	if mqcDebug {
-		fmt.Printf("[MQC BYTEIN] pos=%d len=%d curByte=0x%02x\n", mqc.pos, len(mqc.data), mqc.data[mqc.pos])
-	}
-
 	// Bounds check (should never happen with sentinel, but safety first)
 	if mqc.pos >= len(mqc.data) {
 		mqc.c += 0xFF00
@@ -225,32 +208,29 @@ func (mqc *MQDecoder) bytein() {
 		return
 	}
 
-	curByte := mqc.data[mqc.pos]
-	mqc.pos++
+	// OpenJPEG: l_c = *(bp + 1), check *bp for 0xFF
+	// Our mapping: check lastByte, read data[pos]
+	nextByte := mqc.data[mqc.pos]  // Corresponds to *(bp+1) = l_c
 
-	// Handle 0xFF byte stuffing
-	if curByte == 0xFF {
-		// Check if we can read next byte
-		if mqc.pos >= len(mqc.data) {
-			mqc.c += 0xFF00
-			mqc.ct = 8
-			return
-		}
-
-		nextByte := mqc.data[mqc.pos]
+	// Handle 0xFF byte stuffing based on lastByte
+	if mqc.lastByte == 0xFF {
 		if nextByte > 0x8F {
-			// Marker segment or sentinel - stuffed byte, don't consume next byte
+			// Marker/sentinel: c += 0xff00, ct = 8, bp unchanged
+			// Don't update lastByte or pos
 			mqc.c += 0xFF00
 			mqc.ct = 8
 		} else {
-			// Normal 0xFF followed by <=0x8F (bit stuffing)
+			// Bit stuffing: c += l_c << 9, ct = 7, bp++
+			mqc.lastByte = nextByte
 			mqc.pos++
 			mqc.c += uint32(nextByte) << 9
 			mqc.ct = 7
 		}
 	} else {
-		// Normal byte
-		mqc.c += uint32(curByte) << 8
+		// Normal: c += l_c << 8, ct = 8, bp++
+		mqc.lastByte = nextByte
+		mqc.pos++
+		mqc.c += uint32(nextByte) << 8
 		mqc.ct = 8
 	}
 }

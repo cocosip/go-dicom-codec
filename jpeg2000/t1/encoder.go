@@ -86,6 +86,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 	// Determine maximum bit-plane
 	maxBitplane := t1.findMaxBitplane()
+	fmt.Printf("[T1-ENC] maxBitplane=%d, numPasses=%d\n", maxBitplane, numPasses)
 	if maxBitplane < 0 {
 		// All coefficients are zero
 		t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
@@ -224,6 +225,11 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 			// Encode significance bit
 			ctx := getZeroCodingContext(flags)
+			// DEBUG: Log context state before encode
+			ctxState := t1.mqe.GetContextState(int(ctx))
+			state := ctxState & 0x7F
+			mps := int(ctxState >> 7)
+			fmt.Printf("[ENC-CTX] SPP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, ctx, state, mps, isSig)
 			t1.mqe.Encode(int(isSig), int(ctx))
 
 			if isSig != 0 {
@@ -237,6 +243,11 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 				signCtx := getSignCodingContext(flags)
 				signPred := getSignPrediction(flags)
+				// DEBUG: Log context state before encode
+				ctxState := t1.mqe.GetContextState(int(signCtx))
+				state := ctxState & 0x7F
+				mps := int(ctxState >> 7)
+				fmt.Printf("[ENC-CTX] SPP-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, signCtx, state, mps, signBit^signPred)
 				t1.mqe.Encode(signBit^signPred, int(signCtx))
 
 				// Mark as significant and visited (prevent MRP from processing)
@@ -293,6 +304,11 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 			if isTarget && t1.bitplane == 0 {
 				fmt.Printf("  context=%d\n", ctx)
 			}
+			// DEBUG: Log context state before encode
+			ctxState := t1.mqe.GetContextState(int(ctx))
+			state := ctxState & 0x7F
+			mps := int(ctxState >> 7)
+			fmt.Printf("[ENC-CTX] MRP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, ctx, state, mps, refBit)
 			t1.mqe.Encode(int(refBit), int(ctx))
 
 			// Mark as refined and visited (so CP won't refine again)
@@ -354,6 +370,11 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					if rlSigPos >= 0 {
 						rlBit = 1
 					}
+					// DEBUG: Log context state before encode
+					ctxState := t1.mqe.GetContextState(CTX_RL)
+					state := ctxState & 0x7F
+					mps := int(ctxState >> 7)
+					fmt.Printf("[ENC-CTX] CP-RL col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_RL, state, mps, rlBit)
 					t1.mqe.Encode(rlBit, CTX_RL)
 
 					if rlBit == 0 {
@@ -363,7 +384,16 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					}
 
 					// At least one is significant, encode which one (uniformly)
+					// DEBUG: Log context state before encode
+					ctxState = t1.mqe.GetContextState(CTX_UNI)
+					state = ctxState & 0x7F
+					mps = int(ctxState >> 7)
+					fmt.Printf("[ENC-CTX] CP-UNI1 col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_UNI, state, mps, (rlSigPos>>1)&1)
 					t1.mqe.Encode((rlSigPos>>1)&1, CTX_UNI)
+					ctxState = t1.mqe.GetContextState(CTX_UNI)
+					state = ctxState & 0x7F
+					mps = int(ctxState >> 7)
+					fmt.Printf("[ENC-CTX] CP-UNI2 col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_UNI, state, mps, rlSigPos&1)
 					t1.mqe.Encode(rlSigPos&1, CTX_UNI)
 
 					// Coefficients before rlSigPos remain insignificant
@@ -392,6 +422,11 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 							fmt.Printf("[ENC CP bp=%d] RL path: encode sigBit ctx=%d isSig=%d ", t1.bitplane, ctx, isSig)
 						}
 
+						// DEBUG: Log context state before encode
+						ctxState := t1.mqe.GetContextState(int(ctx))
+						state := ctxState & 0x7F
+						mps := int(ctxState >> 7)
+						fmt.Printf("[ENC-CTX] CP-RL-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, ctx, state, mps, isSig)
 						t1.mqe.Encode(int(isSig), int(ctx))
 
 						if isSig != 0 {
@@ -410,7 +445,12 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 								if isFirst {
 									fmt.Printf("signBit=%d\n", signBit)
 								}
-	
+
+								// DEBUG: Log context state before encode
+								ctxState := t1.mqe.GetContextState(CTX_UNI)
+								state := ctxState & 0x7F
+								mps := int(ctxState >> 7)
+								fmt.Printf("[ENC-CTX] CP-RL-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps, signBit)
 								t1.mqe.Encode(signBit, CTX_UNI)
 	
 								// Mark as significant
@@ -464,6 +504,11 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 
 				// Encode significance bit
 				ctx := getZeroCodingContext(flags)
+				// DEBUG: Log context state before encode
+				ctxState := t1.mqe.GetContextState(int(ctx))
+				state := ctxState & 0x7F
+				mps := int(ctxState >> 7)
+				fmt.Printf("[ENC-CTX] CP-NORM-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, ctx, state, mps, isSig)
 				t1.mqe.Encode(int(isSig), int(ctx))
 
 				if isFirst {
@@ -482,8 +527,13 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 							signBit = 1
 							t1.flags[idx] |= T1_SIGN
 						}
+						// DEBUG: Log context state before encode
+						ctxState := t1.mqe.GetContextState(CTX_UNI)
+						state := ctxState & 0x7F
+						mps := int(ctxState >> 7)
+						fmt.Printf("[ENC-CTX] CP-NORM-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps, signBit)
 						t1.mqe.Encode(signBit, CTX_UNI)
-	
+
 						// Mark as significant
 						t1.flags[idx] |= T1_SIG | T1_VISIT
 	

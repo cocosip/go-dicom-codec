@@ -16,7 +16,7 @@ func CalculateMaxBitplane(data []int32) int {
 	}
 
 	if maxAbs == 0 {
-		return 0
+		return -1 // All zeros
 	}
 
 	bitplane := 0

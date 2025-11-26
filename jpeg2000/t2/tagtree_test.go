@@ -279,6 +279,9 @@ func TestTagTreeDecoderMultipleLeaves(t *testing.T) {
 	}
 
 	for leafIdx, expectedBits := range leafData {
+		// Reset tree state before each leaf decode to ensure independence
+		decoder.Reset()
+
 		leafX := leafIdx % 4
 		leafY := leafIdx / 4
 

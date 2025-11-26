@@ -1,0 +1,193 @@
+package t2
+
+import (
+	"fmt"
+
+	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+)
+
+// decodeAllCodeBlocksFixed is the corrected version that properly handles subbands
+func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
+	cbWidth, cbHeight := td.cod.CodeBlockSize()
+
+	// Process each component
+	for _, comp := range td.components {
+		// Group code-blocks by resolution to track their spatial layout
+		type cbInfo struct {
+			data        []byte
+			maxBitplane int
+			resolution  int
+		}
+		cbDataMap := make(map[int]cbInfo) // map[cbIndex]cbInfo
+
+		for i := range packets {
+			packet := &packets[i]
+			if packet.ComponentIndex != comp.componentIdx {
+				continue
+			}
+
+			// Extract code-block contributions from this packet
+			dataOffset := 0
+			for cbIdx, cbIncl := range packet.CodeBlockIncls {
+				if cbIncl.Included && cbIncl.DataLength > 0 {
+					if dataOffset+cbIncl.DataLength <= len(packet.Body) {
+						// Accumulate code-block data
+						cbData := packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
+
+						existing, ok := cbDataMap[cbIdx]
+						if ok {
+							// Append to existing data
+							existing.data = append(existing.data, cbData...)
+						} else {
+							existing.data = cbData
+							existing.resolution = packet.ResolutionLevel
+						}
+
+						dataOffset += cbIncl.DataLength
+
+						// Calculate max bitplane from zero bitplanes
+						componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+						maxBP := componentBitDepth - 1 - cbIncl.ZeroBitplanes
+						if maxBP > existing.maxBitplane {
+							existing.maxBitplane = maxBP
+						}
+
+						cbDataMap[cbIdx] = existing
+					}
+				}
+			}
+		}
+
+		// Calculate subband dimensions for each resolution
+		// Resolution 0: LL subband (top-left after all decompositions)
+		// Resolution r > 0: HL, LH, HH subbands from decomposition level (numLevels - r + 1)
+
+		type subbandLayout struct {
+			x0, y0         int // Subband origin in coefficient array
+			width, height  int // Subband dimensions
+			numCBX, numCBY int // Number of code-blocks in X and Y
+		}
+
+		// Calculate layout for each resolution
+		resolutionLayouts := make(map[int][]subbandLayout) // [resolution][]subbandLayout
+
+		for res := 0; res <= comp.numLevels; res++ {
+			if res == 0 {
+				// Resolution 0: LL subband only
+				llWidth := comp.width >> comp.numLevels
+				llHeight := comp.height >> comp.numLevels
+				numCBX := (llWidth + cbWidth - 1) / cbWidth
+				numCBY := (llHeight + cbHeight - 1) / cbHeight
+
+				resolutionLayouts[res] = []subbandLayout{
+					{x0: 0, y0: 0, width: llWidth, height: llHeight, numCBX: numCBX, numCBY: numCBY},
+				}
+			} else {
+				// Resolution r: HL, LH, HH subbands
+				level := comp.numLevels - res + 1
+				sbWidth := comp.width >> level
+				sbHeight := comp.height >> level
+				numCBX := (sbWidth + cbWidth - 1) / cbWidth
+				numCBY := (sbHeight + cbHeight - 1) / cbHeight
+
+				resolutionLayouts[res] = []subbandLayout{
+					{x0: sbWidth, y0: 0, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},         // HL
+					{x0: 0, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},        // LH
+					{x0: sbWidth, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY}, // HH
+				}
+			}
+		}
+
+		// Create code-blocks with correct spatial positions
+		codeBlocks := make([]*CodeBlockDecoder, 0)
+
+		for cbIdx, cbInfo := range cbDataMap {
+			res := cbInfo.resolution
+			layouts := resolutionLayouts[res]
+
+			// Calculate which subband this code-block belongs to
+			subbandIdx := 0
+			localCBIdx := cbIdx
+
+			// For resolution 0, there's only one subband (LL)
+			// For resolution > 0, code-blocks are ordered as: HL, LH, HH
+			if res > 0 {
+				totalCBsPerSubband := layouts[0].numCBX * layouts[0].numCBY
+				subbandIdx = localCBIdx / totalCBsPerSubband
+				if subbandIdx >= len(layouts) {
+					subbandIdx = len(layouts) - 1
+				}
+				localCBIdx = localCBIdx % totalCBsPerSubband
+			}
+
+			layout := layouts[subbandIdx]
+
+			// Calculate code-block position within subband
+			cbx := localCBIdx % layout.numCBX
+			cby := localCBIdx / layout.numCBX
+
+			// Calculate code-block bounds within the subband
+			localX0 := cbx * cbWidth
+			localY0 := cby * cbHeight
+			localX1 := localX0 + cbWidth
+			localY1 := localY0 + cbHeight
+
+			// Clip to subband bounds
+			if localX1 > layout.width {
+				localX1 = layout.width
+			}
+			if localY1 > layout.height {
+				localY1 = layout.height
+			}
+
+			// Convert to global coordinates in coefficient array
+			x0 := layout.x0 + localX0
+			y0 := layout.y0 + localY0
+			x1 := layout.x0 + localX1
+			y1 := layout.y0 + localY1
+
+			actualWidth := x1 - x0
+			actualHeight := y1 - y0
+
+			// Debug: print position for first few code-blocks
+			if len(codeBlocks) < 10 {
+				fmt.Printf("[DEC-CB] cbIdx=%d res=%d sbIdx=%d layout=(%d,%d %dx%d) -> global=(%d,%d %dx%d)\n",
+					cbIdx, res, subbandIdx, layout.x0, layout.y0, layout.width, layout.height,
+					x0, y0, actualWidth, actualHeight)
+			}
+
+			// Create code-block decoder
+			numPasses := (cbInfo.maxBitplane + 1) * 3
+
+			cbd := &CodeBlockDecoder{
+				x0:        x0,
+				y0:        y0,
+				x1:        x1,
+				y1:        y1,
+				data:      cbInfo.data,
+				numPasses: numPasses,
+				t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+			}
+
+			// Decode the code-block
+			if len(cbInfo.data) > 0 {
+				err := cbd.t1Decoder.DecodeWithBitplane(cbInfo.data, cbd.numPasses, cbInfo.maxBitplane, 0)
+				if err != nil {
+					cbd.coeffs = make([]int32, actualWidth*actualHeight)
+				} else {
+					cbd.coeffs = cbd.t1Decoder.GetData()
+				}
+			} else {
+				cbd.coeffs = make([]int32, actualWidth*actualHeight)
+			}
+
+			codeBlocks = append(codeBlocks, cbd)
+		}
+
+		// Store code-blocks for assembly
+		comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
+		comp.codeBlocks = codeBlocks
+	}
+
+	return nil
+}

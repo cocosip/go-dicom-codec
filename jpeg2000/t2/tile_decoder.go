@@ -125,7 +125,7 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	}
 
 	// Decode code-blocks for all components from the parsed packets
-	if err := td.decodeAllCodeBlocks(packets); err != nil {
+	if err := td.decodeAllCodeBlocksFixed(packets); err != nil {
 		return nil, fmt.Errorf("failed to decode code-blocks: %w", err)
 	}
 
@@ -263,9 +263,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 			}
 		}
 
-		// Store code-blocks in component
-		comp.codeBlocks = codeBlocks
+		// Store code-blocks for assembly
 		comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
+		// Store code-blocks in ComponentDecoder for assembly
+		comp.codeBlocks = codeBlocks
 	}
 
 	return nil
@@ -428,50 +429,41 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 	// Initialize the full coefficient array
 	comp.coefficients = make([]int32, comp.width*comp.height)
 
-	// Get code-block size
-	cbWidth, cbHeight := td.cod.CodeBlockSize()
-
-	// Calculate number of code-blocks
-	numCBX := (comp.width + cbWidth - 1) / cbWidth
-	numCBY := (comp.height + cbHeight - 1) / cbHeight
-
-	// For 0 decomposition levels:
-	// - We have a single LL subband covering the entire image
-	// - Code-blocks are simply arranged in raster order
-
-	// Assemble code-blocks into the full coefficient array
 	if len(comp.codeBlocks) == 0 {
 		// No code-blocks decoded - use zeros
 		return nil
 	}
 
-	for cby := 0; cby < numCBY; cby++ {
-		for cbx := 0; cbx < numCBX; cbx++ {
-			cbIdx := cby*numCBX + cbx
+	// The code-blocks are organized in the same order as they were encoded:
+	// - Resolution 0: LL subband (single subband at top-left)
+	// - Resolution 1..N: HL, LH, HH subbands for each resolution level
+	//
+	// The wavelet coefficient array layout after DWT is:
+	// For numLevels=1 (one decomposition):
+	// +-------+-------+
+	// |  LL   |  HL   |
+	// +-------+-------+
+	// |  LH   |  HH   |
+	// +-------+-------+
 
-			// Get the code-block
-			if cbIdx >= len(comp.codeBlocks) {
-				continue
-			}
-			cb := comp.codeBlocks[cbIdx]
+	// Simply copy all code-blocks at their x0,y0 positions
+	// The encoder has already set the correct x0,y0 for each code-block
+	for _, cb := range comp.codeBlocks {
+		x0 := cb.x0
+		y0 := cb.y0
+		x1 := cb.x1
+		y1 := cb.y1
+		actualWidth := x1 - x0
+		actualHeight := y1 - y0
 
-			// Calculate code-block position and size
-			x0 := cb.x0
-			y0 := cb.y0
-			x1 := cb.x1
-			y1 := cb.y1
-			actualWidth := x1 - x0
-			actualHeight := y1 - y0
+		// Copy decoded coefficients from code-block to full array
+		for y := 0; y < actualHeight; y++ {
+			for x := 0; x < actualWidth; x++ {
+				srcIdx := y*actualWidth + x
+				dstIdx := (y0+y)*comp.width + (x0 + x)
 
-			// Copy decoded coefficients from code-block to full array
-			for y := 0; y < actualHeight; y++ {
-				for x := 0; x < actualWidth; x++ {
-					srcIdx := y*actualWidth + x
-					dstIdx := (y0+y)*comp.width + (x0 + x)
-
-					if srcIdx < len(cb.coeffs) && dstIdx < len(comp.coefficients) {
-						comp.coefficients[dstIdx] = cb.coeffs[srcIdx]
-					}
+				if srcIdx < len(cb.coeffs) && dstIdx < len(comp.coefficients) {
+					comp.coefficients[dstIdx] = cb.coeffs[srcIdx]
 				}
 			}
 		}

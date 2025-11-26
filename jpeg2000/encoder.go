@@ -473,46 +473,12 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 	// Apply 5/3 reversible wavelet transform to each component
 	transformed := make([][]int32, len(tileData))
 	for c := 0; c < len(tileData); c++ {
-		// Create 2D array
-		data2D := make([][]int32, height)
-		for y := 0; y < height; y++ {
-			data2D[y] = make([]int32, width)
-			copy(data2D[y], tileData[c][y*width:(y+1)*width])
-		}
+		// Copy component data
+		transformed[c] = make([]int32, len(tileData[c]))
+		copy(transformed[c], tileData[c])
 
-		// Apply forward DWT using package functions
-		for level := 0; level < e.params.NumLevels; level++ {
-			currentWidth := width >> level
-			currentHeight := height >> level
-
-			// Check if dimensions are too small
-			if currentWidth <= 1 || currentHeight <= 1 {
-				break
-			}
-
-			// Apply horizontal transform
-			for y := 0; y < currentHeight; y++ {
-				wavelet.Forward53_1D(data2D[y][:currentWidth])
-			}
-
-			// Apply vertical transform
-			col := make([]int32, currentHeight)
-			for x := 0; x < currentWidth; x++ {
-				for y := 0; y < currentHeight; y++ {
-					col[y] = data2D[y][x]
-				}
-				wavelet.Forward53_1D(col)
-				for y := 0; y < currentHeight; y++ {
-					data2D[y][x] = col[y]
-				}
-			}
-		}
-
-		// Convert back to 1D
-		transformed[c] = make([]int32, width*height)
-		for y := 0; y < height; y++ {
-			copy(transformed[c][y*width:(y+1)*width], data2D[y])
-		}
+		// Apply forward multilevel DWT
+		wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
 	}
 
 	return transformed, nil
@@ -685,9 +651,11 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 }
 
 type codeBlockInfo struct {
-	data   []int32
-	width  int
-	height int
+	data        []int32
+	width       int
+	height      int
+	globalX0    int // Global X position in coefficient array
+	globalY0    int // Global Y position in coefficient array
 }
 
 // partitionIntoCodeBlocks partitions a subband into code-blocks
@@ -728,11 +696,24 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
 				}
 			}
 
-			// Store code-block with its dimensions
+			// Store code-block with its dimensions and global position
+			globalX0 := subband.x0 + x0
+			globalY0 := subband.y0 + y0
+
+			// Debug: print position for first few code-blocks
+			cbCount := len(codeBlocks)
+			if cbCount < 5 {
+				fmt.Printf("[ENC-CB] count=%d subband=(%d,%d %dx%d band=%d) local=(%d,%d) -> global=(%d,%d %dx%d)\n",
+					cbCount, subband.x0, subband.y0, subband.width, subband.height, subband.band,
+					x0, y0, globalX0, globalY0, actualWidth, actualHeight)
+			}
+
 			codeBlocks = append(codeBlocks, codeBlockInfo{
-				data:   cbData,
-				width:  actualWidth,
-				height: actualHeight,
+				data:     cbData,
+				width:    actualWidth,
+				height:   actualHeight,
+				globalX0: globalX0,
+				globalY0: globalY0,
 			})
 		}
 	}
@@ -786,10 +767,10 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 	// Create PrecinctCodeBlock structure
 	pcb := &t2.PrecinctCodeBlock{
 		Index:          0, // Will be set by caller if needed
-		X0:             0,
-		Y0:             0,
-		X1:             actualWidth,
-		Y1:             actualHeight,
+		X0:             cb.globalX0,
+		Y0:             cb.globalY0,
+		X1:             cb.globalX0 + actualWidth,
+		Y1:             cb.globalY0 + actualHeight,
 		Included:       false, // First inclusion in packet
 		NumPassesTotal: numPasses,
 		ZeroBitPlanes:  zeroBitPlanes,
