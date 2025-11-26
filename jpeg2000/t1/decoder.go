@@ -66,8 +66,7 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 
 	t1.roishift = roishift
 
-	// DEBUG: Log resetctx
-	fmt.Printf("[T1-DEC] resetctx=%v\n", t1.resetctx)
+	// DEBUG removed
 
 	// Initialize MQ decoder
 	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
@@ -90,9 +89,7 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 			continue
 		}
 
-		// DEBUG: Log first coefficient value at start of bit-plane
-		firstIdx := paddedWidth + 1
-		fmt.Printf("[BP %d START] First coeff data=%d\n", t1.bitplane, t1.data[firstIdx])
+		// DEBUG removed
 
 		// Three coding passes per bit-plane:
 		// 1. Significance Propagation Pass (SPP)
@@ -120,19 +117,7 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 			passIdx++
 		}
 
-		// DEBUG: Count significant coefficients after this bitplane
-		if t1.bitplane == 7 || t1.bitplane == 6 || t1.bitplane == 1 || t1.bitplane == 0 {
-			sigCount := 0
-			for y := 0; y < t1.height; y++ {
-				for x := 0; x < t1.width; x++ {
-					idx := (y+1)*paddedWidth + (x + 1)
-					if t1.flags[idx]&T1_SIG != 0 {
-						sigCount++
-					}
-				}
-			}
-			fmt.Printf("[DEC] After bitplane %d: %d/%d coefficients are significant\n", t1.bitplane, sigCount, t1.width*t1.height)
-		}
+		// DEBUG removed
 
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
@@ -172,7 +157,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 	// In a full implementation, this would come from the packet header
 	// For now, estimate based on number of passes
 	startBitplane := numBitplanes - 1
-	fmt.Printf("[T1-DEC] numPasses=%d -> numBitplanes=%d -> startBitplane=%d\n", numPasses, numBitplanes, startBitplane)
+	// DEBUG removed
 
 	// Decode bit-planes from MSB to LSB
 	// Each bit-plane has up to 3 coding passes
@@ -197,33 +182,27 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		// 2. Magnitude Refinement Pass (MRP)
 		// 3. Cleanup Pass (CP)
 
-		fmt.Printf("[T1-DEC] BP %d: passIdx=%d, numPasses=%d\n", t1.bitplane, passIdx, numPasses)
+		// DEBUG removed
 
 		if passIdx < numPasses {
-			fmt.Printf("[T1-DEC]   Executing SPP (passIdx=%d)\n", passIdx)
 			if err := t1.decodeSigPropPass(); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 			passIdx++
-			fmt.Printf("[T1-DEC]   SPP done (passIdx now=%d)\n", passIdx)
 		}
 
 		if passIdx < numPasses {
-			fmt.Printf("[T1-DEC]   Executing MRP (passIdx=%d)\n", passIdx)
 			if err := t1.decodeMagRefPass(); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
-			fmt.Printf("[T1-DEC]   MRP done (passIdx now=%d)\n", passIdx)
 		}
 
 		if passIdx < numPasses {
-			fmt.Printf("[T1-DEC]   Executing CP (passIdx=%d)\n", passIdx)
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
 			passIdx++
-			fmt.Printf("[T1-DEC]   CP done (passIdx now=%d)\n", passIdx)
 		}
 
 		// Reset context if required
@@ -259,16 +238,10 @@ func (t1 *T1Decoder) GetData() []int32 {
 func (t1 *T1Decoder) decodeSigPropPass() error {
 	paddedWidth := t1.width + 2
 
-	// DEBUG: Track if SPP processes anything for first coefficient
-	sppProcessed := false
-
 	for y := 0; y < t1.height; y++ {
 		for x := 0; x < t1.width; x++ {
 			idx := (y+1)*paddedWidth + (x + 1)
 			flags := t1.flags[idx]
-
-			// DEBUG: Track first coefficient
-			isFirst := (x == 0 && y == 0)
 
 			// Skip if already significant
 			if flags&T1_SIG != 0 {
@@ -280,41 +253,15 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 				continue
 			}
 
-			if isFirst {
-				sppProcessed = true
-				fmt.Printf("[SPP bp=%d] Processing first coeff: SIG_NEIGHBORS=1 ctx=", t1.bitplane)
-			}
-
 			// Decode significance bit
 			ctx := getZeroCodingContext(flags)
-
-			if isFirst {
-				fmt.Printf("%d ", ctx)
-			}
-
-			// DEBUG: Log context state before decode
-			ctxState := t1.mqc.GetContextState(int(ctx))
-			state := ctxState & 0x7F
-			mps := int(ctxState >> 7)
-			fmt.Printf("[DEC-CTX] SPP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", x, y, t1.bitplane, ctx, state, mps)
 			bit := t1.mqc.Decode(int(ctx))
-			fmt.Printf("[DEC-CTX] SPP pos(%d,%d) bp=%d decoded_bit=%d\n", x, y, t1.bitplane, bit)
-
-			if isFirst {
-				fmt.Printf("sigBit=%d\n", bit)
-			}
 
 			if bit != 0 {
 				// Coefficient becomes significant
 				// Decode sign bit
 				signCtx := getSignCodingContext(flags)
-				// DEBUG: Log context state before decode
-				ctxState := t1.mqc.GetContextState(int(signCtx))
-				state := ctxState & 0x7F
-				mps := int(ctxState >> 7)
-				fmt.Printf("[DEC-CTX] SPP-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", x, y, t1.bitplane, signCtx, state, mps)
 				signBit := t1.mqc.Decode(int(signCtx))
-				fmt.Printf("[DEC-CTX] SPP-SIGN pos(%d,%d) bp=%d decoded_bit=%d\n", x, y, t1.bitplane, signBit)
 
 				// Apply sign prediction
 				signPred := getSignPrediction(flags)
@@ -341,13 +288,8 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 			}
 
 			// Clear visit flag (ready for next pass/bit-plane)
-//			t1.flags[idx] &^= T1_VISIT
+			//          t1.flags[idx] &^= T1_VISIT
 		}
-	}
-
-	// DEBUG: Log if SPP didn't process first coefficient
-	if !sppProcessed {
-		fmt.Printf("[SPP bp=%d] Skip first coeff (no SIG_NEIGHBORS or already SIG)\n", t1.bitplane)
 	}
 
 	return nil
@@ -363,51 +305,14 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 			idx := (y+1)*paddedWidth + (x + 1)
 			flags := t1.flags[idx]
 
-			// DEBUG: Track first coefficient (0,0)
-			isFirst := (x == 0 && y == 0)
-
 			// Only refine significant coefficients not visited in this bit-plane
 			if (flags&T1_SIG) == 0 || (flags&T1_VISIT) != 0 {
-				if isFirst {
-					fmt.Printf("[MRP bp=%d] Skip first coeff: SIG=%d VISIT=%d data=%d\n",
-						t1.bitplane, flags&T1_SIG, flags&T1_VISIT, t1.data[idx])
-				}
 				continue
 			}
 
 			// Decode refinement bit
 			ctx := getMagRefinementContext(flags)
-			isTarget := (x == 1 && y == 0) // Position (1,0)
-
-			if isFirst {
-				fmt.Printf("[MRP bp=%d] Process first coeff: data_before=%d ctx=%d ", t1.bitplane, t1.data[idx], ctx)
-			}
-
-			if isTarget && t1.bitplane == 0 {
-				fmt.Printf("[DEC MRP bp=0] Position(1,0): data_before=%d\n", t1.data[idx])
-				debugPrintFlags("  flags", flags)
-				fmt.Printf("  context=%d\n", ctx)
-			}
-
-			// DEBUG: Log context state before decode
-			ctxState := t1.mqc.GetContextState(int(ctx))
-			state := ctxState & 0x7F
-			mps := int(ctxState >> 7)
-			fmt.Printf("[DEC-CTX] MRP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", x, y, t1.bitplane, ctx, state, mps)
 			bit := t1.mqc.Decode(int(ctx))
-			fmt.Printf("[DEC-CTX] MRP pos(%d,%d) bp=%d decoded_bit=%d\n", x, y, t1.bitplane, bit)
-
-			if t1.bitplane == 1 {
-				fmt.Printf("[DEC MRP bp=1] pos(%d,%d) data_before=%d refBit=%d\n", x, y, t1.data[idx], bit)
-			}
-
-			if isFirst {
-				fmt.Printf("refBit=%d ", bit)
-			}
-
-			if isTarget && t1.bitplane == 0 {
-				fmt.Printf("  decoded_bit=%d\n", bit)
-			}
 
 			// Update coefficient magnitude
 			if bit != 0 {
@@ -416,10 +321,6 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 				} else {
 					t1.data[idx] -= int32(1) << uint(t1.bitplane)
 				}
-			}
-
-			if isFirst {
-				fmt.Printf("data_after=%d\n", t1.data[idx])
 			}
 
 			// Mark as refined and visited (so CP won't refine again)
@@ -464,13 +365,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 
 				if canUseRL {
 					// Decode run-length bit
-					// DEBUG: Log context state before decode
-					ctxState := t1.mqc.GetContextState(CTX_RL)
-					state := ctxState & 0x7F
-					mps := int(ctxState >> 7)
-					fmt.Printf("[DEC-CTX] CP-RL col=%d bp=%d ctx=%d state=%d mps=%d\n", i, t1.bitplane, CTX_RL, state, mps)
 					rlBit := t1.mqc.Decode(CTX_RL)
-					fmt.Printf("[DEC-CTX] CP-RL col=%d bp=%d decoded_bit=%d\n", i, t1.bitplane, rlBit)
 					if rlBit == 0 {
 						// All 4 remain insignificant
 						// VISIT flags will be cleared at start of next bitplane
@@ -479,20 +374,9 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 
 					// At least one is significant, decode uniformly which one
 					runlen := 0
-					// DEBUG: Log context state before decode
-					ctxState = t1.mqc.GetContextState(CTX_UNI)
-					state = ctxState & 0x7F
-					mps = int(ctxState >> 7)
-					fmt.Printf("[DEC-CTX] CP-UNI1 col=%d bp=%d ctx=%d state=%d mps=%d\n", i, t1.bitplane, CTX_UNI, state, mps)
 					bit1 := t1.mqc.Decode(CTX_UNI)
-					fmt.Printf("[DEC-CTX] CP-UNI1 col=%d bp=%d decoded_bit=%d\n", i, t1.bitplane, bit1)
 					runlen |= bit1 << 1
-					ctxState = t1.mqc.GetContextState(CTX_UNI)
-					state = ctxState & 0x7F
-					mps = int(ctxState >> 7)
-					fmt.Printf("[DEC-CTX] CP-UNI2 col=%d bp=%d ctx=%d state=%d mps=%d\n", i, t1.bitplane, CTX_UNI, state, mps)
 					bit2 := t1.mqc.Decode(CTX_UNI)
-					fmt.Printf("[DEC-CTX] CP-UNI2 col=%d bp=%d decoded_bit=%d\n", i, t1.bitplane, bit2)
 					runlen |= bit2
 
 					// Coefficients before runlen remain insignificant
@@ -504,47 +388,19 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 						idx := (y+1)*paddedWidth + (i + 1)
 						flags := t1.flags[idx]
 
-						// DEBUG: Track first coefficient (0,0)
-						isFirst := (i == 0 && y == 0)
-
 						// Decode significance bit
 						ctx := getZeroCodingContext(flags)
-
-						if isFirst {
-							fmt.Printf("[CP bp=%d] RL path: decode sigBit ctx=%d ", t1.bitplane, ctx)
-						}
-
-						// DEBUG: Log context state before decode
-						ctxState := t1.mqc.GetContextState(int(ctx))
-						state := ctxState & 0x7F
-						mps := int(ctxState >> 7)
-						fmt.Printf("[DEC-CTX] CP-RL-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", i, y, t1.bitplane, ctx, state, mps)
 						bit := t1.mqc.Decode(int(ctx))
-						fmt.Printf("[DEC-CTX] CP-RL-SIG pos(%d,%d) bp=%d decoded_bit=%d\n", i, y, t1.bitplane, bit)
-
-						if isFirst {
-							fmt.Printf("sigBit=%d ", bit)
-						}
 
 						if bit != 0 {
-						// Check if already significant
-						alreadySig := (flags & T1_SIG) != 0
+							// Check if already significant
+							alreadySig := (flags & T1_SIG) != 0
 
-						if !alreadySig {
+							if !alreadySig {
 								// Coefficient becomes significant
 								// Decode sign bit
-								// DEBUG: Log context state before decode
-								ctxState := t1.mqc.GetContextState(CTX_UNI)
-								state := ctxState & 0x7F
-								mps := int(ctxState >> 7)
-								fmt.Printf("[DEC-CTX] CP-RL-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps)
 								signBit := t1.mqc.Decode(CTX_UNI)
-								fmt.Printf("[DEC-CTX] CP-RL-SIGN pos(%d,%d) bp=%d decoded_bit=%d\n", i, y, t1.bitplane, signBit)
 
-								if isFirst {
-									fmt.Printf("signBit=%d ", signBit)
-								}
-	
 								// Set coefficient value (2^bitplane) and sign
 								// Note: This is the first time this coefficient becomes significant
 								val := int32(1) << uint(t1.bitplane)
@@ -557,33 +413,27 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 								} else {
 									t1.data[idx] = val
 								}
-	
-								if isFirst {
-									fmt.Printf("data=%d\n", t1.data[idx])
-								}
-	
+
 								// Mark as significant
 								t1.flags[idx] |= T1_SIG | T1_VISIT
-	
+
 								// Update neighbor flags
 								t1.updateNeighborFlags(i, y, idx)
-						} else {
-							// Already-significant coefficient in CP RL path
-							// Encoder only encodes bit-plane value, no sign bit
-							// Update coefficient value with this bit-plane's bit
-							absVal := t1.data[idx]
-							if absVal < 0 {
-								absVal = -absVal
-							}
-							absVal |= (1 << uint(t1.bitplane))
-							if t1.flags[idx]&T1_SIGN != 0 {
-								t1.data[idx] = -absVal
 							} else {
-								t1.data[idx] = absVal
+								// Already-significant coefficient in CP RL path
+								// Encoder only encodes bit-plane value, no sign bit
+								// Update coefficient value with this bit-plane's bit
+								absVal := t1.data[idx]
+								if absVal < 0 {
+									absVal = -absVal
+								}
+								absVal |= (1 << uint(t1.bitplane))
+								if t1.flags[idx]&T1_SIGN != 0 {
+									t1.data[idx] = -absVal
+								} else {
+									t1.data[idx] = absVal
+								}
 							}
-						}
-						} else if isFirst {
-							fmt.Printf("insignificant\n")
 						}
 
 						// VISIT flag will be cleared at start of next bitplane
@@ -600,14 +450,8 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				idx := (y+1)*paddedWidth + (i + 1)
 				flags := t1.flags[idx]
 
-				// DEBUG
-				isFirst := (i == 0 && y == 0)
-
 				// Skip if already visited
 				if (flags & T1_VISIT) != 0 {
-					if isFirst {
-						fmt.Printf("[DEC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
-					}
 					// Do not clear VISIT here - it will be cleared at start of next bitplane
 					continue
 				}
@@ -615,35 +459,15 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				// Check if already significant
 				alreadySig := (flags & T1_SIG) != 0
 
-				if isFirst {
-					fmt.Printf("[DEC CP bp=%d] Normal: alreadySig=%v decode sigBit ", t1.bitplane, alreadySig)
-				}
-
 				// Decode significance bit (always, even for already-significant coefficients)
 				ctx := getZeroCodingContext(flags)
-				// DEBUG: Log context state before decode
-				ctxState := t1.mqc.GetContextState(int(ctx))
-				state := ctxState & 0x7F
-				mps := int(ctxState >> 7)
-				fmt.Printf("[DEC-CTX] CP-NORM-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", i, y, t1.bitplane, ctx, state, mps)
 				bit := t1.mqc.Decode(int(ctx))
-				fmt.Printf("[DEC-CTX] CP-NORM-SIG pos(%d,%d) bp=%d decoded_bit=%d\n", i, y, t1.bitplane, bit)
-
-				if isFirst {
-					fmt.Printf("ctx=%d bit=%d\n", ctx, bit)
-				}
 
 				if bit != 0 {
 					if !alreadySig {
 						// Coefficient becomes significant for the first time
 						// Decode sign bit
-						// DEBUG: Log context state before decode
-						ctxState := t1.mqc.GetContextState(CTX_UNI)
-						state := ctxState & 0x7F
-						mps := int(ctxState >> 7)
-						fmt.Printf("[DEC-CTX] CP-NORM-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps)
 						signBit := t1.mqc.Decode(CTX_UNI)
-						fmt.Printf("[DEC-CTX] CP-NORM-SIGN pos(%d,%d) bp=%d decoded_bit=%d\n", i, y, t1.bitplane, signBit)
 
 						// Set coefficient value (2^bitplane) and sign
 						// Note: This is the first time this coefficient becomes significant
@@ -697,28 +521,28 @@ func (t1 *T1Decoder) updateNeighborFlags(x, y, idx int) {
 	// Padding ensures all neighbors are valid, no boundary checks needed
 
 	// North
-	nIdx := (y) * paddedWidth + (x + 1)
+	nIdx := (y)*paddedWidth + (x + 1)
 	t1.flags[nIdx] |= T1_SIG_S
 	if sign != 0 {
 		t1.flags[nIdx] |= T1_SIGN_S
 	}
 
 	// South
-	sIdx := (y + 2) * paddedWidth + (x + 1)
+	sIdx := (y+2)*paddedWidth + (x + 1)
 	t1.flags[sIdx] |= T1_SIG_N
 	if sign != 0 {
 		t1.flags[sIdx] |= T1_SIGN_N
 	}
 
 	// West
-	wIdx := (y + 1) * paddedWidth + x
+	wIdx := (y+1)*paddedWidth + x
 	t1.flags[wIdx] |= T1_SIG_E
 	if sign != 0 {
 		t1.flags[wIdx] |= T1_SIGN_E
 	}
 
 	// East
-	eIdx := (y + 1) * paddedWidth + (x + 2)
+	eIdx := (y+1)*paddedWidth + (x + 2)
 	t1.flags[eIdx] |= T1_SIG_W
 	if sign != 0 {
 		t1.flags[eIdx] |= T1_SIGN_W

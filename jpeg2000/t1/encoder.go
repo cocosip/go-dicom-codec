@@ -86,7 +86,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 	// Determine maximum bit-plane
 	maxBitplane := t1.findMaxBitplane()
-	fmt.Printf("[T1-ENC] maxBitplane=%d, numPasses=%d\n", maxBitplane, numPasses)
+	// DEBUG removed
 	if maxBitplane < 0 {
 		// All coefficients are zero
 		t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
@@ -140,19 +140,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 			passIdx++
 		}
 
-		// DEBUG: Count significant coefficients after this bitplane
-		if t1.bitplane == 7 || t1.bitplane == 6 || t1.bitplane == 1 || t1.bitplane == 0 {
-			sigCount := 0
-			for y := 0; y < t1.height; y++ {
-				for x := 0; x < t1.width; x++ {
-					idx := (y+1)*paddedWidth + (x + 1)
-					if t1.flags[idx]&T1_SIG != 0 {
-						sigCount++
-					}
-				}
-			}
-			fmt.Printf("[ENC] After bitplane %d: %d/%d coefficients are significant\n", t1.bitplane, sigCount, t1.width*t1.height)
-		}
+		// DEBUG removed
 
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
@@ -225,11 +213,6 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 			// Encode significance bit
 			ctx := getZeroCodingContext(flags)
-			// DEBUG: Log context state before encode
-			ctxState := t1.mqe.GetContextState(int(ctx))
-			state := ctxState & 0x7F
-			mps := int(ctxState >> 7)
-			fmt.Printf("[ENC-CTX] SPP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, ctx, state, mps, isSig)
 			t1.mqe.Encode(int(isSig), int(ctx))
 
 			if isSig != 0 {
@@ -243,11 +226,6 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 				signCtx := getSignCodingContext(flags)
 				signPred := getSignPrediction(flags)
-				// DEBUG: Log context state before encode
-				ctxState := t1.mqe.GetContextState(int(signCtx))
-				state := ctxState & 0x7F
-				mps := int(ctxState >> 7)
-				fmt.Printf("[ENC-CTX] SPP-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, signCtx, state, mps, signBit^signPred)
 				t1.mqe.Encode(signBit^signPred, int(signCtx))
 
 				// Mark as significant and visited (prevent MRP from processing)
@@ -285,30 +263,8 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 			}
 			refBit := (absVal >> uint(t1.bitplane)) & 1
 
-			// DEBUG
-			isFirst := (x == 0 && y == 0)
-			isTarget := (x == 1 && y == 0) // Position (1,0)
-			if t1.bitplane == 1 {
-				fmt.Printf("[ENC MRP bp=1] pos(%d,%d) absVal=%d refBit=%d\n", x, y, absVal, refBit)
-			}
-			if isFirst {
-				fmt.Printf("[ENC MRP bp=%d] absVal=%d refBit=%d\n", t1.bitplane, absVal, refBit)
-			}
-			if isTarget && t1.bitplane == 0 {
-				fmt.Printf("[ENC MRP bp=0] Position(1,0): absVal=%d refBit=%d\n", absVal, refBit)
-				debugPrintFlags("  flags", flags)
-			}
-
 			// Encode refinement bit
 			ctx := getMagRefinementContext(flags)
-			if isTarget && t1.bitplane == 0 {
-				fmt.Printf("  context=%d\n", ctx)
-			}
-			// DEBUG: Log context state before encode
-			ctxState := t1.mqe.GetContextState(int(ctx))
-			state := ctxState & 0x7F
-			mps := int(ctxState >> 7)
-			fmt.Printf("[ENC-CTX] MRP pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", x, y, t1.bitplane, ctx, state, mps, refBit)
 			t1.mqe.Encode(int(refBit), int(ctx))
 
 			// Mark as refined and visited (so CP won't refine again)
@@ -370,11 +326,6 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					if rlSigPos >= 0 {
 						rlBit = 1
 					}
-					// DEBUG: Log context state before encode
-					ctxState := t1.mqe.GetContextState(CTX_RL)
-					state := ctxState & 0x7F
-					mps := int(ctxState >> 7)
-					fmt.Printf("[ENC-CTX] CP-RL col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_RL, state, mps, rlBit)
 					t1.mqe.Encode(rlBit, CTX_RL)
 
 					if rlBit == 0 {
@@ -383,17 +334,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						continue // Move to next column
 					}
 
-					// At least one is significant, encode which one (uniformly)
-					// DEBUG: Log context state before encode
-					ctxState = t1.mqe.GetContextState(CTX_UNI)
-					state = ctxState & 0x7F
-					mps = int(ctxState >> 7)
-					fmt.Printf("[ENC-CTX] CP-UNI1 col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_UNI, state, mps, (rlSigPos>>1)&1)
 					t1.mqe.Encode((rlSigPos>>1)&1, CTX_UNI)
-					ctxState = t1.mqe.GetContextState(CTX_UNI)
-					state = ctxState & 0x7F
-					mps = int(ctxState >> 7)
-					fmt.Printf("[ENC-CTX] CP-UNI2 col=%d bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, t1.bitplane, CTX_UNI, state, mps, rlSigPos&1)
 					t1.mqe.Encode(rlSigPos&1, CTX_UNI)
 
 					// Coefficients before rlSigPos remain insignificant
@@ -405,9 +346,6 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						idx := (y+1)*paddedWidth + (i + 1)
 						flags := t1.flags[idx]
 
-						// DEBUG: Track first coefficient (0,0)
-						isFirst := (i == 0 && y == 0)
-
 						// Check if coefficient is significant at this bit-plane
 						absVal := t1.data[idx]
 						if absVal < 0 {
@@ -418,22 +356,13 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						// Encode significance bit
 						ctx := getZeroCodingContext(flags)
 
-						if isFirst {
-							fmt.Printf("[ENC CP bp=%d] RL path: encode sigBit ctx=%d isSig=%d ", t1.bitplane, ctx, isSig)
-						}
-
-						// DEBUG: Log context state before encode
-						ctxState := t1.mqe.GetContextState(int(ctx))
-						state := ctxState & 0x7F
-						mps := int(ctxState >> 7)
-						fmt.Printf("[ENC-CTX] CP-RL-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, ctx, state, mps, isSig)
 						t1.mqe.Encode(int(isSig), int(ctx))
 
 						if isSig != 0 {
-						// Check if already significant
-						alreadySig := (flags & T1_SIG) != 0
+							// Check if already significant
+							alreadySig := (flags & T1_SIG) != 0
 
-						if !alreadySig {
+							if !alreadySig {
 								// Coefficient becomes significant
 								// Encode sign bit (uniform context in cleanup pass)
 								signBit := 0
@@ -441,27 +370,16 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 									signBit = 1
 									t1.flags[idx] |= T1_SIGN
 								}
-	
-								if isFirst {
-									fmt.Printf("signBit=%d\n", signBit)
-								}
 
-								// DEBUG: Log context state before encode
-								ctxState := t1.mqe.GetContextState(CTX_UNI)
-								state := ctxState & 0x7F
-								mps := int(ctxState >> 7)
-								fmt.Printf("[ENC-CTX] CP-RL-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps, signBit)
 								t1.mqe.Encode(signBit, CTX_UNI)
-	
+
 								// Mark as significant
 								t1.flags[idx] |= T1_SIG | T1_VISIT
-	
+
 								// Update neighbor flags
 								t1.updateNeighborFlags(i, y, idx)
-						}
-						// If already significant: bit was just a refinement, no sign bit needed
-						} else if isFirst {
-							fmt.Printf("insignificant\n")
+							}
+							// If already significant: bit was just a refinement, no sign bit needed
 						}
 
 						// VISIT flag will be cleared at start of next bitplane
@@ -478,14 +396,8 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				idx := (y+1)*paddedWidth + (i + 1)
 				flags := t1.flags[idx]
 
-				// DEBUG
-				isFirst := (i == 0 && y == 0)
-
 				// Skip if already visited
 				if (flags & T1_VISIT) != 0 {
-					if isFirst {
-						fmt.Printf("[ENC CP bp=%d] Normal: skip (already visited)\n", t1.bitplane)
-					}
 					// Do not clear VISIT here - it will be cleared at start of next bitplane
 					continue
 				}
@@ -497,29 +409,15 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				}
 				isSig := (absVal >> uint(t1.bitplane)) & 1
 
-				// DEBUG
-				if isFirst {
-					fmt.Printf("[ENC CP bp=%d] Normal: absVal=%d isSig=%d ", t1.bitplane, absVal, isSig)
-				}
-
 				// Encode significance bit
 				ctx := getZeroCodingContext(flags)
-				// DEBUG: Log context state before encode
-				ctxState := t1.mqe.GetContextState(int(ctx))
-				state := ctxState & 0x7F
-				mps := int(ctxState >> 7)
-				fmt.Printf("[ENC-CTX] CP-NORM-SIG pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, ctx, state, mps, isSig)
 				t1.mqe.Encode(int(isSig), int(ctx))
 
-				if isFirst {
-					fmt.Printf("ctx=%d\n", ctx)
-				}
-
 				if isSig != 0 {
-				// Check if already significant
-				alreadySig := (flags & T1_SIG) != 0
+					// Check if already significant
+					alreadySig := (flags & T1_SIG) != 0
 
-				if !alreadySig {
+					if !alreadySig {
 						// Coefficient becomes significant
 						// Encode sign bit (uniform context in cleanup pass)
 						signBit := 0
@@ -527,20 +425,15 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 							signBit = 1
 							t1.flags[idx] |= T1_SIGN
 						}
-						// DEBUG: Log context state before encode
-						ctxState := t1.mqe.GetContextState(CTX_UNI)
-						state := ctxState & 0x7F
-						mps := int(ctxState >> 7)
-						fmt.Printf("[ENC-CTX] CP-NORM-SIGN pos(%d,%d) bp=%d ctx=%d state=%d mps=%d bit=%d\n", i, y, t1.bitplane, CTX_UNI, state, mps, signBit)
 						t1.mqe.Encode(signBit, CTX_UNI)
 
 						// Mark as significant
 						t1.flags[idx] |= T1_SIG | T1_VISIT
-	
+
 						// Update neighbor flags
 						t1.updateNeighborFlags(i, y, idx)
-				}
-				// If already significant: bit was just a refinement, no sign bit needed
+					}
+					// If already significant: bit was just a refinement, no sign bit needed
 				}
 
 				// VISIT flag will be cleared at start of next bitplane
@@ -561,28 +454,28 @@ func (t1 *T1Encoder) updateNeighborFlags(x, y, idx int) {
 	// Padding ensures all neighbors are valid, no boundary checks needed
 
 	// North
-	nIdx := (y) * paddedWidth + (x + 1)
+	nIdx := (y)*paddedWidth + (x + 1)
 	t1.flags[nIdx] |= T1_SIG_S
 	if sign != 0 {
 		t1.flags[nIdx] |= T1_SIGN_S
 	}
 
 	// South
-	sIdx := (y + 2) * paddedWidth + (x + 1)
+	sIdx := (y+2)*paddedWidth + (x + 1)
 	t1.flags[sIdx] |= T1_SIG_N
 	if sign != 0 {
 		t1.flags[sIdx] |= T1_SIGN_N
 	}
 
 	// West
-	wIdx := (y + 1) * paddedWidth + x
+	wIdx := (y+1)*paddedWidth + x
 	t1.flags[wIdx] |= T1_SIG_E
 	if sign != 0 {
 		t1.flags[wIdx] |= T1_SIGN_E
 	}
 
 	// East
-	eIdx := (y + 1) * paddedWidth + (x + 2)
+	eIdx := (y+1)*paddedWidth + (x + 2)
 	t1.flags[eIdx] |= T1_SIG_W
 	if sign != 0 {
 		t1.flags[eIdx] |= T1_SIGN_W

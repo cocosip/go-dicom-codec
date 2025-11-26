@@ -179,7 +179,7 @@ func TestDecoderMultipleSizes(t *testing.T) {
 }
 
 // sprintf is a helper function (go doesn't allow importing fmt in tests sometimes)
-func sprintf(format string, width, height int) string {
+func sprintf(_ string, width, height int) string {
 	// Simple integer to string conversion for test names
 	return string(rune('0'+width/100)) + string(rune('0'+(width/10)%10)) + string(rune('0'+width%10)) +
 		"x" +

@@ -142,7 +142,7 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 }
 
 // parseTile parses a single tile
-func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
+func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 	// Read SOT
 	marker, err := p.readMarker()
 	if err != nil {
