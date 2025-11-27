@@ -483,18 +483,27 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 	}
 
 	// Check transformation type
-	if td.cod.Transformation != 1 {
-		// 0 = 9-7 irreversible (not yet implemented)
-		return fmt.Errorf("only 5-3 reversible wavelet (transformation=1) is supported")
+	if td.cod.Transformation == 1 {
+		// 5/3 reversible wavelet (lossless)
+		// Copy coefficients to samples buffer (wavelet transform is in-place)
+		comp.samples = make([]int32, len(comp.coefficients))
+		copy(comp.samples, comp.coefficients)
+
+		// Apply inverse multilevel wavelet transform
+		wavelet.InverseMultilevel(comp.samples, comp.width, comp.height, comp.numLevels)
+	} else if td.cod.Transformation == 0 {
+		// 9/7 irreversible wavelet (lossy)
+		// Convert coefficients to float64 for 9/7 transform
+		floatCoeffs := wavelet.ConvertInt32ToFloat64(comp.coefficients)
+
+		// Apply inverse multilevel 9/7 wavelet transform
+		wavelet.InverseMultilevel97(floatCoeffs, comp.width, comp.height, comp.numLevels)
+
+		// Convert back to int32 with rounding
+		comp.samples = wavelet.ConvertFloat64ToInt32(floatCoeffs)
+	} else {
+		return fmt.Errorf("unsupported wavelet transformation type: %d", td.cod.Transformation)
 	}
-
-	// Apply 5/3 inverse wavelet transform
-	// Copy coefficients to samples buffer (wavelet transform is in-place)
-	comp.samples = make([]int32, len(comp.coefficients))
-	copy(comp.samples, comp.coefficients)
-
-	// Apply inverse multilevel wavelet transform
-	wavelet.InverseMultilevel(comp.samples, comp.width, comp.height, comp.numLevels)
 
 	return nil
 }

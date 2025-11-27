@@ -82,6 +82,9 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert pixel data: %w", err)
 	}
 
+	// Apply DC level shift for unsigned data
+	e.applyDCLevelShift()
+
 	// Build codestream
 	codestream, err := e.buildCodestream()
 	if err != nil {
@@ -470,18 +473,35 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 		return tileData, nil
 	}
 
-	// Apply 5/3 reversible wavelet transform to each component
-	transformed := make([][]int32, len(tileData))
-	for c := 0; c < len(tileData); c++ {
-		// Copy component data
-		transformed[c] = make([]int32, len(tileData[c]))
-		copy(transformed[c], tileData[c])
+	if e.params.Lossless {
+		// Apply 5/3 reversible wavelet transform (lossless)
+		transformed := make([][]int32, len(tileData))
+		for c := 0; c < len(tileData); c++ {
+			// Copy component data
+			transformed[c] = make([]int32, len(tileData[c]))
+			copy(transformed[c], tileData[c])
 
-		// Apply forward multilevel DWT
-		wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
+			// Apply forward multilevel DWT
+			wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
+		}
+		return transformed, nil
+	} else {
+		// Apply 9/7 irreversible wavelet transform (lossy)
+		transformed := make([][]int32, len(tileData))
+		for c := 0; c < len(tileData); c++ {
+			// Convert to float64 for 9/7 transform
+			floatData := wavelet.ConvertInt32ToFloat64(tileData[c])
+
+			// Apply forward multilevel 9/7 DWT
+			wavelet.ForwardMultilevel97(floatData, width, height, e.params.NumLevels)
+
+			// Apply quantization for lossy compression
+			// TODO: Implement proper quantization based on quality parameter
+			// For now, just convert back to int32 with rounding
+			transformed[c] = wavelet.ConvertFloat64ToInt32(floatData)
+		}
+		return transformed, nil
 	}
-
-	return transformed, nil
 }
 
 // encodeTileData encodes tile data using T1 and T2 encoding
