@@ -53,6 +53,10 @@ type PrecinctCodeBlock struct {
 	NumPassesTotal  int    // Total number of passes decoded so far
 	ZeroBitPlanes   int    // Number of missing MSB bit-planes
 	Data            []byte // Accumulated compressed data
+
+	// Multi-layer support
+	LayerPasses     []int    // Number of passes included in each layer (cumulative)
+	LayerData       [][]byte // Encoded data for each layer's passes
 }
 
 // Layer represents a quality layer

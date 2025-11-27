@@ -168,7 +168,8 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		numCBY := (comp.height + cbHeight - 1) / cbHeight
 
 		// Accumulate code-block data from packets for this component
-		cbDataMap := make(map[int][]byte) // map[cbIndex]data
+		cbDataMap := make(map[int][]byte)     // map[cbIndex]data
+		cbPassesMap := make(map[int]int)      // map[cbIndex]total passes
 		maxBitplaneMap := make(map[int]int)
 
 		for i := range packets {
@@ -191,6 +192,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 							cbDataMap[cbIdx] = cbData
 						}
 						dataOffset += cbIncl.DataLength
+
+						// Accumulate passes from packet header
+						// cbIncl.NumPasses is the NEW passes in this packet (for this layer)
+						cbPassesMap[cbIdx] += cbIncl.NumPasses
 
 						// Calculate max bitplane from zero bitplanes
 						// maxBitplane = bitDepth - 1 - zeroBitplanes
@@ -232,7 +237,12 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 				maxBitplane := maxBitplaneMap[cbIdx]
 
 				// Create code-block decoder
-				numPasses := (maxBitplane + 1) * 3
+				// Use accumulated passes from packet headers if available
+				numPasses, hasPasses := cbPassesMap[cbIdx]
+				if !hasPasses || numPasses == 0 {
+					// Fallback: calculate from bitplane (for backward compatibility)
+					numPasses = (maxBitplane + 1) * 3
+				}
 
 				cbd := &CodeBlockDecoder{
 					x0:        x0,

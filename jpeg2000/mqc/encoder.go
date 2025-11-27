@@ -174,6 +174,24 @@ func (mqe *MQEncoder) Flush() []byte {
 	return mqe.output.Bytes()
 }
 
+// GetBuffer returns the current output buffer (for layered encoding)
+func (mqe *MQEncoder) GetBuffer() []byte {
+	return mqe.output.Bytes()
+}
+
+// NumBytes returns the current number of bytes in the output buffer
+// This is used for rate tracking in multi-layer encoding (following OpenJPEG)
+func (mqe *MQEncoder) NumBytes() int {
+	return mqe.output.Len()
+}
+
+// FlushToOutput is a no-op placeholder
+// Pass boundaries are determined after final Flush() by byte offsets
+func (mqe *MQEncoder) FlushToOutput() {
+	// Do nothing - pass boundaries will be approximated from buffer length
+	// The actual pass data separation happens after complete encoding
+}
+
 // Reset resets the encoder state
 func (mqe *MQEncoder) Reset() {
 	mqe.output.Reset()

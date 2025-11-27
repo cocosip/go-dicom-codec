@@ -882,17 +882,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 	// Create T1 encoder
 	t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
 
-	// Encode
-	encodedData, err := t1Enc.Encode(cbData, numPasses, 0)
-	if err != nil {
-		// Return minimal code-block on error
-		// Must have at least 1 pass for valid packet header encoding
-		encodedData = []byte{0x00}
-		numPasses = 1
-		maxBitplane = 0
-		zeroBitPlanes = effectiveBitDepth
-	}
-
 	// Create PrecinctCodeBlock structure
 	pcb := &t2.PrecinctCodeBlock{
 		Index:          0, // Will be set by caller if needed
@@ -903,7 +892,73 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		Included:       false, // First inclusion in packet
 		NumPassesTotal: numPasses,
 		ZeroBitPlanes:  zeroBitPlanes,
-		Data:           encodedData,
+	}
+
+	// Check if we need multi-layer encoding
+	if e.params.NumLayers > 1 {
+		// Multi-layer encoding: use layered encoder
+		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, 0)
+		if err != nil || len(passes) == 0 {
+			// Fallback to single layer on error
+			encodedData := []byte{0x00}
+			pcb.Data = encodedData
+			pcb.LayerData = [][]byte{encodedData}
+			pcb.LayerPasses = []int{1}
+			return pcb
+		}
+
+		// Allocate passes to layers using simple algorithm
+		layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
+
+		// Build layer metadata using pass Rate information
+		// Following OpenJPEG: layers share complete data, metadata specifies byte ranges
+		pcb.LayerData = make([][]byte, e.params.NumLayers)
+		pcb.LayerPasses = make([]int, e.params.NumLayers)
+
+		prevByteEnd := 0
+		for layer := 0; layer < e.params.NumLayers; layer++ {
+			// Get cumulative passes for this layer
+			totalPassesForLayer := layerAlloc.GetPassesForLayer(0, layer)
+			pcb.LayerPasses[layer] = totalPassesForLayer
+
+			// Use Rate from passes to determine byte end
+			// Rate is cumulative bytes up to and including that pass
+			var currentByteEnd int
+			if totalPassesForLayer > 0 && totalPassesForLayer <= len(passes) {
+				currentByteEnd = passes[totalPassesForLayer-1].Rate
+			} else {
+				currentByteEnd = len(completeData)
+			}
+
+			// Clamp
+			if currentByteEnd > len(completeData) {
+				currentByteEnd = len(completeData)
+			}
+			if currentByteEnd < prevByteEnd {
+				currentByteEnd = prevByteEnd
+			}
+
+			// Store incremental data for this layer (from prevByteEnd to currentByteEnd)
+			pcb.LayerData[layer] = completeData[prevByteEnd:currentByteEnd]
+			prevByteEnd = currentByteEnd
+		}
+
+		// For backward compatibility, set Data to all passes
+		pcb.Data = completeData
+
+	} else {
+		// Single layer: use original encoder
+		encodedData, err := t1Enc.Encode(cbData, numPasses, 0)
+		if err != nil {
+			// Return minimal code-block on error
+			encodedData = []byte{0x00}
+			numPasses = 1
+			maxBitplane = 0
+			zeroBitPlanes = effectiveBitDepth
+			pcb.NumPassesTotal = numPasses
+			pcb.ZeroBitPlanes = zeroBitPlanes
+		}
+		pcb.Data = encodedData
 	}
 
 	return pcb

@@ -136,15 +136,15 @@ func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx 
 		return packet, nil
 	}
 
-	// Encode packet header
-	header, cbIncls, err := pe.encodePacketHeader(precinct, layer)
+	// Encode packet header with layer awareness
+	header, cbIncls, err := pe.encodePacketHeaderLayered(precinct, layer)
 	if err != nil {
 		return packet, fmt.Errorf("failed to encode packet header: %w", err)
 	}
 	packet.Header = header
 	packet.CodeBlockIncls = cbIncls
 
-	// Encode packet body (code-block contributions)
+	// Encode packet body (code-block contributions for this layer)
 	body := &bytes.Buffer{}
 	for _, cbIncl := range cbIncls {
 		if cbIncl.Included {
@@ -275,6 +275,104 @@ func (bw *bitWriter) flush() {
 		bw.bitBuf = 0
 		bw.bitCount = 0
 	}
+}
+
+// encodePacketHeaderLayered encodes a packet header for multi-layer support
+// This version properly handles layer-specific pass allocation
+func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int) ([]byte, []CodeBlockIncl, error) {
+	header := &bytes.Buffer{}
+	cbIncls := make([]CodeBlockIncl, 0)
+
+	bitBuf := newBitWriter(header)
+
+	for _, cb := range precinct.CodeBlocks {
+		// Determine if this code-block is included in this layer
+		included := false
+		newPasses := 0
+
+		if cb.LayerData != nil && layer < len(cb.LayerData) {
+			// Multi-layer data available
+			if layer < len(cb.LayerPasses) {
+				totalPasses := cb.LayerPasses[layer]
+				prevPasses := 0
+				if layer > 0 {
+					prevPasses = cb.LayerPasses[layer-1]
+				}
+				newPasses = totalPasses - prevPasses
+				included = newPasses > 0
+			}
+		} else {
+			// Fallback: use old single-layer method
+			included = cb.Data != nil && len(cb.Data) > 0
+			newPasses = cb.NumPassesTotal
+		}
+
+		firstIncl := !cb.Included && included
+
+		cbIncl := CodeBlockIncl{
+			Included:       included,
+			FirstInclusion: firstIncl,
+		}
+
+		// Write inclusion bit
+		if included {
+			bitBuf.writeBit(1)
+		} else {
+			bitBuf.writeBit(0)
+			cbIncls = append(cbIncls, cbIncl)
+			continue
+		}
+
+		// If first inclusion, encode zero bitplanes
+		if firstIncl {
+			zbp := cb.ZeroBitPlanes
+			for zbp > 0 {
+				bitBuf.writeBit(0)
+				zbp--
+			}
+			bitBuf.writeBit(1) // Termination bit
+			cb.Included = true
+		}
+
+		// Encode number of coding passes for this layer
+		cbIncl.NumPasses = newPasses
+
+		// Encode number of passes (simplified unary code)
+		for i := 0; i < newPasses; i++ {
+			if i < newPasses-1 {
+				bitBuf.writeBit(0)
+			} else {
+				bitBuf.writeBit(1)
+			}
+		}
+
+		// Get data for this layer
+		var layerData []byte
+		if cb.LayerData != nil && layer < len(cb.LayerData) {
+			// Multi-layer: use pre-calculated layer data (incremental)
+			layerData = cb.LayerData[layer]
+		} else {
+			// Fallback to single-layer data
+			layerData = cb.Data
+		}
+
+		dataLen := len(layerData)
+		cbIncl.DataLength = dataLen
+		cbIncl.Data = layerData
+
+		// Encode length (16-bit fixed for simplicity)
+		for i := 15; i >= 0; i-- {
+			bit := (dataLen >> i) & 1
+			bitBuf.writeBit(bit)
+		}
+
+		cbIncls = append(cbIncls, cbIncl)
+	}
+
+	// Flush remaining bits
+	bitBuf.flush()
+
+	return header.Bytes(), cbIncls, nil
 }
 
 // GetPackets returns the encoded packets

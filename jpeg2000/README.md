@@ -57,13 +57,20 @@ Pure Go implementation of JPEG 2000 Part 1 (ISO/IEC 15444-1) encoder and decoder
 - Average error: < 1 pixel (64×64+), ~5 pixels (16×16)
 - Compression ratio: ~3:1 for typical medical images
 
+### Recently Implemented
+
+- ✅ **Multiple quality layers** (2025-01-27)
+  - Progressive quality encoding with 1-N layers
+  - Simple layer allocation algorithm for balanced quality distribution
+  - Compatible with LRCP and RLCP progression orders
+  - Automatic pass distribution across layers
+
 ### Not Yet Implemented
 
 - ❌ Multiple tiles (currently single-tile only)
 - ❌ ROI (Region of Interest) coding
-- ❌ Multiple quality layers
 - ❌ Precincts
-- ❌ Other progression orders (currently LRCP only)
+- ❌ Other progression orders (RPCL, PCRL, CPRL supported in spec but not yet tested)
 
 ## Installation
 
@@ -142,6 +149,46 @@ func main() {
     }
 
     // encoded now contains the lossy JPEG 2000 codestream
+}
+```
+
+### Multi-Layer Encoding Example
+
+```go
+package main
+
+import (
+    "github.com/cocosip/go-dicom-codec/jpeg2000"
+)
+
+func main() {
+    // Prepare image data
+    width, height := 512, 512
+    numPixels := width * height
+    componentData := [][]int32{make([]int32, numPixels)}
+
+    // ... fill component data ...
+
+    // Create encoding parameters with multiple quality layers
+    params := jpeg2000.DefaultEncodeParams(width, height, 1, 8, false)
+    params.NumLevels = 5    // 5 wavelet decomposition levels
+    params.Lossless = true  // Or false for lossy
+    params.NumLayers = 3    // 3 quality layers for progressive transmission
+
+    // With 3 layers:
+    // - Layer 0: Low quality (~33% of passes) - fast preview
+    // - Layer 1: Medium quality (~66% of passes) - intermediate view
+    // - Layer 2: Full quality (100% of passes) - final image
+
+    // Encode
+    encoder := jpeg2000.NewEncoder(params)
+    encoded, err := encoder.EncodeComponents(componentData)
+    if err != nil {
+        panic(err)
+    }
+
+    // The encoded codestream contains 3 quality layers
+    // Decoders can progressively decode layers for faster preview
 }
 ```
 
