@@ -17,6 +17,11 @@ type PacketDecoder struct {
 	numLayers      int
 	numResolutions int
 	progression    ProgressionOrder
+	imageWidth     int
+	imageHeight    int
+	cbWidth        int
+	cbHeight       int
+	numLevels      int
 
 	// Parsed packets
 	packets []Packet
@@ -31,13 +36,48 @@ func NewPacketDecoder(data []byte, numComponents, numLayers, numResolutions int,
 		numLayers:      numLayers,
 		numResolutions: numResolutions,
 		progression:    progression,
+		imageWidth:     0,  // Will be set later if needed
+		imageHeight:    0,  // Will be set later if needed
+		cbWidth:        64, // Default code-block size
+		cbHeight:       64, // Default code-block size
+		numLevels:      numResolutions - 1,
 		packets:        make([]Packet, 0),
+	}
+}
+
+// SetImageDimensions sets the image and code-block dimensions
+func (pd *PacketDecoder) SetImageDimensions(width, height, cbWidth, cbHeight int) {
+	pd.imageWidth = width
+	pd.imageHeight = height
+	pd.cbWidth = cbWidth
+	pd.cbHeight = cbHeight
+}
+
+// calculateNumCodeBlocks calculates the number of code-blocks for a given resolution
+func (pd *PacketDecoder) calculateNumCodeBlocks(resolution int) int {
+	if resolution == 0 {
+		// Resolution 0: LL subband only (single subband at top-left)
+		llWidth := pd.imageWidth >> pd.numLevels
+		llHeight := pd.imageHeight >> pd.numLevels
+		numCBX := (llWidth + pd.cbWidth - 1) / pd.cbWidth
+		numCBY := (llHeight + pd.cbHeight - 1) / pd.cbHeight
+		return numCBX * numCBY
+	} else {
+		// Resolution r > 0: HL, LH, HH subbands (3 subbands)
+		level := pd.numLevels - resolution + 1
+		sbWidth := pd.imageWidth >> level
+		sbHeight := pd.imageHeight >> level
+		numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
+		numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
+		// 3 subbands (HL, LH, HH), each with numCBX * numCBY code-blocks
+		return 3 * numCBX * numCBY
 	}
 }
 
 // DecodePackets decodes all packets according to progression order
 func (pd *PacketDecoder) DecodePackets() ([]Packet, error) {
 	// Remove byte-stuffing first
+	// The encoder applies byte-stuffing to both header and body
 	unstuffed := removeByteStuffing(pd.data)
 	pd.data = unstuffed
 	pd.offset = 0
@@ -115,7 +155,7 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 	packet.HeaderPresent = true
 
 	// Decode packet header
-	header, cbIncls, err := pd.decodePacketHeader()
+	header, cbIncls, err := pd.decodePacketHeader(resolution)
 	if err != nil {
 		return packet, fmt.Errorf("failed to decode packet header: %w", err)
 	}
@@ -154,15 +194,14 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 
 // decodePacketHeader decodes a packet header
 // This is a simplified implementation matching our simplified encoder
-func (pd *PacketDecoder) decodePacketHeader() ([]byte, []CodeBlockIncl, error) {
+func (pd *PacketDecoder) decodePacketHeader(resolution int) ([]byte, []CodeBlockIncl, error) {
 	headerStart := pd.offset
 	bitReader := newBitReader(pd.data[pd.offset:])
 	cbIncls := make([]CodeBlockIncl, 0)
 
-	// For simplified implementation, read only the first code-block
-	// In production, we would calculate from precinct/tile structure
-	// For now, assume single code-block per packet (matching encoder for numLevels=0)
-	maxCodeBlocks := 1 // Simplified: only one code-block
+	// Calculate number of code-blocks for this resolution level
+	maxCodeBlocks := pd.calculateNumCodeBlocks(resolution)
+
 	for i := 0; i < maxCodeBlocks; i++ {
 		// Read inclusion bit
 		inclBit, err := bitReader.readBit()

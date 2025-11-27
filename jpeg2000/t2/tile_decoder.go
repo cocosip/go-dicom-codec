@@ -119,6 +119,10 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		ProgressionOrder(td.cod.ProgressionOrder),
 	)
 
+	// Set image dimensions and code-block size
+	cbWidth, cbHeight := td.cod.CodeBlockSize()
+	packetDec.SetImageDimensions(int(td.siz.Xsiz), int(td.siz.Ysiz), cbWidth, cbHeight)
+
 	packets, err := packetDec.DecodePackets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)
@@ -228,10 +232,6 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 				// Create code-block decoder
 				numPasses := (maxBitplane + 1) * 3
-				// DEBUG: Log CodeBlockStyle for first codeblock
-				if cbx == 0 && cby == 0 {
-					fmt.Printf("[CB init] CodeBlockStyle=%d resetctx=%v\n", td.cod.CodeBlockStyle, (td.cod.CodeBlockStyle&0x01) != 0)
-				}
 
 				cbd := &CodeBlockDecoder{
 					x0:        x0,
@@ -448,6 +448,7 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 
 	// Simply copy all code-blocks at their x0,y0 positions
 	// The encoder has already set the correct x0,y0 for each code-block
+	cbCount := 0
 	for _, cb := range comp.codeBlocks {
 		x0 := cb.x0
 		y0 := cb.y0
@@ -467,6 +468,7 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 				}
 			}
 		}
+		cbCount++
 	}
 
 	return nil

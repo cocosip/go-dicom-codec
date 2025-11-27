@@ -1,6 +1,8 @@
 package jpeg2000
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -210,8 +212,18 @@ func TestEncoderDecoderRoundTripLarger(t *testing.T) {
 		height    int
 		numLevels int
 	}{
+		{"64x64 1-level", 64, 64, 1},
 		{"128x128 1-level", 128, 128, 1},
+		{"128x128 2-level", 128, 128, 2},
+		{"192x192 1-level", 192, 192, 1},
+		{"256x256 1-level", 256, 256, 1},
 		{"256x256 2-level", 256, 256, 2},
+		{"512x512 1-level", 512, 512, 1},
+		{"512x512 2-level", 512, 512, 2},
+		{"512x512 3-level", 512, 512, 3},
+		{"1024x1024 1-level", 1024, 1024, 1},
+		{"1024x1024 2-level", 1024, 1024, 2},
+		{"1024x1024 3-level", 1024, 1024, 3},
 	}
 
 	for _, tt := range tests {
@@ -255,17 +267,24 @@ func TestEncoderDecoderRoundTripLarger(t *testing.T) {
 				t.Fatalf("Failed to get decoded data: %v", err)
 			}
 			mismatchCount := 0
+			var firstMismatches []string
 			for i := 0; i < numPixels; i++ {
 				if decoded[i] != componentData[0][i] {
-					mismatchCount++
-					if mismatchCount > 10 {
-						break // Stop counting after 10 to avoid spam
+					if mismatchCount < 20 {
+						x := i % tt.width
+						y := i / tt.width
+						diff := decoded[i] - componentData[0][i]
+						firstMismatches = append(firstMismatches,
+							fmt.Sprintf("  (%d,%d): expected=%d got=%d diff=%d",
+								x, y, componentData[0][i], decoded[i], diff))
 					}
+					mismatchCount++
 				}
 			}
 
 			if mismatchCount > 0 {
-				t.Errorf("Found %d+ mismatches", mismatchCount)
+				t.Logf("First mismatches:\n%s", strings.Join(firstMismatches, "\n"))
+				t.Errorf("Found %d total mismatches", mismatchCount)
 			} else {
 				t.Log("✓ Perfect reconstruction")
 			}

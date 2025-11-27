@@ -232,7 +232,8 @@ func (pe *PacketEncoder) encodePacketHeader(precinct *Precinct, layer int) ([]by
 		// In real implementation, would use variable-length encoding
 		// Using 16-bit length for simplicity
 		for i := 15; i >= 0; i-- {
-			bitBuf.writeBit((dataLen >> i) & 1)
+			bit := (dataLen >> i) & 1
+			bitBuf.writeBit(bit)
 		}
 
 		cbIncls = append(cbIncls, cbIncl)

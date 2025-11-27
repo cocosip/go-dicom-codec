@@ -700,14 +700,6 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
 			globalX0 := subband.x0 + x0
 			globalY0 := subband.y0 + y0
 
-			// Debug: print position for first few code-blocks
-			cbCount := len(codeBlocks)
-			if cbCount < 5 {
-				fmt.Printf("[ENC-CB] count=%d subband=(%d,%d %dx%d band=%d) local=(%d,%d) -> global=(%d,%d %dx%d)\n",
-					cbCount, subband.x0, subband.y0, subband.width, subband.height, subband.band,
-					x0, y0, globalX0, globalY0, actualWidth, actualHeight)
-			}
-
 			codeBlocks = append(codeBlocks, codeBlockInfo{
 				data:     cbData,
 				width:    actualWidth,
@@ -736,19 +728,23 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 	// Each bit-plane has 3 passes: SPP, MRP, CP
 	numPasses := (maxBitplane + 1) * 3
 	if maxBitplane < 0 {
-		numPasses = 0
+		// All zeros - still need at least 1 pass for valid packet header
+		numPasses = 1
 	}
 
 	// Calculate zero bit-planes
 	// ZeroBitPlanes = number of MSB bit-planes that are all zero
-	// Formula: bitDepth - 1 - maxBitplane
-	// Example: 8-bit data with maxBitplane=0 (value=1) => ZeroBitPlanes=7 (bit-planes 1-7 are zero)
+	// Formula: effectiveBitDepth - 1 - maxBitplane
+	// Note: After wavelet transform, coefficients may need extra bits
+	// 5/3 reversible wavelet adds 1 bit per decomposition level
+	effectiveBitDepth := e.params.BitDepth + e.params.NumLevels
+
 	zeroBitPlanes := 0
 	if maxBitplane < 0 {
 		// All data is zero, all bit-planes are zero
-		zeroBitPlanes = e.params.BitDepth
+		zeroBitPlanes = effectiveBitDepth
 	} else {
-		zeroBitPlanes = e.params.BitDepth - 1 - maxBitplane
+		zeroBitPlanes = effectiveBitDepth - 1 - maxBitplane
 	}
 
 	// Create T1 encoder
@@ -757,11 +753,12 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 	// Encode
 	encodedData, err := t1Enc.Encode(cbData, numPasses, 0)
 	if err != nil {
-		// Return empty code-block on error
+		// Return minimal code-block on error
+		// Must have at least 1 pass for valid packet header encoding
 		encodedData = []byte{0x00}
-		numPasses = 0
+		numPasses = 1
 		maxBitplane = 0
-		zeroBitPlanes = e.params.BitDepth
+		zeroBitPlanes = effectiveBitDepth
 	}
 
 	// Create PrecinctCodeBlock structure

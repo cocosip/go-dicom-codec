@@ -2,6 +2,7 @@ package t2
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
 )
@@ -14,11 +15,13 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 	for _, comp := range td.components {
 		// Group code-blocks by resolution to track their spatial layout
 		type cbInfo struct {
-			data        []byte
-			maxBitplane int
-			resolution  int
+			data           []byte
+			maxBitplane    int
+			maxBitplaneSet bool // Track if maxBitplane has been set
+			resolution     int
+			cbIdx          int // Code-block index within the resolution
 		}
-		cbDataMap := make(map[int]cbInfo) // map[cbIndex]cbInfo
+		cbDataMap := make(map[string]cbInfo) // map[key]cbInfo where key = "res:cbIdx"
 
 		for i := range packets {
 			packet := &packets[i]
@@ -34,25 +37,32 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						// Accumulate code-block data
 						cbData := packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
 
-						existing, ok := cbDataMap[cbIdx]
+						// Create unique key: "resolution:cbIdx"
+						key := fmt.Sprintf("%d:%d", packet.ResolutionLevel, cbIdx)
+						existing, ok := cbDataMap[key]
 						if ok {
 							// Append to existing data
 							existing.data = append(existing.data, cbData...)
 						} else {
 							existing.data = cbData
 							existing.resolution = packet.ResolutionLevel
+							existing.cbIdx = cbIdx
 						}
 
 						dataOffset += cbIncl.DataLength
 
 						// Calculate max bitplane from zero bitplanes
+						// Note: After wavelet transform, coefficients may need extra bits
+						// 5/3 reversible wavelet adds 1 bit per decomposition level
 						componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
-						maxBP := componentBitDepth - 1 - cbIncl.ZeroBitplanes
-						if maxBP > existing.maxBitplane {
+						effectiveBitDepth := componentBitDepth + comp.numLevels
+						maxBP := effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
+						if !existing.maxBitplaneSet || maxBP > existing.maxBitplane {
 							existing.maxBitplane = maxBP
+												existing.maxBitplaneSet = true
 						}
 
-						cbDataMap[cbIdx] = existing
+						cbDataMap[key] = existing
 					}
 				}
 			}
@@ -101,18 +111,35 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 		// Create code-blocks with correct spatial positions
 		codeBlocks := make([]*CodeBlockDecoder, 0)
 
-		for cbIdx, cbInfo := range cbDataMap {
+		// Convert map to sorted slice to ensure deterministic processing order
+		// Sort by resolution first, then by code block index
+		cbList := make([]cbInfo, 0, len(cbDataMap))
+		for _, info := range cbDataMap {
+			cbList = append(cbList, info)
+		}
+
+		// Sort by resolution, then by cbIdx
+		sort.Slice(cbList, func(i, j int) bool {
+			if cbList[i].resolution != cbList[j].resolution {
+				return cbList[i].resolution < cbList[j].resolution
+			}
+			return cbList[i].cbIdx < cbList[j].cbIdx
+		})
+
+		for _, cbInfo := range cbList {
 			res := cbInfo.resolution
+			cbIdx := cbInfo.cbIdx
 			layouts := resolutionLayouts[res]
 
 			// Calculate which subband this code-block belongs to
 			subbandIdx := 0
 			localCBIdx := cbIdx
+			totalCBsPerSubband := 0
 
 			// For resolution 0, there's only one subband (LL)
 			// For resolution > 0, code-blocks are ordered as: HL, LH, HH
 			if res > 0 {
-				totalCBsPerSubband := layouts[0].numCBX * layouts[0].numCBY
+				totalCBsPerSubband = layouts[0].numCBX * layouts[0].numCBY
 				subbandIdx = localCBIdx / totalCBsPerSubband
 				if subbandIdx >= len(layouts) {
 					subbandIdx = len(layouts) - 1
@@ -148,13 +175,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 
 			actualWidth := x1 - x0
 			actualHeight := y1 - y0
-
-			// Debug: print position for first few code-blocks
-			if len(codeBlocks) < 10 {
-				fmt.Printf("[DEC-CB] cbIdx=%d res=%d sbIdx=%d layout=(%d,%d %dx%d) -> global=(%d,%d %dx%d)\n",
-					cbIdx, res, subbandIdx, layout.x0, layout.y0, layout.width, layout.height,
-					x0, y0, actualWidth, actualHeight)
-			}
 
 			// Create code-block decoder
 			numPasses := (cbInfo.maxBitplane + 1) * 3

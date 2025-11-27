@@ -7,7 +7,7 @@ import (
 
 // TestSquareSizes tests various square sizes
 func TestSquareSizes(t *testing.T) {
-	sizes := []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 30}
+	sizes := []int{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 30, 32, 64}
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("%dx%d", size, size), func(t *testing.T) {
