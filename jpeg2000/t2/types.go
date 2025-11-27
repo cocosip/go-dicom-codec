@@ -57,6 +57,9 @@ type PrecinctCodeBlock struct {
 	// Multi-layer support
 	LayerPasses     []int    // Number of passes included in each layer (cumulative)
 	LayerData       [][]byte // Encoded data for each layer's passes
+
+	// Coding style
+	UseTERMALL      bool     // If true, each pass is terminated (TERMALL mode)
 }
 
 // Layer represents a quality layer

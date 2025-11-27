@@ -9,23 +9,54 @@ import (
 // PassData represents encoded data for a single coding pass
 // Following OpenJPEG's design: rate is cumulative bytes, len is incremental
 type PassData struct {
-	PassIndex int     // Index of this pass (0-based)
-	Bitplane  int     // Bit-plane this pass belongs to
-	PassType  int     // 0=SPP, 1=MRP, 2=CP
-	Rate      int     // Cumulative bytes up to and including this pass
-	Len       int     // Length of this pass in bytes (Rate[i] - Rate[i-1])
-	Distortion float64 // Cumulative distortion (for rate-distortion optimization)
+	PassIndex    int     // Index of this pass (0-based)
+	Bitplane     int     // Bit-plane this pass belongs to
+	PassType     int     // 0=SPP, 1=MRP, 2=CP
+	Rate         int     // Cumulative bytes for R-D optimization (includes rate_extra_bytes)
+	ActualBytes  int     // Actual cumulative bytes in buffer (for slicing data)
+	Len          int     // Length of this pass in bytes (Rate[i] - Rate[i-1])
+	Distortion   float64 // Cumulative distortion (for rate-distortion optimization)
+}
+
+// isLayerBoundary checks if a pass index is a layer boundary
+func isLayerBoundary(passIdx int, layerBoundaries []int) bool {
+	for _, boundary := range layerBoundaries {
+		if passIdx == boundary-1 { // boundary is 1-indexed (num passes), passIdx is 0-indexed
+			return true
+		}
+	}
+	return false
+}
+
+// shouldTerminatePass determines if a pass should be terminated (flushed)
+// For lossless multi-layer, we use TERMALL mode (terminate all passes)
+// For lossy, we use selective termination at layer boundaries
+func shouldTerminatePass(passIdx int, layerBoundaries []int, lossless bool) bool {
+	if lossless {
+		// TERMALL mode: terminate all passes for accurate byte boundaries
+		// Decoder must also reset state after each pass
+		return true
+	}
+	// Selective termination: only at layer boundaries
+	return isLayerBoundary(passIdx, layerBoundaries)
 }
 
 // EncodeLayered encodes a code-block with per-pass data separation
 // This enables layer allocation for quality-progressive encoding
 // Following OpenJPEG's implementation
 //
+// Parameters:
+// - data: coefficient data to encode
+// - numPasses: number of passes to encode
+// - roishift: ROI bitplane shift
+// - layerBoundaries: pass indices that end each layer (for selective termination)
+// - lossless: if true, use TERMALL mode (terminate all passes for accurate boundaries)
+//
 // Returns:
 // - passes: array of PassData with rate/distortion info
 // - encodedData: complete MQ-encoded data for all passes
 // - error: any encoding error
-func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int) ([]PassData, []byte, error) {
+func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, lossless bool) ([]PassData, []byte, error) {
 	if len(data) != t1.width*t1.height {
 		return nil, nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			t1.width*t1.height, len(data))
@@ -85,13 +116,25 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int) ([
 				return nil, nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 
-			// Record cumulative rate (following OpenJPEG)
+			// Determine if this pass should be terminated
+			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			if shouldTerminate {
+				t1.mqe.FlushToOutput()
+			}
+
+			actualBytes := t1.mqe.NumBytes()
+			rate := actualBytes
+			if !shouldTerminate {
+				rate += 3 // rate_extra_bytes for non-terminated passes
+			}
+
 			passData := PassData{
-				PassIndex:  passIdx,
-				Bitplane:   t1.bitplane,
-				PassType:   0, // SPP
-				Rate:       t1.mqe.NumBytes(),
-				Distortion: 0, // TODO: calculate distortion
+				PassIndex:    passIdx,
+				Bitplane:     t1.bitplane,
+				PassType:     0, // SPP
+				Rate:         rate,
+				ActualBytes:  actualBytes,
+				Distortion:   0, // TODO: calculate distortion
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -103,12 +146,27 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int) ([
 				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 
+			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			if shouldTerminate {
+				t1.mqe.FlushToOutput()
+				if lossless {
+					t1.mqe.ResetContexts()
+				}
+			}
+
+			actualBytes := t1.mqe.NumBytes()
+			rate := actualBytes
+			if !shouldTerminate {
+				rate += 3
+			}
+
 			passData := PassData{
-				PassIndex:  passIdx,
-				Bitplane:   t1.bitplane,
-				PassType:   1, // MRP
-				Rate:       t1.mqe.NumBytes(),
-				Distortion: 0, // TODO: calculate distortion
+				PassIndex:    passIdx,
+				Bitplane:     t1.bitplane,
+				PassType:     1, // MRP
+				Rate:         rate,
+				ActualBytes:  actualBytes,
+				Distortion:   0, // TODO: calculate distortion
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -120,12 +178,27 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int) ([
 				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
 
+			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			if shouldTerminate {
+				t1.mqe.FlushToOutput()
+				if lossless {
+					t1.mqe.ResetContexts()
+				}
+			}
+
+			actualBytes := t1.mqe.NumBytes()
+			rate := actualBytes
+			if !shouldTerminate {
+				rate += 3
+			}
+
 			passData := PassData{
-				PassIndex:  passIdx,
-				Bitplane:   t1.bitplane,
-				PassType:   2, // CP
-				Rate:       t1.mqe.NumBytes(),
-				Distortion: 0, // TODO: calculate distortion
+				PassIndex:    passIdx,
+				Bitplane:     t1.bitplane,
+				PassType:     2, // CP
+				Rate:         rate,
+				ActualBytes:  actualBytes,
+				Distortion:   0, // TODO: calculate distortion
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -137,8 +210,18 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int) ([
 		}
 	}
 
-	// Final flush to complete MQ encoding
-	fullMQData := t1.mqe.Flush()
+	// Get final MQ data
+	var fullMQData []byte
+	if lossless {
+		// In lossless TERMALL mode, all passes including the last one
+		// have been flushed with FlushToOutput(). Just get the buffer.
+		// DO NOT call Flush() again as it would add duplicate termination bytes
+		fullMQData = t1.mqe.GetBuffer()
+	} else {
+		// In lossy mode with selective termination, non-terminated passes
+		// need final flush
+		fullMQData = t1.mqe.Flush()
+	}
 
 	// Calculate Len for each pass (Rate[i] - Rate[i-1])
 	// Following OpenJPEG's implementation

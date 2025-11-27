@@ -49,10 +49,11 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 	}
 
 	// Parse code-block style flags
+	// Reference: ISO/IEC 15444-1:2019 Table A.18
 	t1.cblkstyle = cblkstyle
-	t1.resetctx = (cblkstyle & 0x01) != 0     // Selective arithmetic coding bypass
-	t1.termall = (cblkstyle & 0x02) != 0      // Reset context probabilities
-	t1.segmentation = (cblkstyle & 0x04) != 0 // Segmentation symbols
+	t1.resetctx = (cblkstyle & 0x01) != 0     // Bit 0: Selective arithmetic coding bypass
+	t1.termall = (cblkstyle & 0x04) != 0      // Bit 2: Termination on each coding pass
+	t1.segmentation = (cblkstyle & 0x08) != 0 // Bit 3: Segmentation symbols
 
 	return t1
 }
@@ -60,6 +61,22 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 // DecodeWithBitplane decodes a code-block starting from a specific bitplane
 // This is used when the max bitplane is known (e.g., from packet header in T2)
 func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
+	return t1.DecodeWithOptions(data, numPasses, maxBitplane, roishift, false)
+}
+
+// DecodeWithOptions decodes a code-block with optional TERMALL mode support
+// If useTERMALL is true, the decoder resets MQC state after each pass
+// If useTERMALL is false, use the decoder's termall flag from code block style
+func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane int, roishift int, useTERMALL bool) error {
+	// If useTERMALL parameter is false, use the decoder's own termall flag
+	if !useTERMALL {
+		useTERMALL = t1.termall
+	}
+	// DEBUG: Log TERMALL mode
+	if useTERMALL && numPasses > 0 {
+		fmt.Printf("DEBUG: T1Decoder TERMALL mode enabled (cblkstyle=0x%02x, t1.termall=%v, useTERMALL=%v)\n",
+			t1.cblkstyle, t1.termall, useTERMALL)
+	}
 	if len(data) == 0 {
 		return fmt.Errorf("empty code-block data")
 	}
@@ -101,6 +118,11 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 			passIdx++
+
+			// In TERMALL mode, reset contexts after each pass
+			if useTERMALL {
+				t1.mqc.ResetContexts()
+			}
 		}
 
 		if passIdx < numPasses {
@@ -108,6 +130,11 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
+
+			// In TERMALL mode, reset contexts after each pass
+			if useTERMALL {
+				t1.mqc.ResetContexts()
+			}
 		}
 
 		if passIdx < numPasses {
@@ -115,6 +142,11 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
 			passIdx++
+
+			// In TERMALL mode, reset contexts after each pass
+			if useTERMALL {
+				t1.mqc.ResetContexts()
+			}
 		}
 
 		// DEBUG removed

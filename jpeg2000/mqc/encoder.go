@@ -185,11 +185,38 @@ func (mqe *MQEncoder) NumBytes() int {
 	return mqe.output.Len()
 }
 
-// FlushToOutput is a no-op placeholder
-// Pass boundaries are determined after final Flush() by byte offsets
+// FlushToOutput flushes the encoder to the output buffer
+// This is used for pass termination in multi-layer encoding
 func (mqe *MQEncoder) FlushToOutput() {
-	// Do nothing - pass boundaries will be approximated from buffer length
-	// The actual pass data separation happens after complete encoding
+	// setbits: fill remaining bits with 1's for flushing
+	tempC := mqe.c + mqe.a
+
+	// Fill only the remaining ct bits with 1s
+	mask := uint32((1 << uint(mqe.ct)) - 1)
+	mqe.c |= mask
+
+	if mqe.c >= tempC {
+		mqe.c -= 0x8000
+	}
+
+	// Output final bytes
+	mqe.c <<= uint(mqe.ct)
+	mqe.byteout()
+
+	mqe.c <<= uint(mqe.ct)
+	mqe.byteout()
+
+	// Write last byte if not 0xFF
+	if mqe.lastByte != 0xFF {
+		mqe.output.WriteByte(mqe.lastByte)
+		mqe.hasOutput = true
+		mqe.lastByte = 0
+	}
+
+	// Reset state for next pass (but don't reset output buffer)
+	mqe.a = 0x8000
+	mqe.c = 0
+	mqe.ct = 12
 }
 
 // Reset resets the encoder state

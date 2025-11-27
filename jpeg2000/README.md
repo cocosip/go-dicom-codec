@@ -66,7 +66,7 @@ Pure Go implementation of JPEG 2000 Part 1 (ISO/IEC 15444-1) encoder and decoder
   - Automatic pass distribution across layers
 
 ### Not Yet Implemented
-
+- 下一步, 添加TERMALL模式支持到解码器
 - ❌ Multiple tiles (currently single-tile only)
 - ❌ ROI (Region of Interest) coding
 - ❌ Precincts

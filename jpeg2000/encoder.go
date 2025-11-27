@@ -343,8 +343,13 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	_ = binary.Write(codData, binary.BigEndian, cbWidthExp)
 	_ = binary.Write(codData, binary.BigEndian, cbHeightExp)
 
-	// Code-block style (0 = default)
-	_ = binary.Write(codData, binary.BigEndian, uint8(0))
+	// Code-block style
+	// Bit 2 (0x04): Termination on each coding pass (TERMALL mode for multi-layer lossless)
+	codeBlockStyle := uint8(0)
+	if p.Lossless && p.NumLayers > 1 {
+		codeBlockStyle |= 0x04 // Enable TERMALL mode
+	}
+	_ = binary.Write(codData, binary.BigEndian, codeBlockStyle)
 
 	// Transformation (0 = 9/7 irreversible, 1 = 5/3 reversible)
 	transform := uint8(1)
@@ -896,8 +901,18 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 
 	// Check if we need multi-layer encoding
 	if e.params.NumLayers > 1 {
-		// Multi-layer encoding: use layered encoder
-		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, 0)
+		// Allocate passes to layers using simple algorithm
+		layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
+
+		// Compute layer boundaries (pass indices that end each layer)
+		layerBoundaries := make([]int, e.params.NumLayers)
+		for layer := 0; layer < e.params.NumLayers; layer++ {
+			layerBoundaries[layer] = layerAlloc.GetPassesForLayer(0, layer)
+		}
+
+		// Multi-layer encoding: use layered encoder with layer boundaries
+		// For lossless, use TERMALL mode to ensure accurate byte boundaries
+		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, 0, layerBoundaries, e.params.Lossless)
 		if err != nil || len(passes) == 0 {
 			// Fallback to single layer on error
 			encodedData := []byte{0x00}
@@ -906,9 +921,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 			pcb.LayerPasses = []int{1}
 			return pcb
 		}
-
-		// Allocate passes to layers using simple algorithm
-		layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
 
 		// Build layer metadata using pass Rate information
 		// Following OpenJPEG: layers share complete data, metadata specifies byte ranges
@@ -921,11 +933,11 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 			totalPassesForLayer := layerAlloc.GetPassesForLayer(0, layer)
 			pcb.LayerPasses[layer] = totalPassesForLayer
 
-			// Use Rate from passes to determine byte end
-			// Rate is cumulative bytes up to and including that pass
+			// Use ActualBytes from passes to determine byte end
+			// ActualBytes is the actual position in the buffer (not including rate_extra_bytes estimate)
 			var currentByteEnd int
 			if totalPassesForLayer > 0 && totalPassesForLayer <= len(passes) {
-				currentByteEnd = passes[totalPassesForLayer-1].Rate
+				currentByteEnd = passes[totalPassesForLayer-1].ActualBytes
 			} else {
 				currentByteEnd = len(completeData)
 			}
@@ -945,6 +957,9 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 
 		// For backward compatibility, set Data to all passes
 		pcb.Data = completeData
+
+		// Set TERMALL flag for lossless multi-layer
+		pcb.UseTERMALL = e.params.Lossless
 
 	} else {
 		// Single layer: use original encoder
