@@ -235,16 +235,25 @@ params.Lossless = false
 params.Quality = 80  // Set quality (1-100)
 ```
 
-**Via Codec (DICOM integration):**
+**Via Codec (DICOM integration) - Type-Safe Parameters:**
 ```go
 import "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 
-// Create codec with specific quality
+// Method 1: Type-safe parameters (RECOMMENDED)
 codec := lossy.NewCodec(80)
+params := lossy.NewLossyParameters().
+    WithQuality(95).
+    WithNumLevels(5)
+err := codec.Encode(src, dst, params)
 
-// Or use default quality and override with parameters
-codec := lossy.NewCodec(80)
-params := codec.NewParameters()
+// Method 2: Direct field access (even simpler)
+params := lossy.NewLossyParameters()
+params.Quality = 95      // IDE autocomplete works!
+params.NumLevels = 5     // Type-safe, no strings
+err := codec.Encode(src, dst, params)
+
+// Method 3: Legacy string-based (backward compatible)
+params := lossy.NewLossyParameters()
 params.SetParameter("quality", 95)
 err := codec.Encode(src, dst, params)
 ```
@@ -395,6 +404,11 @@ Test coverage:
 - ✅ **Quality parameter for lossy compression (1-100 scale)**
 - ✅ **Quantization with per-subband step sizes**
 - ✅ **Dequantization in decoder for lossy mode**
+- ✅ **Type-safe parameter structures** (`JPEG2000LossyParameters`)
+  - Compile-time checking and IDE autocomplete
+  - Direct field access (no string keys needed)
+  - Method chaining support
+  - Backward compatible with generic `codec.Parameters`
 
 ### Planned Enhancements 📋
 

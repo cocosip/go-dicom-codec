@@ -48,24 +48,45 @@ func (c *ExtendedCodec) Encode(src *codec.PixelData, dst *codec.PixelData, param
 	height := int(src.Height)
 	components := int(src.SamplesPerPixel)
 
-	// Determine bit depth from source
-	bitDepth := c.bitDepth
+	// Get encoding parameters
+	var extendedParams *JPEGExtendedParameters
+	if params != nil {
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEGExtendedParameters); ok {
+			extendedParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			extendedParams = NewExtendedParameters()
+			if q := params.GetParameter("quality"); q != nil {
+				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
+					extendedParams.Quality = qInt
+				}
+			}
+			if bd := params.GetParameter("bitDepth"); bd != nil {
+				if bdInt, ok := bd.(int); ok && (bdInt == 8 || bdInt == 12) {
+					extendedParams.BitDepth = bdInt
+				}
+			}
+		}
+	} else {
+		// Use codec defaults
+		extendedParams = NewExtendedParameters()
+		extendedParams.Quality = c.quality
+		extendedParams.BitDepth = c.bitDepth
+	}
+
+	// Validate parameters
+	extendedParams.Validate()
+
+	// Determine bit depth from source if not explicitly set
+	bitDepth := extendedParams.BitDepth
 	if src.BitsStored > 0 && src.BitsStored <= 8 {
 		bitDepth = 8
 	} else if src.BitsStored > 8 && src.BitsStored <= 12 {
 		bitDepth = 12
 	}
 
-	// Check for parameter overrides
-	quality := c.quality
-	if params != nil {
-		if q, ok := params.GetParameter("quality").(int); ok && q >= 1 && q <= 100 {
-			quality = q
-		}
-		if bd, ok := params.GetParameter("bitDepth").(int); ok && (bd == 8 || bd == 12) {
-			bitDepth = bd
-		}
-	}
+	quality := extendedParams.Quality
 
 	// Encode
 	encoded, err := Encode(src.Data, width, height, components, bitDepth, quality)

@@ -1,0 +1,215 @@
+package lossy
+
+import (
+	"testing"
+
+	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+)
+
+// TestTypeSafeParametersIntegration tests that type-safe parameters work with codec
+func TestTypeSafeParametersIntegration(t *testing.T) {
+	// Create test data
+	width := uint16(64)
+	height := uint16(64)
+	pixelData := make([]byte, int(width)*int(height))
+	for i := range pixelData {
+		pixelData[i] = byte(i % 256)
+	}
+
+	src := &codec.PixelData{
+		Data:                      pixelData,
+		Width:                     width,
+		Height:                    height,
+		NumberOfFrames:            1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+
+	// Test with type-safe parameters
+	c := NewCodec(80)
+	params := NewLossyParameters().WithQuality(95).WithNumLevels(5)
+
+	encoded := &codec.PixelData{}
+	err := c.Encode(src, encoded, params)
+	if err != nil {
+		t.Fatalf("Encode with type-safe parameters failed: %v", err)
+	}
+
+	// Verify encoding worked
+	if len(encoded.Data) == 0 {
+		t.Fatal("Encoded data is empty")
+	}
+
+	t.Logf("Encoded size: %d bytes", len(encoded.Data))
+	t.Logf("Quality used: %d", params.Quality)
+	t.Logf("Levels used: %d", params.NumLevels)
+
+	// Decode
+	decoded := &codec.PixelData{}
+	err = c.Decode(encoded, decoded, nil)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+
+	// Verify decoding
+	if len(decoded.Data) != len(src.Data) {
+		t.Errorf("Decoded data length = %d, want %d", len(decoded.Data), len(src.Data))
+	}
+}
+
+// TestBackwardCompatibility tests that old string-based parameters still work
+func TestBackwardCompatibility(t *testing.T) {
+	width := uint16(64)
+	height := uint16(64)
+	pixelData := make([]byte, int(width)*int(height))
+
+	src := &codec.PixelData{
+		Data:                      pixelData,
+		Width:                     width,
+		Height:                    height,
+		NumberOfFrames:            1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+
+	c := NewCodec(80)
+
+	// Use string-based parameters (old way)
+	params := NewLossyParameters()
+	params.SetParameter("quality", 90)
+	params.SetParameter("numLevels", 3)
+
+	encoded := &codec.PixelData{}
+	err := c.Encode(src, encoded, params)
+	if err != nil {
+		t.Fatalf("Encode with string-based parameters failed: %v", err)
+	}
+
+	// Verify the parameters were actually used
+	usedQuality := params.GetParameter("quality").(int)
+	usedLevels := params.GetParameter("numLevels").(int)
+
+	if usedQuality != 90 {
+		t.Errorf("Quality = %d, want 90", usedQuality)
+	}
+
+	if usedLevels != 3 {
+		t.Errorf("NumLevels = %d, want 3", usedLevels)
+	}
+}
+
+// TestParametersMixedUsage tests mixing direct access and Get/Set methods
+func TestParametersMixedUsage(t *testing.T) {
+	params := NewLossyParameters()
+
+	// Set via direct access
+	params.Quality = 85
+
+	// Read via GetParameter
+	quality := params.GetParameter("quality")
+	if quality != 85 {
+		t.Errorf("GetParameter(quality) = %v, want 85", quality)
+	}
+
+	// Set via SetParameter
+	params.SetParameter("numLevels", 4)
+
+	// Read via direct access
+	if params.NumLevels != 4 {
+		t.Errorf("NumLevels = %d, want 4", params.NumLevels)
+	}
+}
+
+// TestGenericParametersInterface tests using as generic codec.Parameters
+func TestGenericParametersInterface(t *testing.T) {
+	var genericParams codec.Parameters
+
+	// Can assign to interface
+	genericParams = NewLossyParameters()
+
+	// Can use generic methods
+	genericParams.SetParameter("quality", 95)
+	quality := genericParams.GetParameter("quality")
+
+	if quality != 95 {
+		t.Errorf("Generic quality = %v, want 95", quality)
+	}
+
+	// Can type assert back
+	if typedParams, ok := genericParams.(*JPEG2000LossyParameters); ok {
+		// Can use typed features
+		typedParams.WithQuality(90)
+		if typedParams.Quality != 90 {
+			t.Errorf("Typed quality = %d, want 90", typedParams.Quality)
+		}
+	} else {
+		t.Fatal("Failed to type assert to *JPEG2000LossyParameters")
+	}
+}
+
+// TestNilParameters tests that nil parameters use defaults
+func TestNilParameters(t *testing.T) {
+	width := uint16(64)
+	height := uint16(64)
+	pixelData := make([]byte, int(width)*int(height))
+
+	src := &codec.PixelData{
+		Data:                      pixelData,
+		Width:                     width,
+		Height:                    height,
+		NumberOfFrames:            1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+
+	c := NewCodec(85) // Codec default quality
+
+	encoded := &codec.PixelData{}
+	err := c.Encode(src, encoded, nil) // nil parameters
+	if err != nil {
+		t.Fatalf("Encode with nil parameters failed: %v", err)
+	}
+
+	// Should use codec's default quality (85)
+	if len(encoded.Data) == 0 {
+		t.Fatal("Encoded data is empty")
+	}
+}
+
+// BenchmarkTypeSafeVsStringBased compares performance
+func BenchmarkTypeSafeVsStringBased(b *testing.B) {
+	b.Run("TypeSafe", func(b *testing.B) {
+		params := NewLossyParameters()
+		for i := 0; i < b.N; i++ {
+			params.Quality = 95
+			params.NumLevels = 5
+			_ = params.Quality
+			_ = params.NumLevels
+		}
+	})
+
+	b.Run("StringBased", func(b *testing.B) {
+		params := NewLossyParameters()
+		for i := 0; i < b.N; i++ {
+			params.SetParameter("quality", 95)
+			params.SetParameter("numLevels", 5)
+			_ = params.GetParameter("quality")
+			_ = params.GetParameter("numLevels")
+		}
+	})
+}

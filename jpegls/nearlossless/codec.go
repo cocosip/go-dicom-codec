@@ -53,15 +53,30 @@ func (c *JPEGLSNearLosslessCodec) Encode(src *codec.PixelData, dst *codec.PixelD
 		return fmt.Errorf("JPEG-LS supports 2-16 bit depth, got %d bits", src.BitsStored)
 	}
 
-	// Get NEAR parameter from parameters, otherwise use codec's default
-	near := c.defaultNEAR
+	// Get encoding parameters
+	var nearLosslessParams *JPEGLSNearLosslessParameters
 	if params != nil {
-		if n := params.GetParameter("near"); n != nil {
-			if nInt, ok := n.(int); ok && nInt >= 0 && nInt <= 255 {
-				near = nInt
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEGLSNearLosslessParameters); ok {
+			nearLosslessParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			nearLosslessParams = NewNearLosslessParameters()
+			if n := params.GetParameter("near"); n != nil {
+				if nInt, ok := n.(int); ok && nInt >= 0 && nInt <= 255 {
+					nearLosslessParams.NEAR = nInt
+				}
 			}
 		}
+	} else {
+		// Use codec defaults
+		nearLosslessParams = NewNearLosslessParameters()
+		nearLosslessParams.NEAR = c.defaultNEAR
 	}
+
+	// Validate parameters
+	nearLosslessParams.Validate()
+	near := nearLosslessParams.NEAR
 
 	// Encode using the JPEG-LS near-lossless encoder
 	jpegData, err := Encode(

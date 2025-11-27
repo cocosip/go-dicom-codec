@@ -53,15 +53,30 @@ func (c *BaselineCodec) Encode(src *codec.PixelData, dst *codec.PixelData, param
 		return fmt.Errorf("JPEG Baseline only supports 8-bit data, got %d bits", src.BitsStored)
 	}
 
-	// Get quality from parameters if provided, otherwise use codec's default
-	quality := c.quality
+	// Get encoding parameters
+	var baselineParams *JPEGBaselineParameters
 	if params != nil {
-		if q := params.GetParameter("quality"); q != nil {
-			if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
-				quality = qInt
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEGBaselineParameters); ok {
+			baselineParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			baselineParams = NewBaselineParameters()
+			if q := params.GetParameter("quality"); q != nil {
+				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
+					baselineParams.Quality = qInt
+				}
 			}
 		}
+	} else {
+		// Use codec defaults
+		baselineParams = NewBaselineParameters()
+		baselineParams.Quality = c.quality
 	}
+
+	// Validate parameters
+	baselineParams.Validate()
+	quality := baselineParams.Quality
 
 	// Encode using the baseline encoder
 	jpegData, err := Encode(

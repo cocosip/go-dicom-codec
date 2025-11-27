@@ -48,15 +48,30 @@ func (c *LosslessCodec) Encode(src *codec.PixelData, dst *codec.PixelData, param
 		return fmt.Errorf("source pixel data is empty")
 	}
 
-	// Get predictor from parameters if provided, otherwise use codec's default
-	predictor := c.predictor
+	// Get encoding parameters
+	var losslessParams *JPEGLosslessParameters
 	if params != nil {
-		if p := params.GetParameter("predictor"); p != nil {
-			if pInt, ok := p.(int); ok {
-				predictor = pInt
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEGLosslessParameters); ok {
+			losslessParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			losslessParams = NewLosslessParameters()
+			if p := params.GetParameter("predictor"); p != nil {
+				if pInt, ok := p.(int); ok {
+					losslessParams.Predictor = pInt
+				}
 			}
 		}
+	} else {
+		// Use codec defaults
+		losslessParams = NewLosslessParameters()
+		losslessParams.Predictor = c.predictor
 	}
+
+	// Validate parameters
+	losslessParams.Validate()
+	predictor := losslessParams.Predictor
 
 	// Encode using the lossless encoder
 	jpegData, err := Encode(

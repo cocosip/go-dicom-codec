@@ -50,6 +50,35 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		return fmt.Errorf("source pixel data is empty")
 	}
 
+	// Get encoding parameters
+	var lossyParams *JPEG2000LossyParameters
+	if params != nil {
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEG2000LossyParameters); ok {
+			lossyParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			lossyParams = NewLossyParameters()
+			if q := params.GetParameter("quality"); q != nil {
+				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
+					lossyParams.Quality = qInt
+				}
+			}
+			if nl := params.GetParameter("numLevels"); nl != nil {
+				if nlInt, ok := nl.(int); ok && nlInt >= 0 && nlInt <= 6 {
+					lossyParams.NumLevels = nlInt
+				}
+			}
+		}
+	} else {
+		// Use codec defaults
+		lossyParams = NewLossyParameters()
+		lossyParams.Quality = c.quality
+	}
+
+	// Validate parameters
+	lossyParams.Validate()
+
 	// Create encoding parameters for lossy compression
 	encParams := jpeg2000.DefaultEncodeParams(
 		int(src.Width),
@@ -61,18 +90,8 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 
 	// Configure for lossy compression (9/7 wavelet)
 	encParams.Lossless = false
-	encParams.NumLevels = 5 // Default 5 decomposition levels
-
-	// Get quality from parameters if provided, otherwise use codec's default
-	quality := c.quality
-	if params != nil {
-		if q := params.GetParameter("quality"); q != nil {
-			if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
-				quality = qInt
-			}
-		}
-	}
-	encParams.Quality = quality
+	encParams.NumLevels = lossyParams.NumLevels
+	encParams.Quality = lossyParams.Quality
 
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)

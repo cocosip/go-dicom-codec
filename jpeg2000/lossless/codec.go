@@ -44,6 +44,29 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		return fmt.Errorf("source pixel data is empty")
 	}
 
+	// Get encoding parameters
+	var losslessParams *JPEG2000LosslessParameters
+	if params != nil {
+		// Try to use typed parameters if provided
+		if jp, ok := params.(*JPEG2000LosslessParameters); ok {
+			losslessParams = jp
+		} else {
+			// Fallback: create from generic parameters
+			losslessParams = NewLosslessParameters()
+			if n := params.GetParameter("numLevels"); n != nil {
+				if nInt, ok := n.(int); ok && nInt >= 0 && nInt <= 6 {
+					losslessParams.NumLevels = nInt
+				}
+			}
+		}
+	} else {
+		// Use defaults
+		losslessParams = NewLosslessParameters()
+	}
+
+	// Validate parameters
+	losslessParams.Validate()
+
 	// Create encoding parameters
 	encParams := jpeg2000.DefaultEncodeParams(
 		int(src.Width),
@@ -52,6 +75,7 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		int(src.BitsStored),
 		src.PixelRepresentation != 0,
 	)
+	encParams.NumLevels = losslessParams.NumLevels
 
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)
