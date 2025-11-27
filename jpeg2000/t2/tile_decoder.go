@@ -2,6 +2,7 @@ package t2
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
@@ -493,8 +494,15 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 		wavelet.InverseMultilevel(comp.samples, comp.width, comp.height, comp.numLevels)
 	} else if td.cod.Transformation == 0 {
 		// 9/7 irreversible wavelet (lossy)
+		// First, apply dequantization if needed
+		dequantized := comp.coefficients
+		if td.qcd != nil && td.qcd.QuantizationType() == 2 {
+			// Scalar expounded quantization - apply dequantization
+			dequantized = td.applyDequantizationBySubband(comp.coefficients, comp.width, comp.height, comp.numLevels)
+		}
+
 		// Convert coefficients to float64 for 9/7 transform
-		floatCoeffs := wavelet.ConvertInt32ToFloat64(comp.coefficients)
+		floatCoeffs := wavelet.ConvertInt32ToFloat64(dequantized)
 
 		// Apply inverse multilevel 9/7 wavelet transform
 		wavelet.InverseMultilevel97(floatCoeffs, comp.width, comp.height, comp.numLevels)
@@ -506,6 +514,99 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 	}
 
 	return nil
+}
+
+// applyDequantizationBySubband applies dequantization to each subband separately
+// coeffs: quantized wavelet coefficients in subband layout
+// width, height: dimensions of the full image
+// numLevels: number of wavelet decomposition levels
+func (td *TileDecoder) applyDequantizationBySubband(coeffs []int32, width, height, numLevels int) []int32 {
+	if td.qcd == nil || len(td.qcd.SPqcd) == 0 {
+		// No dequantization
+		return coeffs
+	}
+
+	// Get bit depth
+	bitDepth := int(td.siz.Components[0].BitDepth())
+
+	// Decode step sizes from QCD
+	stepSizes := make([]float64, len(td.qcd.SPqcd)/2)
+	for i := 0; i < len(stepSizes); i++ {
+		// Each step size is 16-bit
+		encoded := uint16(td.qcd.SPqcd[i*2])<<8 | uint16(td.qcd.SPqcd[i*2+1])
+
+		// Decode: bits 11-15 = exponent, bits 0-10 = mantissa
+		exponent := int((encoded >> 11) & 0x1F)
+		mantissa := float64(encoded & 0x7FF)
+
+		bias := bitDepth - 1
+		// stepSize = 2^(exponent - bias) * (1 + mantissa / 2048)
+		stepSizes[i] = math.Pow(2.0, float64(exponent-bias)) * (1.0 + mantissa/2048.0)
+	}
+
+	dequantized := make([]int32, len(coeffs))
+	copy(dequantized, coeffs)
+
+	// Calculate subband dimensions for each level
+	subbandIdx := 0
+
+	// Process from coarsest to finest level
+	for level := numLevels; level >= 1; level-- {
+		// Calculate dimensions at this level
+		levelWidth := (width + (1 << level) - 1) >> level
+		levelHeight := (height + (1 << level) - 1) >> level
+
+		// At the coarsest level, we also have LL subband
+		if level == numLevels {
+			// LL subband
+			if subbandIdx < len(stepSizes) {
+				td.dequantizeSubband(dequantized, 0, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+			}
+			subbandIdx++
+		}
+
+		// HL subband
+		if subbandIdx < len(stepSizes) {
+			td.dequantizeSubband(dequantized, levelWidth, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+		}
+		subbandIdx++
+
+		// LH subband
+		if subbandIdx < len(stepSizes) {
+			td.dequantizeSubband(dequantized, 0, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+		}
+		subbandIdx++
+
+		// HH subband
+		if subbandIdx < len(stepSizes) {
+			td.dequantizeSubband(dequantized, levelWidth, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+		}
+		subbandIdx++
+	}
+
+	return dequantized
+}
+
+// dequantizeSubband dequantizes a single subband
+// data: full coefficient array
+// x0, y0: top-left corner of subband
+// w, h: dimensions of subband
+// stride: row stride (width of full image)
+// stepSize: quantization step size
+func (td *TileDecoder) dequantizeSubband(data []int32, x0, y0, w, h, stride int, stepSize float64) {
+	if stepSize <= 0 {
+		return
+	}
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			idx := (y0+y)*stride + (x0 + x)
+			if idx < len(data) {
+				// Dequantize: coeff * stepSize
+				data[idx] = int32(math.Round(float64(data[idx]) * stepSize))
+			}
+		}
+	}
 }
 
 // levelShift applies DC level shift to convert coefficients to samples

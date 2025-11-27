@@ -14,18 +14,24 @@ var _ codec.Codec = (*Codec)(nil)
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.91
 type Codec struct {
 	transferSyntax *transfer.TransferSyntax
+	quality        int // Default quality (1-100)
 }
 
 // NewCodec creates a new JPEG 2000 Lossy codec
-func NewCodec() *Codec {
+// quality: 1-100, where 100 is near-lossless (default: 80)
+func NewCodec(quality int) *Codec {
+	if quality < 1 || quality > 100 {
+		quality = 80 // default
+	}
 	return &Codec{
 		transferSyntax: transfer.JPEG2000, // Lossy or Lossless
+		quality:        quality,
 	}
 }
 
 // Name returns the codec name
 func (c *Codec) Name() string {
-	return "JPEG 2000"
+	return fmt.Sprintf("JPEG 2000 Lossy (Quality %d)", c.quality)
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
@@ -57,11 +63,16 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	encParams.Lossless = false
 	encParams.NumLevels = 5 // Default 5 decomposition levels
 
-	// Get quality parameter if provided (0-100, default 80)
-	// Higher quality = less compression, lower quality = more compression
-	// TODO: Implement quality parameter when codec.Parameters interface is defined
-	// For now, use default settings
-	_ = params
+	// Get quality from parameters if provided, otherwise use codec's default
+	quality := c.quality
+	if params != nil {
+		if q := params.GetParameter("quality"); q != nil {
+			if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
+				quality = qInt
+			}
+		}
+	}
+	encParams.Quality = quality
 
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)
@@ -128,7 +139,7 @@ func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.
 // RegisterJPEG2000LossyCodec registers the JPEG 2000 Lossy codec with the global registry
 func RegisterJPEG2000LossyCodec() {
 	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodec()
+	j2kCodec := NewCodec(80) // Default quality: 80
 	registry.RegisterCodec(transfer.JPEG2000, j2kCodec)
 }
 

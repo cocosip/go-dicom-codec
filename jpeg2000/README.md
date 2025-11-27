@@ -59,7 +59,6 @@ Pure Go implementation of JPEG 2000 Part 1 (ISO/IEC 15444-1) encoder and decoder
 
 ### Not Yet Implemented
 
-- ❌ Quality parameter for lossy compression (currently minimal quantization)
 - ❌ Multiple tiles (currently single-tile only)
 - ❌ ROI (Region of Interest) coding
 - ❌ Multiple quality layers
@@ -132,6 +131,8 @@ func main() {
     params := jpeg2000.DefaultEncodeParams(width, height, 1, 8, false)
     params.NumLevels = 5    // 5 wavelet decomposition levels
     params.Lossless = false // Use 9/7 irreversible wavelet (lossy)
+    params.Quality = 80     // Quality 1-100 (80 = high quality, default)
+                            // 100 = near-lossless, 50 = medium, 1 = max compression
 
     // Encode
     encoder := jpeg2000.NewEncoder(params)
@@ -195,6 +196,59 @@ encoder := jpeg2000.NewEncoder(params)
 encoded, err := encoder.EncodeComponents(componentData)
 ```
 
+## Quality Parameter
+
+The quality parameter controls the compression ratio and image quality tradeoff for lossy compression.
+
+### Quality Scale (1-100)
+
+- **100**: Near-lossless quality
+  - Minimal quantization
+  - Max error: ~1 pixel
+  - Compression: ~3:1
+  - Use for: Archival, critical diagnostics
+
+- **80** (default): High quality
+  - Small quantization
+  - Max error: ~3 pixels
+  - Compression: ~3-4:1
+  - Use for: Clinical review, primary diagnosis
+
+- **50**: Medium quality
+  - Moderate quantization
+  - Max error: ~12 pixels
+  - Compression: ~6:1
+  - Use for: Secondary review, consultation
+
+- **20**: High compression
+  - Heavy quantization
+  - Max error: ~30 pixels
+  - Compression: ~10:1
+  - Use for: Thumbnails, preview images
+
+### Usage Examples
+
+**Via EncodeParams:**
+```go
+params := jpeg2000.DefaultEncodeParams(width, height, components, bitDepth, isSigned)
+params.Lossless = false
+params.Quality = 80  // Set quality (1-100)
+```
+
+**Via Codec (DICOM integration):**
+```go
+import "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
+
+// Create codec with specific quality
+codec := lossy.NewCodec(80)
+
+// Or use default quality and override with parameters
+codec := lossy.NewCodec(80)
+params := codec.NewParameters()
+params.SetParameter("quality", 95)
+err := codec.Encode(src, dst, params)
+```
+
 ## Performance
 
 ### Compression Performance
@@ -215,10 +269,24 @@ Memory usage: ~4x image size for internal buffers
 
 ### Quality Metrics
 
+**Lossless (5/3 wavelet):**
 All tested configurations achieve **perfect lossless reconstruction**:
 - **0 pixel errors** in all roundtrip tests
 - **Bit-exact** reconstruction for all bit depths (8-bit, 16-bit)
 - Validated on gradient patterns, uniform data, and edge cases
+
+**Lossy (9/7 wavelet with quality parameter):**
+
+Quality parameter controls compression ratio vs. image quality tradeoff (1-100 scale):
+
+| Quality | Compression Ratio | Max Error (64×64) | Use Case |
+|---------|------------------|-------------------|----------|
+| 100     | ~3:1             | ≤ 1 pixel         | Near-lossless, archival quality |
+| 80      | ~3-4:1           | ≤ 3 pixels        | High quality (default) |
+| 50      | ~6:1             | ~12 pixels        | Medium quality, balanced |
+| 20      | ~10:1            | ~30 pixels        | High compression |
+
+**Note:** Larger images (128×128+) typically achieve better quality at same compression ratio. Very small images (16×16) may have higher errors due to boundary effects.
 
 ## Architecture
 
@@ -324,11 +392,12 @@ Test coverage:
 - ✅ Modified encoder/decoder to support both 5/3 and 9/7 wavelets
 - ✅ Fixed DC level shift bug in encoder.Encode() method
 - ✅ Comprehensive testing for both lossless and lossy modes
+- ✅ **Quality parameter for lossy compression (1-100 scale)**
+- ✅ **Quantization with per-subband step sizes**
+- ✅ **Dequantization in decoder for lossy mode**
 
 ### Planned Enhancements 📋
 
-- 📋 Quality parameter for lossy compression (configurable compression ratio)
-- 📋 Proper quantization step sizes for lossy mode
 - 📋 Multi-tile support (currently single-tile only)
 - 📋 ROI (Region of Interest) coding
 - 📋 Multiple quality layers

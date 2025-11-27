@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
@@ -30,6 +31,13 @@ type EncodeParams struct {
 	CodeBlockWidth  int  // Code-block width (power of 2, typically 64)
 	CodeBlockHeight int  // Code-block height (power of 2, typically 64)
 
+	// Lossy compression quality (1-100, only used when Lossless=false)
+	// Higher values = better quality, lower compression
+	// 100 = minimal quantization (near-lossless)
+	// 50 = balanced quality/compression
+	// 1 = maximum compression, lower quality
+	Quality int // Default: 80
+
 	// Progression order
 	ProgressionOrder uint8 // 0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL
 
@@ -49,6 +57,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		TileHeight:       0, // Single tile
 		NumLevels:        5, // 5 DWT levels
 		Lossless:         true,
+		Quality:          80, // Default quality for lossy mode
 		CodeBlockWidth:   64,
 		CodeBlockHeight:  64,
 		ProgressionOrder: 0, // LRCP
@@ -358,16 +367,34 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 
 	qcdData := &bytes.Buffer{}
 
-	// Sqcd - Quantization style (0 = no quantization for lossless)
-	sqcd := uint8(0)
-	_ = binary.Write(qcdData, binary.BigEndian, sqcd)
+	if p.Lossless {
+		// Lossless mode: no quantization (style 0)
+		// Sqcd - bits 0-4: guard bits (2), bits 5-7: quantization type (0 = no quantization)
+		sqcd := uint8(0<<5 | 2) // No quantization, 2 guard bits
+		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
-	// SPqcd - Quantization step size for each subband
-	numSubbands := 3*p.NumLevels + 1
-	for i := 0; i < numSubbands; i++ {
-		// For lossless: exponent only (5 bits), no mantissa
-		expn := uint8(p.BitDepth << 3)
-		_ = binary.Write(qcdData, binary.BigEndian, expn)
+		// SPqcd - Quantization step size for each subband
+		// For lossless: exponent only (8 bits), no mantissa
+		numSubbands := 3*p.NumLevels + 1
+		for i := 0; i < numSubbands; i++ {
+			// Exponent = bitDepth (shifted left by 3 bits)
+			expn := uint8(p.BitDepth << 3)
+			_ = binary.Write(qcdData, binary.BigEndian, expn)
+		}
+	} else {
+		// Lossy mode: scalar expounded quantization (style 2)
+		// Calculate quantization parameters based on quality
+		quantParams := CalculateQuantizationParams(p.Quality, p.NumLevels, p.BitDepth)
+
+		// Sqcd - bits 0-4: guard bits, bits 5-7: quantization type (2 = scalar expounded)
+		sqcd := uint8(2<<5 | quantParams.GuardBits)
+		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
+
+		// SPqcd - Quantization step sizes for each subband
+		// For scalar expounded: 16-bit value per subband (5-bit exponent, 11-bit mantissa)
+		for _, encodedStep := range quantParams.EncodedSteps {
+			_ = binary.Write(qcdData, binary.BigEndian, encodedStep)
+		}
 	}
 
 	// Write marker and length
@@ -488,6 +515,10 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 	} else {
 		// Apply 9/7 irreversible wavelet transform (lossy)
 		transformed := make([][]int32, len(tileData))
+
+		// Calculate quantization parameters based on quality
+		quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
+
 		for c := 0; c < len(tileData); c++ {
 			// Convert to float64 for 9/7 transform
 			floatData := wavelet.ConvertInt32ToFloat64(tileData[c])
@@ -495,12 +526,93 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 			// Apply forward multilevel 9/7 DWT
 			wavelet.ForwardMultilevel97(floatData, width, height, e.params.NumLevels)
 
-			// Apply quantization for lossy compression
-			// TODO: Implement proper quantization based on quality parameter
-			// For now, just convert back to int32 with rounding
-			transformed[c] = wavelet.ConvertFloat64ToInt32(floatData)
+			// Convert to int32 first
+			coeffs := wavelet.ConvertFloat64ToInt32(floatData)
+
+			// Apply quantization per subband
+			transformed[c] = e.applyQuantizationBySubband(coeffs, width, height, quantParams.StepSizes)
 		}
 		return transformed, nil
+	}
+}
+
+// applyQuantizationBySubband applies quantization to each subband separately
+// coeffs: wavelet coefficients in subband layout
+// width, height: dimensions of the full image
+// stepSizes: quantization step sizes for each subband (LL, HL1, LH1, HH1, HL2, ...)
+func (e *Encoder) applyQuantizationBySubband(coeffs []int32, width, height int, stepSizes []float64) []int32 {
+	if len(stepSizes) == 0 || e.params.NumLevels == 0 {
+		// No quantization
+		return coeffs
+	}
+
+	quantized := make([]int32, len(coeffs))
+	copy(quantized, coeffs)
+
+	// Calculate subband dimensions for each level
+	// After multilevel DWT, subbands are arranged as:
+	// [LL_n] [HL_n] [LH_n] [HH_n] ... [HL_1] [LH_1] [HH_1]
+	// where n = numLevels
+
+	currentWidth := width
+	currentHeight := height
+	numLevels := e.params.NumLevels
+
+	// Track which subband we're processing
+	subbandIdx := 0
+
+	// Process from coarsest to finest level
+	for level := numLevels; level >= 1; level-- {
+		// Calculate dimensions at this level
+		levelWidth := (currentWidth + (1 << level) - 1) >> level
+		levelHeight := (currentHeight + (1 << level) - 1) >> level
+
+		// At the coarsest level, we also have LL subband
+		if level == numLevels {
+			// LL subband (low-pass both directions)
+			stepSize := stepSizes[subbandIdx]
+			e.quantizeSubband(quantized, 0, 0, levelWidth, levelHeight, currentWidth, stepSize)
+			subbandIdx++
+		}
+
+		// HL subband (high-pass horizontal, low-pass vertical)
+		stepSize := stepSizes[subbandIdx]
+		e.quantizeSubband(quantized, levelWidth, 0, levelWidth, levelHeight, currentWidth, stepSize)
+		subbandIdx++
+
+		// LH subband (low-pass horizontal, high-pass vertical)
+		stepSize = stepSizes[subbandIdx]
+		e.quantizeSubband(quantized, 0, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
+		subbandIdx++
+
+		// HH subband (high-pass both directions)
+		stepSize = stepSizes[subbandIdx]
+		e.quantizeSubband(quantized, levelWidth, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
+		subbandIdx++
+	}
+
+	return quantized
+}
+
+// quantizeSubband quantizes a single subband
+// data: full coefficient array
+// x0, y0: top-left corner of subband
+// w, h: dimensions of subband
+// stride: row stride (width of full image)
+// stepSize: quantization step size
+func (e *Encoder) quantizeSubband(data []int32, x0, y0, w, h, stride int, stepSize float64) {
+	if stepSize <= 0 {
+		return
+	}
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			idx := (y0+y)*stride + (x0 + x)
+			if idx < len(data) {
+				// Quantize: round(coeff / stepSize)
+				data[idx] = int32(math.Round(float64(data[idx]) / stepSize))
+			}
+		}
 	}
 }
 

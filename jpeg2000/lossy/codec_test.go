@@ -8,8 +8,8 @@ import (
 
 // TestCodecName tests the codec name
 func TestCodecName(t *testing.T) {
-	c := NewCodec()
-	expected := "JPEG 2000"
+	c := NewCodec(80)
+	expected := "JPEG 2000 Lossy (Quality 80)"
 	if c.Name() != expected {
 		t.Errorf("Expected codec name %q, got %q", expected, c.Name())
 	}
@@ -17,7 +17,7 @@ func TestCodecName(t *testing.T) {
 
 // TestCodecTransferSyntax tests the transfer syntax UID
 func TestCodecTransferSyntax(t *testing.T) {
-	c := NewCodec()
+	c := NewCodec(80)
 	ts := c.TransferSyntax()
 	if ts == nil {
 		t.Fatal("Transfer syntax is nil")
@@ -61,7 +61,7 @@ func TestBasicEncodeDecode(t *testing.T) {
 	}
 
 	// Test encoding
-	c := NewCodec()
+	c := NewCodec(80)
 	encoded := &codec.PixelData{}
 
 	err := c.Encode(src, encoded, nil)
@@ -172,7 +172,7 @@ func TestLargerImage(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
-	c := NewCodec()
+	c := NewCodec(80)
 	encoded := &codec.PixelData{}
 
 	// Encode
@@ -239,7 +239,7 @@ func TestRGBImage(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 
-	c := NewCodec()
+	c := NewCodec(80)
 	encoded := &codec.PixelData{}
 
 	// Encode
