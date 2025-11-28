@@ -32,7 +32,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				continue
 			}
 
-
 			// Extract code-block contributions from this packet
 			dataOffset := 0
 			for cbIdx, cbIncl := range packet.CodeBlockIncls {
@@ -51,8 +50,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 							if len(cbData) < showBytes {
 								showBytes = len(cbData)
 							}
-							fmt.Printf("[DATA ACCUM Layer=%d CB 0:0] cbData len=%d, existing len=%d, first bytes=%02x\n",
-								packet.LayerIndex, len(cbData), len(existing.data), cbData[:showBytes])
 						}
 
 						// Save base offset BEFORE appending data
@@ -78,14 +75,12 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 
 								// DEBUG first CB
 								if key == "0:0" {
-									fmt.Printf("[FIXED ACCUM Layer=%d CB 0:0] FIRST passLengths=%v dataLen=%d\n",
-										packet.LayerIndex, existing.passLengths, len(existing.data))
+									// first layer accumulation for this code-block
 								}
 							} else {
 								// Subsequent layers: append with offset (baseOffset was saved before append)
 								if key == "0:0" {
-									fmt.Printf("[FIXED ACCUM Layer=%d CB 0:0] BEFORE baseOffset=%d cbIncl.PassLengths=%v existing.data=%d cbData=%d\n",
-										packet.LayerIndex, baseOffset, cbIncl.PassLengths, len(existing.data), len(cbData))
+									// tracking base offset for initial code-block
 								}
 
 								for _, passLen := range cbIncl.PassLengths {
@@ -93,20 +88,19 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 								}
 
 								if key == "0:0" {
-									fmt.Printf("[FIXED ACCUM Layer=%d CB 0:0] AFTER accumulated=%v totalDataLen=%d\n",
-										packet.LayerIndex, existing.passLengths, len(existing.data))
+									// accumulated pass lengths for first code-block
 								}
 							}
 
 						}
-					if cbIncl.UseTERMALL {
-						existing.useTERMALL = true
-					}
+						if cbIncl.UseTERMALL {
+							existing.useTERMALL = true
+						}
 
-					// Accumulate total passes across layers
-					existing.totalPasses += cbIncl.NumPasses
+						// Accumulate total passes across layers
+						existing.totalPasses += cbIncl.NumPasses
 
-					// Calculate max bitplane from zero bitplanes
+						// Calculate max bitplane from zero bitplanes
 						// Note: After wavelet transform, coefficients may need extra bits
 						// 5/3 reversible wavelet adds 1 bit per decomposition level
 						componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
@@ -114,7 +108,7 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						maxBP := effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
 						if !existing.maxBitplaneSet || maxBP > existing.maxBitplane {
 							existing.maxBitplane = maxBP
-												existing.maxBitplaneSet = true
+							existing.maxBitplaneSet = true
 						}
 
 						cbDataMap[key] = existing
@@ -122,7 +116,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				}
 			}
 		}
-
 
 		// Calculate subband dimensions for each resolution
 		// Resolution 0: LL subband (top-left after all decompositions)
@@ -157,8 +150,8 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				numCBY := (sbHeight + cbHeight - 1) / cbHeight
 
 				resolutionLayouts[res] = []subbandLayout{
-					{x0: sbWidth, y0: 0, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},         // HL
-					{x0: 0, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},        // LH
+					{x0: sbWidth, y0: 0, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},        // HL
+					{x0: 0, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},       // LH
 					{x0: sbWidth, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY}, // HH
 				}
 			}
@@ -174,7 +167,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 			cbList = append(cbList, info)
 		}
 
-
 		// Sort by resolution, then by cbIdx
 		sort.Slice(cbList, func(i, j int) bool {
 			if cbList[i].resolution != cbList[j].resolution {
@@ -187,7 +179,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 			res := cbInfo.resolution
 			cbIdx := cbInfo.cbIdx
 			layouts := resolutionLayouts[res]
-
 
 			// Calculate which subband this code-block belongs to
 			subbandIdx := 0
@@ -259,27 +250,19 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 			// Decode the code-block
 			if len(cbInfo.data) > 0 {
 				var err error
-			if cbInfo.passLengths != nil && len(cbInfo.passLengths) > 0 {
-				// Multi-layer mode: use DecodeLayeredWithMode
-				// useTERMALL flag determines whether passes are terminated independently
-				// lossless flag (from COD transformation) determines whether contexts are reset
-				lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
-				if res == 0 && cbIdx == 0 {
-					fmt.Printf("[T1 DECODE CB 0:0] Multi-layer mode: dataLen=%d, passLengths=%v, maxBitplane=%d, useTERMALL=%v, lossless=%v\n",
-						len(cbInfo.data), cbInfo.passLengths, cbInfo.maxBitplane, cbInfo.useTERMALL, lossless)
+				if cbInfo.passLengths != nil && len(cbInfo.passLengths) > 0 {
+					// Multi-layer mode: use DecodeLayeredWithMode
+					// useTERMALL flag determines whether passes are terminated independently
+					// lossless flag (from COD transformation) determines whether contexts are reset
+					lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
+					// Multi-layer mode logs removed
+					err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfo.data, cbInfo.passLengths, cbInfo.maxBitplane, 0, cbInfo.useTERMALL, lossless)
+				} else {
+					// Single-layer mode: use DecodeWithBitplane
+					// Single-layer mode logs removed
+					err = cbd.t1Decoder.DecodeWithBitplane(cbInfo.data, cbd.numPasses, cbInfo.maxBitplane, 0)
+					// Error logging trimmed; caller propagates error below
 				}
-				err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfo.data, cbInfo.passLengths, cbInfo.maxBitplane, 0, cbInfo.useTERMALL, lossless)
-			} else {
-				// Single-layer mode: use DecodeWithBitplane
-				if res == 0 && cbIdx == 0 {
-					fmt.Printf("[T1 DECODE CB 0:0] Single-layer mode: dataLen=%d, numPasses=%d, maxBitplane=%d, data=%02x\n",
-						len(cbInfo.data), cbd.numPasses, cbInfo.maxBitplane, cbInfo.data)
-				}
-				err = cbd.t1Decoder.DecodeWithBitplane(cbInfo.data, cbd.numPasses, cbInfo.maxBitplane, 0)
-				if res == 0 && cbIdx == 0 {
-					fmt.Printf("[T1 DECODE CB 0:0] DecodeWithBitplane returned err=%v\n", err)
-				}
-			}
 				if err != nil {
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)
 				} else {

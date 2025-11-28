@@ -141,11 +141,10 @@ func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx int) (Packet, error) {
 	packet := Packet{
 		LayerIndex:      layer,
-		ResolutionLevel:  resolution,
+		ResolutionLevel: resolution,
 		ComponentIndex:  component,
 		PrecinctIndex:   precinctIdx,
 	}
-
 
 	// Check if we've reached end of data
 	if pd.offset >= len(pd.data) {
@@ -155,20 +154,12 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 
 	// Check for empty packet (header not present)
 	if pd.offset < len(pd.data) && pd.data[pd.offset] == 0x00 {
-		if layer < 2 && resolution == 0 {
-			fmt.Printf("[PACKET DEC Layer=%d Res=%d] Empty packet detected at offset %d\n", layer, resolution, pd.offset)
-		}
 		packet.HeaderPresent = false
 		pd.offset++
 		return packet, nil
 	}
 
 	packet.HeaderPresent = true
-
-	if layer == 0 || (layer == 1 && resolution == 0) {
-		fmt.Printf("[PACKET DEC Layer=%d Res=%d] Decoding header at offset %d, byte=%02x\n",
-			layer, resolution, pd.offset, pd.data[pd.offset])
-	}
 
 	// Decode packet header
 	header, cbIncls, err := pd.decodePacketHeader(layer, resolution, component)
@@ -218,11 +209,6 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 			}
 
 			// Read code-block data
-			if layer == 0 && resolution == 5 {
-				fmt.Printf("[PACKET DEC Body Layer=%d Res=%d] Before read: cbIncl.DataLength=%d, offset=%d\n",
-					layer, resolution, cbIncl.DataLength, pd.offset)
-			}
-
 			if pd.offset+cbIncl.DataLength > len(pd.data) {
 				// Not enough data - this might be normal at end of stream
 				// Just read what's available
@@ -243,19 +229,9 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 			cbIncl.Data = cbData
 			body.Write(cbData)
 			pd.offset += bytesRead
-
-			if layer == 0 && resolution == 5 {
-				fmt.Printf("[PACKET DEC Body Layer=%d Res=%d] Read %d stuffed bytes -> %d unstuffed bytes, new offset=%d\n",
-					layer, resolution, bytesRead, len(cbData), pd.offset)
-			}
 		}
 	}
 	packet.Body = body.Bytes()
-
-	if layer == 0 || (layer == 1 && resolution == 0) {
-		fmt.Printf("[PACKET DEC Layer=%d Res=%d] After decoding, offset=%d\n",
-			layer, resolution, pd.offset)
-	}
 
 	return packet, nil
 }
@@ -267,27 +243,8 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 	bitReader := newBitReader(pd.data[pd.offset:])
 	cbIncls := make([]CodeBlockIncl, 0)
 
-	if (layer < 2 && resolution == 0) || (layer == 0 && resolution == 5) {
-		showBytes := 20
-		if pd.offset+showBytes > len(pd.data) {
-			showBytes = len(pd.data) - pd.offset
-		}
-		fmt.Printf("[PACKET DEC Header Layer=%d Res=%d] First %d bytes from offset %d: %02x\n",
-			layer, resolution, showBytes, pd.offset, pd.data[pd.offset:pd.offset+showBytes])
-
-		// Also show what the encoder claims to have written
-		if layer == 1 && resolution == 0 {
-			fmt.Printf("[PACKET DEC Header] Expected to see encoder's header: 80100040\n")
-		}
-	}
-
 	// Calculate number of code-blocks for this resolution level
 	maxCodeBlocks := pd.calculateNumCodeBlocks(resolution)
-
-	if layer == 0 && resolution == 5 {
-		fmt.Printf("[PACKET DEC Header Layer=%d Res=%d] maxCodeBlocks=%d\n",
-			layer, resolution, maxCodeBlocks)
-	}
 
 	for i := 0; i < maxCodeBlocks; i++ {
 		// Read inclusion bit
@@ -302,11 +259,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 			Included: inclBit == 1,
 		}
 
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] Inclusion bit=%d\n",
-				layer, resolution, inclBit)
-		}
-
 		if !cbIncl.Included {
 			cbIncls = append(cbIncls, cbIncl)
 			continue
@@ -314,11 +266,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 
 		// Check if this is the first inclusion for this code-block
 		cbIncl.FirstInclusion = !pd.cbIncluded[cbKey]
-
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] FirstInclusion=%v\n",
-				layer, resolution, cbIncl.FirstInclusion)
-		}
 
 		// Mark as included for future layers
 		pd.cbIncluded[cbKey] = true
@@ -338,11 +285,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 		}
 
 		// Read number of coding passes (simplified unary code)
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] Before NumPasses: bytePos=%d, bitPos=%d\n",
-				layer, resolution, bitReader.bytePos, bitReader.bitPos)
-		}
-
 		numPasses := 1
 		bitsRead := 0
 		for {
@@ -355,19 +297,7 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 		}
 		cbIncl.NumPasses = numPasses
 
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] NumPasses=%d (read %d bits)\n",
-				layer, resolution, numPasses, bitsRead)
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] After NumPasses: bytePos=%d, bitPos=%d\n",
-				layer, resolution, bitReader.bytePos, bitReader.bitPos)
-		}
-
 		// Read data length (16-bit fixed length for simplicity)
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] Before DataLength: bytePos=%d, bitPos=%d\n",
-				layer, resolution, bitReader.bytePos, bitReader.bitPos)
-		}
-
 		dataLen := 0
 		for bit := 0; bit < 16; bit++ {
 			b, err := bitReader.readBit()
@@ -377,13 +307,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 			dataLen = (dataLen << 1) | b
 		}
 		cbIncl.DataLength = dataLen
-
-		if cbKey == "0:0:0" && layer < 2 {
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] Decoded DataLength=%d (0x%04x)\n",
-				layer, resolution, dataLen, dataLen)
-			fmt.Printf("[PACKET DEC Header Layer=%d Res=%d CB 0:0] After DataLength: bytePos=%d, bitPos=%d\n",
-				layer, resolution, bitReader.bytePos, bitReader.bitPos)
-		}
 
 		cbIncls = append(cbIncls, cbIncl)
 
@@ -395,11 +318,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 	bytesRead := bitReader.bytesRead()
 	pd.offset += bytesRead
 	header := pd.data[headerStart : headerStart+bytesRead]
-
-	if layer == 0 && resolution == 5 {
-		fmt.Printf("[PACKET DEC Header Layer=%d Res=%d] Read %d code-blocks, Header bytesRead=%d (physicalPos=%d, bytePos=%d, bitPos=%d), new offset=%d\n",
-			layer, resolution, len(cbIncls), bytesRead, bitReader.physicalPos, bitReader.bytePos, bitReader.bitPos, pd.offset)
-	}
 
 	return header, cbIncls, nil
 }

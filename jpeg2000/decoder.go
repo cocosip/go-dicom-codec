@@ -249,11 +249,6 @@ func (d *Decoder) applyInverseDCLevelShift() {
 	// Unsigned data - add 2^(bitDepth-1)
 	shift := int32(1 << (d.bitDepth - 1))
 
-	// DEBUG: Log first pixel before and after shift
-	if len(d.data) > 0 && len(d.data[0]) > 0 {
-		fmt.Printf("[Inverse DC Shift] First pixel before=%d shift=%d ", d.data[0][0], shift)
-	}
-
 	for c := 0; c < d.components; c++ {
 		for i := 0; i < len(d.data[c]); i++ {
 			d.data[c][i] += shift

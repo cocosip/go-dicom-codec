@@ -52,8 +52,8 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 	// Reference: ISO/IEC 15444-1:2019 Table A.18
 	t1.cblkstyle = cblkstyle
 	t1.resetctx = (cblkstyle & 0x01) != 0     // Bit 0: Selective arithmetic coding bypass
-	t1.termall = (cblkstyle & 0x04) != 0      // Bit 2: Termination on each coding pass
-	t1.segmentation = (cblkstyle & 0x08) != 0 // Bit 3: Segmentation symbols
+	t1.termall = (cblkstyle & 0x02) != 0      // Bit 1: Termination on each coding pass
+	t1.segmentation = (cblkstyle & 0x04) != 0 // Bit 2: Segmentation symbols
 
 	return t1
 }
@@ -82,183 +82,80 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 		return fmt.Errorf("no pass lengths provided")
 	}
 
+	// 对于不启用 TERMALL 的情况，直接复用标准路径以保持行为一致
+	if !useTERMALL {
+		return t1.DecodeWithOptions(data, len(passLengths), maxBitplane, roishift, false)
+	}
+
+	// TERMALL + 无损：直接复用标准解码逻辑，启用 TERMALL 让 MQ 解码器在每个 pass 后重新初始化
+	if lossless {
+		return t1.DecodeWithOptions(data, len(passLengths), maxBitplane, roishift, true)
+	}
+
+	// TERMALL + 有损：按 passLengths 切片，保留上下文以便跨 pass 继承
 	t1.roishift = roishift
 	numPasses := len(passLengths)
 
-	// In TERMALL mode, we decode each pass separately
-	// But we need to know whether to reset contexts between passes
-	// For lossless TERMALL: reset contexts (fresh MQDecoder for each pass)
-	// For lossy TERMALL: keep contexts (reuse MQDecoder, just feed new data)
-	var useSingleDecoder bool
-	var resetContexts bool
-	if !useTERMALL {
-		// Normal mode: use single decoder for all data
-		t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
-		useSingleDecoder = true
-		resetContexts = false
-	} else {
-		useSingleDecoder = false
-		// In TERMALL mode, reset contexts only for lossless
-		resetContexts = lossless
-	}
-
-	// Decode passes
 	passIdx := 0
 	prevEnd := 0
-	var savedContexts []uint8 // Preserved contexts for lossy TERMALL mode
+	var savedContexts []uint8
 
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
 		paddedWidth := t1.width + 2
 		paddedHeight := t1.height + 2
 		for i := 0; i < paddedWidth*paddedHeight; i++ {
 			t1.flags[i] &^= T1_VISIT
 		}
 
-		// Check if this bit-plane needs decoding
 		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
 			continue
 		}
 
-		// Three coding passes per bit-plane: SPP, MRP, CP
-		// Following OpenJPEG's approach:
-		// - Each terminated pass gets a fresh MQ decoder initialization (like opj_mqc_init_dec)
-		// - For lossless: fresh contexts (reset to state 0)
-		// - For lossy: preserved contexts from previous pass
-
-		// 1. Significance Propagation Pass
 		if passIdx < numPasses {
-			// In TERMALL mode, prepare decoder for this pass
-			if !useSingleDecoder {
-				currentEnd := passLengths[passIdx]
-				passData := data[prevEnd:currentEnd]
-
-				if passIdx <= 2 {
-					showLen := len(passData)
-					if showLen > 4 {
-						showLen = 4
-					}
-					fmt.Printf("[T1 DECODER SPP] Pass %d: dataLen=%d, first bytes=%02x, resetContexts=%v\n",
-						passIdx, len(passData), passData[:showLen], resetContexts)
-				}
-
-				// Create fresh MQ decoder for this pass (following OpenJPEG's segment-based approach)
-				if resetContexts || passIdx == 0 {
-					// Lossless TERMALL or first pass: create new decoder with fresh contexts
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-					if passIdx <= 2 {
-						fmt.Printf("[T1 DECODER SPP] Pass %d: Created new decoder with FRESH contexts\n", passIdx)
-					}
-				} else {
-					// Lossy TERMALL: create new decoder but preserve contexts from previous pass
-					// This is the OpenJPEG approach: fresh decoder init, but keep probability states
-					if passIdx <= 2 {
-						fmt.Printf("[T1 DECODER SPP] Pass %d: savedContexts len=%d, will inherit contexts\n", passIdx, len(savedContexts))
-					}
-					t1.mqc = mqc.NewMQDecoderWithContexts(passData, savedContexts)
-					if passIdx <= 2 {
-						fmt.Printf("[T1 DECODER SPP] Pass %d: Created new decoder with inherited contexts\n", passIdx)
-					}
-				}
-				prevEnd = currentEnd
+			currentEnd := passLengths[passIdx]
+			if currentEnd < prevEnd || currentEnd > len(data) {
+				return fmt.Errorf("invalid pass length for SPP: %d", currentEnd)
 			}
+			passData := data[prevEnd:currentEnd]
+			t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+			prevEnd = currentEnd
 
 			if err := t1.decodeSigPropPass(); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-
-			// Save contexts after this pass for lossy mode
-			if !useSingleDecoder && !resetContexts {
-				savedContexts = t1.mqc.GetContexts()
-				if passIdx <= 2 {
-					fmt.Printf("[T1 DECODER SPP] Pass %d: Saved contexts, len=%d\n", passIdx, len(savedContexts))
-				}
-			}
-
+			savedContexts = t1.mqc.GetContexts()
 			passIdx++
 		}
 
-		// 2. Magnitude Refinement Pass
 		if passIdx < numPasses {
-			// In TERMALL mode, prepare decoder for this pass
-			if !useSingleDecoder {
-				currentEnd := passLengths[passIdx]
-				passData := data[prevEnd:currentEnd]
-
-				if passIdx <= 2 {
-					showLen := len(passData)
-					if showLen > 4 {
-						showLen = 4
-					}
-					fmt.Printf("[T1 DECODER MRP] Pass %d: dataLen=%d, first bytes=%02x, resetContexts=%v\n",
-						passIdx, len(passData), passData[:showLen], resetContexts)
-				}
-
-				// Create fresh MQ decoder for this pass
-				if resetContexts {
-					// Lossless TERMALL: create new decoder with fresh contexts
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				} else {
-					// Lossy TERMALL: create new decoder with inherited contexts
-					t1.mqc = mqc.NewMQDecoderWithContexts(passData, savedContexts)
-					if passIdx <= 2 {
-						fmt.Printf("[T1 DECODER MRP] Pass %d: Created new decoder with inherited contexts\n", passIdx)
-					}
-				}
-				prevEnd = currentEnd
+			currentEnd := passLengths[passIdx]
+			if currentEnd < prevEnd || currentEnd > len(data) {
+				return fmt.Errorf("invalid pass length for MRP: %d", currentEnd)
 			}
+			passData := data[prevEnd:currentEnd]
+			t1.mqc = mqc.NewMQDecoderWithContexts(passData, savedContexts)
+			prevEnd = currentEnd
 
 			if err := t1.decodeMagRefPass(); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-
-			// Save contexts after this pass for lossy mode
-			if !useSingleDecoder && !resetContexts {
-				savedContexts = t1.mqc.GetContexts()
-			}
-
+			savedContexts = t1.mqc.GetContexts()
 			passIdx++
 		}
 
-		// 3. Cleanup Pass
 		if passIdx < numPasses {
-			// In TERMALL mode, prepare decoder for this pass
-			if !useSingleDecoder {
-				currentEnd := passLengths[passIdx]
-				passData := data[prevEnd:currentEnd]
-
-				if passIdx <= 2 {
-					showLen := len(passData)
-					if showLen > 4 {
-						showLen = 4
-					}
-					fmt.Printf("[T1 DECODER CP] Pass %d: dataLen=%d, first bytes=%02x, resetContexts=%v\n",
-						passIdx, len(passData), passData[:showLen], resetContexts)
-				}
-
-				// Create fresh MQ decoder for this pass
-				if resetContexts {
-					// Lossless TERMALL: create new decoder with fresh contexts
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				} else {
-					// Lossy TERMALL: create new decoder with inherited contexts
-					t1.mqc = mqc.NewMQDecoderWithContexts(passData, savedContexts)
-					if passIdx <= 2 {
-						fmt.Printf("[T1 DECODER CP] Pass %d: Created new decoder with inherited contexts\n", passIdx)
-					}
-				}
-				prevEnd = currentEnd
+			currentEnd := passLengths[passIdx]
+			if currentEnd < prevEnd || currentEnd > len(data) {
+				return fmt.Errorf("invalid pass length for CP: %d", currentEnd)
 			}
+			passData := data[prevEnd:currentEnd]
+			t1.mqc = mqc.NewMQDecoderWithContexts(passData, savedContexts)
+			prevEnd = currentEnd
 
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
-
-			// Save contexts after this pass for lossy mode
-			if !useSingleDecoder && !resetContexts {
-				savedContexts = t1.mqc.GetContexts()
-			}
-
+			savedContexts = t1.mqc.GetContexts()
 			passIdx++
 		}
 	}

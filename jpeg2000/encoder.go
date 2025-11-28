@@ -634,7 +634,7 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	packetEnc := t2.NewPacketEncoder(
 		e.params.Components,
 		e.params.NumLayers,
-		e.params.NumLevels+1,                         // numResolutions = numLevels + 1
+		e.params.NumLevels+1,                           // numResolutions = numLevels + 1
 		t2.ProgressionOrder(e.params.ProgressionOrder), // Cast uint8 to ProgressionOrder
 	)
 
@@ -672,20 +672,12 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 	// Write packets to bitstream with byte-stuffing
 	buf := &bytes.Buffer{}
-	for i, packet := range packets {
-		beforeLen := buf.Len()
+	for _, packet := range packets {
 		// Write packet header with byte-stuffing
 		writeWithByteStuffing(buf, packet.Header)
-		afterHeaderLen := buf.Len()
 		// Write packet body with byte-stuffing
 		writeWithByteStuffing(buf, packet.Body)
-		afterBodyLen := buf.Len()
 
-		if packet.LayerIndex == 0 && packet.ResolutionLevel == 5 {
-			fmt.Printf("[ENCODER PKT %d] Layer=%d Res=%d: offset=%d, header(unstuffed)=%d bytes, header(stuffed)=%d bytes, body(stuffed)=%d bytes\n",
-				i, packet.LayerIndex, packet.ResolutionLevel,
-				beforeLen, len(packet.Header), afterHeaderLen-beforeLen, afterBodyLen-afterHeaderLen)
-		}
 	}
 
 	return buf.Bytes()
@@ -798,11 +790,11 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 }
 
 type codeBlockInfo struct {
-	data        []int32
-	width       int
-	height      int
-	globalX0    int // Global X position in coefficient array
-	globalY0    int // Global Y position in coefficient array
+	data     []int32
+	width    int
+	height   int
+	globalX0 int // Global X position in coefficient array
+	globalY0 int // Global Y position in coefficient array
 }
 
 // partitionIntoCodeBlocks partitions a subband into code-blocks

@@ -12,10 +12,10 @@ import (
 // TileDecoder decodes a single JPEG 2000 tile
 type TileDecoder struct {
 	// Tile information
-	tile      *codestream.Tile
-	siz       *codestream.SIZSegment
-	cod       *codestream.CODSegment
-	qcd       *codestream.QCDSegment
+	tile *codestream.Tile
+	siz  *codestream.SIZSegment
+	cod  *codestream.CODSegment
+	qcd  *codestream.QCDSegment
 
 	// Component decoders
 	components []*ComponentDecoder
@@ -50,9 +50,9 @@ type ComponentDecoder struct {
 // ResolutionLevel represents one resolution level of a component
 // Fields reserved for future complete implementation
 type ResolutionLevel struct {
-	_ int // level (reserved)
-	_ int // width (reserved)
-	_ int // height (reserved)
+	_ int               // level (reserved)
+	_ int               // width (reserved)
+	_ int               // height (reserved)
 	_ []*SubbandDecoder // subbands (reserved)
 }
 
@@ -68,12 +68,12 @@ type SubbandDecoder struct {
 
 // CodeBlockDecoder decodes a single code-block
 type CodeBlockDecoder struct {
-	x0, y0     int
-	x1, y1     int
-	data       []byte // Compressed data
-	numPasses  int
-	t1Decoder  *t1.T1Decoder
-	coeffs     []int32 // Decoded coefficients
+	x0, y0    int
+	x1, y1    int
+	data      []byte // Compressed data
+	numPasses int
+	t1Decoder *t1.T1Decoder
+	coeffs    []int32 // Decoded coefficients
 }
 
 // NewTileDecoder creates a new tile decoder
@@ -103,7 +103,7 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	for i := 0; i < numComponents; i++ {
 		comp := &ComponentDecoder{
 			componentIdx: i,
-			width:        int(td.siz.Xsiz),  // Simplified - should calculate per-component
+			width:        int(td.siz.Xsiz), // Simplified - should calculate per-component
 			height:       int(td.siz.Ysiz),
 			numLevels:    int(td.cod.NumberOfDecompositionLevels),
 		}
@@ -129,11 +129,6 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)
 	}
-
-	// DEBUG: Check packet count
-	fmt.Printf("[TILE DECODER] Decoded %d packets, numLayers=%d (expected %d), numComponents=%d, numResolutions=%d\n",
-		len(packets), int(td.cod.NumberOfLayers), len(packets)/(numComponents*int(td.cod.NumberOfDecompositionLevels+1)),
-		numComponents, int(td.cod.NumberOfDecompositionLevels)+1)
 
 	// Decode code-blocks for all components from the parsed packets
 	if err := td.decodeAllCodeBlocksFixed(packets); err != nil {
@@ -174,8 +169,8 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		numCBY := (comp.height + cbHeight - 1) / cbHeight
 
 		// Accumulate code-block data from packets for this component
-		cbDataMap := make(map[int][]byte)       // map[cbIndex]data
-		cbPassesMap := make(map[int]int)        // map[cbIndex]total passes
+		cbDataMap := make(map[int][]byte) // map[cbIndex]data
+		cbPassesMap := make(map[int]int)  // map[cbIndex]total passes
 		maxBitplaneMap := make(map[int]int)
 		cbPassLengthsMap := make(map[int][]int) // map[cbIndex]passLengths (for TERMALL)
 		cbUseTERMALLMap := make(map[int]bool)   // map[cbIndex]useTERMALL flag
