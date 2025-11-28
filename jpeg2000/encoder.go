@@ -344,10 +344,12 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	_ = binary.Write(codData, binary.BigEndian, cbHeightExp)
 
 	// Code-block style
-	// Bit 2 (0x04): Termination on each coding pass (TERMALL mode for multi-layer lossless)
+	// Bit 2 (0x04): Termination on each coding pass (TERMALL mode)
+	// EXPERIMENTAL: Only enable TERMALL for lossless multi-layer
+	// For lossy multi-layer, use selective termination instead
 	codeBlockStyle := uint8(0)
-	if p.Lossless && p.NumLayers > 1 {
-		codeBlockStyle |= 0x04 // Enable TERMALL mode
+	if p.NumLayers > 1 && p.Lossless {
+		codeBlockStyle |= 0x04 // Enable TERMALL mode for lossless multi-layer encoding only
 	}
 	_ = binary.Write(codData, binary.BigEndian, codeBlockStyle)
 
@@ -652,11 +654,10 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 				// Encode each code-block with T1
 				for cbIdx, cb := range codeBlocks {
-					encodedCB := e.encodeCodeBlock(cb)
+					encodedCB := e.encodeCodeBlock(cb, cbIdx)
 
 					// Add to T2 packet encoder
 					packetEnc.AddCodeBlock(comp, res, 0, encodedCB) // precinctIdx=0 (single precinct)
-					_ = cbIdx // Suppress unused warning
 				}
 			}
 		}
@@ -671,11 +672,20 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 	// Write packets to bitstream with byte-stuffing
 	buf := &bytes.Buffer{}
-	for _, packet := range packets {
+	for i, packet := range packets {
+		beforeLen := buf.Len()
 		// Write packet header with byte-stuffing
 		writeWithByteStuffing(buf, packet.Header)
+		afterHeaderLen := buf.Len()
 		// Write packet body with byte-stuffing
 		writeWithByteStuffing(buf, packet.Body)
+		afterBodyLen := buf.Len()
+
+		if packet.LayerIndex == 0 && packet.ResolutionLevel == 5 {
+			fmt.Printf("[ENCODER PKT %d] Layer=%d Res=%d: offset=%d, header(unstuffed)=%d bytes, header(stuffed)=%d bytes, body(stuffed)=%d bytes\n",
+				i, packet.LayerIndex, packet.ResolutionLevel,
+				beforeLen, len(packet.Header), afterHeaderLen-beforeLen, afterBodyLen-afterHeaderLen)
+		}
 	}
 
 	return buf.Bytes()
@@ -851,7 +861,7 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
 }
 
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder
-func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
+func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeBlock {
 	// Use provided dimensions
 	actualWidth := cb.width
 	actualHeight := cb.height
@@ -911,7 +921,8 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		}
 
 		// Multi-layer encoding: use layered encoder with layer boundaries
-		// For lossless, use TERMALL mode to ensure accurate byte boundaries
+		// Pass actual lossless parameter to control context resets
+		// TERMALL mode (bit 0x04 in COD) controls pass termination separately
 		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, 0, layerBoundaries, e.params.Lossless)
 		if err != nil || len(passes) == 0 {
 			// Fallback to single layer on error
@@ -926,6 +937,12 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		// Following OpenJPEG: layers share complete data, metadata specifies byte ranges
 		pcb.LayerData = make([][]byte, e.params.NumLayers)
 		pcb.LayerPasses = make([]int, e.params.NumLayers)
+
+		// Build per-pass length information (for TERMALL mode decoding)
+		pcb.PassLengths = make([]int, len(passes))
+		for i, pass := range passes {
+			pcb.PassLengths[i] = pass.ActualBytes
+		}
 
 		prevByteEnd := 0
 		for layer := 0; layer < e.params.NumLayers; layer++ {
@@ -958,8 +975,8 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo) *t2.PrecinctCodeBlock {
 		// For backward compatibility, set Data to all passes
 		pcb.Data = completeData
 
-		// Set TERMALL flag for lossless multi-layer
-		pcb.UseTERMALL = e.params.Lossless
+		// Set TERMALL flag for all multi-layer encoding
+		pcb.UseTERMALL = e.params.NumLayers > 1
 
 	} else {
 		// Single layer: use original encoder

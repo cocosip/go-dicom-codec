@@ -29,15 +29,18 @@ func isLayerBoundary(passIdx int, layerBoundaries []int) bool {
 }
 
 // shouldTerminatePass determines if a pass should be terminated (flushed)
-// For lossless multi-layer, we use TERMALL mode (terminate all passes)
-// For lossy, we use selective termination at layer boundaries
+// For multi-layer encoding, always terminate all passes to ensure proper boundaries
+// Context reset is controlled separately by the lossless parameter
 func shouldTerminatePass(passIdx int, layerBoundaries []int, lossless bool) bool {
-	if lossless {
-		// TERMALL mode: terminate all passes for accurate byte boundaries
-		// Decoder must also reset state after each pass
+	// For multi-layer (len(layerBoundaries) > 1), terminate all passes
+	if len(layerBoundaries) > 1 {
 		return true
 	}
-	// Selective termination: only at layer boundaries
+	// For single-layer lossless, also terminate all passes
+	if lossless {
+		return true
+	}
+	// Single-layer lossy: selective termination at layer boundaries
 	return isLayerBoundary(passIdx, layerBoundaries)
 }
 
@@ -120,6 +123,9 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
+				if lossless {
+					t1.mqe.ResetContexts()
+				}
 			}
 
 			actualBytes := t1.mqe.NumBytes()

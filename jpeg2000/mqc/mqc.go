@@ -51,6 +51,66 @@ func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
 	return mqc
 }
 
+// SetData updates the decoder's data buffer while preserving contexts
+// This is used for lossy TERMALL mode where contexts should be maintained across passes
+func (mqc *MQDecoder) SetData(data []byte) {
+	// Append sentinel marker
+	dataWithSentinel := make([]byte, len(data)+2)
+	copy(dataWithSentinel, data)
+	dataWithSentinel[len(data)] = 0xFF
+	dataWithSentinel[len(data)+1] = 0xFF
+
+	// Update data and reset position
+	mqc.data = dataWithSentinel
+	mqc.pos = 0
+	mqc.lastByte = 0
+
+	// Reset decoder state registers but keep contexts
+	mqc.a = 0x8000
+	mqc.c = 0
+	mqc.ct = 0
+
+	// Reinitialize decoder with new data
+	mqc.init()
+}
+
+// NewMQDecoderWithContexts creates a new MQ decoder with inherited contexts from previous decoder
+// This is the correct approach for TERMALL mode: each pass gets a fresh decoder initialization
+// but contexts can be preserved (lossy) or reset (lossless)
+func NewMQDecoderWithContexts(data []byte, prevContexts []uint8) *MQDecoder {
+	// Append sentinel marker
+	dataWithSentinel := make([]byte, len(data)+2)
+	copy(dataWithSentinel, data)
+	dataWithSentinel[len(data)] = 0xFF
+	dataWithSentinel[len(data)+1] = 0xFF
+
+	mqc := &MQDecoder{
+		data:     dataWithSentinel,
+		pos:      0,
+		lastByte: 0,
+		a:        0x8000,
+		c:        0,
+		ct:       0,
+		contexts: make([]uint8, len(prevContexts)),
+	}
+
+	// Copy contexts from previous decoder
+	copy(mqc.contexts, prevContexts)
+
+	// Initialize decoder
+	mqc.init()
+
+	return mqc
+}
+
+// GetContexts returns a copy of the current context states
+// Used to preserve contexts across TERMALL pass boundaries
+func (mqc *MQDecoder) GetContexts() []uint8 {
+	contexts := make([]uint8, len(mqc.contexts))
+	copy(contexts, mqc.contexts)
+	return contexts
+}
+
 // init initializes the decoder
 func (mqc *MQDecoder) init() {
 	// Initialize C register (ISO/IEC 15444-1 C.3.4)
@@ -245,6 +305,19 @@ func (mqc *MQDecoder) ResetContexts() {
 	for i := range mqc.contexts {
 		mqc.contexts[i] = 0
 	}
+}
+
+// ReinitAfterTermination reinitializes the decoder state after a terminated pass
+// This is used in TERMALL mode where each pass is independently terminated
+// Simply resets the MQC state variables - the decoder will naturally continue
+// reading from the current position in the bitstream
+func (mqc *MQDecoder) ReinitAfterTermination() {
+	// Reset MQC state variables to initial values
+	// The probability interval and code register are reset
+	mqc.a = 0x8000
+	mqc.c = 0
+	mqc.ct = 0
+	// Note: We do NOT reset pos or lastByte - decoder continues from current position
 }
 
 // GetContextState returns the current state of a context

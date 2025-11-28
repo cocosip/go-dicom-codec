@@ -118,6 +118,7 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		int(td.cod.NumberOfLayers),
 		int(td.cod.NumberOfDecompositionLevels)+1, // numResolutions = numLevels + 1
 		ProgressionOrder(td.cod.ProgressionOrder),
+		td.cod.CodeBlockStyle,
 	)
 
 	// Set image dimensions and code-block size
@@ -128,6 +129,11 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)
 	}
+
+	// DEBUG: Check packet count
+	fmt.Printf("[TILE DECODER] Decoded %d packets, numLayers=%d (expected %d), numComponents=%d, numResolutions=%d\n",
+		len(packets), int(td.cod.NumberOfLayers), len(packets)/(numComponents*int(td.cod.NumberOfDecompositionLevels+1)),
+		numComponents, int(td.cod.NumberOfDecompositionLevels)+1)
 
 	// Decode code-blocks for all components from the parsed packets
 	if err := td.decodeAllCodeBlocksFixed(packets); err != nil {
@@ -168,9 +174,11 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		numCBY := (comp.height + cbHeight - 1) / cbHeight
 
 		// Accumulate code-block data from packets for this component
-		cbDataMap := make(map[int][]byte)     // map[cbIndex]data
-		cbPassesMap := make(map[int]int)      // map[cbIndex]total passes
+		cbDataMap := make(map[int][]byte)       // map[cbIndex]data
+		cbPassesMap := make(map[int]int)        // map[cbIndex]total passes
 		maxBitplaneMap := make(map[int]int)
+		cbPassLengthsMap := make(map[int][]int) // map[cbIndex]passLengths (for TERMALL)
+		cbUseTERMALLMap := make(map[int]bool)   // map[cbIndex]useTERMALL flag
 
 		for i := range packets {
 			packet := &packets[i]
@@ -196,6 +204,16 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 						// Accumulate passes from packet header
 						// cbIncl.NumPasses is the NEW passes in this packet (for this layer)
 						cbPassesMap[cbIdx] += cbIncl.NumPasses
+
+						// Store PassLengths and UseTERMALL (from first packet that provides it)
+						if cbIncl.PassLengths != nil && len(cbIncl.PassLengths) > 0 {
+							if _, ok := cbPassLengthsMap[cbIdx]; !ok {
+								cbPassLengthsMap[cbIdx] = cbIncl.PassLengths
+							}
+						}
+						if cbIncl.UseTERMALL {
+							cbUseTERMALLMap[cbIdx] = true
+						}
 
 						// Calculate max bitplane from zero bitplanes
 						// maxBitplane = bitDepth - 1 - zeroBitplanes
@@ -256,8 +274,19 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 				// Decode the code-block
 				if hasData && len(cbData) > 0 {
-					// Use DecodeWithBitplane for accurate reconstruction
-					err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+					// Check if TERMALL mode is enabled
+					useTERMALL := cbUseTERMALLMap[cbIdx]
+					passLengths, hasPassLengths := cbPassLengthsMap[cbIdx]
+
+					var err error
+					if useTERMALL && hasPassLengths && len(passLengths) > 0 {
+						// TERMALL mode: use DecodeLayered with per-pass lengths
+						err = cbd.t1Decoder.DecodeLayered(cbData, passLengths, maxBitplane, 0)
+					} else {
+						// Normal mode: use DecodeWithBitplane
+						err = cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+					}
+
 					if err != nil {
 						// If decode fails, use zeros
 						cbd.coeffs = make([]int32, actualWidth*actualHeight)
@@ -318,6 +347,7 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 		int(td.cod.NumberOfLayers),
 		comp.numLevels+1, // numResolutions = numLevels + 1
 		ProgressionOrder(td.cod.ProgressionOrder),
+		td.cod.CodeBlockStyle,
 	)
 
 	packets, err := packetDec.DecodePackets()

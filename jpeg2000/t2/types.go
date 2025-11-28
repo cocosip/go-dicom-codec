@@ -30,6 +30,8 @@ type CodeBlockIncl struct {
 	DataLength     int    // Length of compressed data in bytes
 	Data           []byte // Compressed code-block data
 	ZeroBitplanes  int    // Number of missing MSB bit-planes (from tag tree)
+	PassLengths    []int  // Cumulative byte length of each pass (for TERMALL mode)
+	UseTERMALL     bool   // If true, passes are terminated (TERMALL mode)
 }
 
 // Precinct represents a precinct in the codestream
@@ -57,6 +59,7 @@ type PrecinctCodeBlock struct {
 	// Multi-layer support
 	LayerPasses     []int    // Number of passes included in each layer (cumulative)
 	LayerData       [][]byte // Encoded data for each layer's passes
+	PassLengths     []int    // Cumulative byte length of each pass (used in TERMALL mode)
 
 	// Coding style
 	UseTERMALL      bool     // If true, each pass is terminated (TERMALL mode)

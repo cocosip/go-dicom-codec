@@ -2,6 +2,7 @@ package t2
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 )
 
@@ -123,6 +124,12 @@ func (pe *PacketEncoder) encodeRLCP() ([]Packet, error) {
 
 // encodePacket encodes a single packet
 func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx int, precinct *Precinct) (Packet, error) {
+	// DEBUG
+	if resolution == 0 && layer < 2 {
+		fmt.Printf("[ENCODE PACKET] Layer=%d Res=%d Comp=%d numCB=%d\n",
+			layer, resolution, component, len(precinct.CodeBlocks))
+	}
+
 	packet := Packet{
 		LayerIndex:      layer,
 		ResolutionLevel: resolution,
@@ -137,7 +144,7 @@ func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx 
 	}
 
 	// Encode packet header with layer awareness
-	header, cbIncls, err := pe.encodePacketHeaderLayered(precinct, layer)
+	header, cbIncls, err := pe.encodePacketHeaderLayered(precinct, layer, resolution)
 	if err != nil {
 		return packet, fmt.Errorf("failed to encode packet header: %w", err)
 	}
@@ -146,8 +153,21 @@ func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx 
 
 	// Encode packet body (code-block contributions for this layer)
 	body := &bytes.Buffer{}
-	for _, cbIncl := range cbIncls {
+	for i := range cbIncls {
+		cbIncl := &cbIncls[i]
 		if cbIncl.Included {
+			// In TERMALL mode, prepend PassLengths metadata before code-block data
+			if cbIncl.UseTERMALL && len(cbIncl.PassLengths) > 0 {
+				// Write number of passes (1 byte)
+				numPasses := byte(len(cbIncl.PassLengths))
+				body.WriteByte(numPasses)
+				// Write each pass length (2 bytes each, big-endian)
+				for _, passLen := range cbIncl.PassLengths {
+					_ = binary.Write(body, binary.BigEndian, uint16(passLen))
+				}
+				// Note: DataLength was already updated in encodePacketHeaderLayered
+			}
+			// Write code-block data (will be byte-stuffed later by encoder.go)
 			body.Write(cbIncl.Data)
 		}
 	}
@@ -279,7 +299,7 @@ func (bw *bitWriter) flush() {
 
 // encodePacketHeaderLayered encodes a packet header for multi-layer support
 // This version properly handles layer-specific pass allocation
-func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int) ([]byte, []CodeBlockIncl, error) {
+func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, resolution int) ([]byte, []CodeBlockIncl, error) {
 	header := &bytes.Buffer{}
 	cbIncls := make([]CodeBlockIncl, 0)
 
@@ -300,6 +320,12 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 				}
 				newPasses = totalPasses - prevPasses
 				included = newPasses > 0
+
+				cbKey := fmt.Sprintf("%d:%d", resolution, cb.Index)
+				if cbKey == "0:0" && layer < 2 {
+					fmt.Printf("[PACKET ENC Layer=%d CB 0:0] LayerPasses=%v, totalPasses=%d, prevPasses=%d, newPasses=%d, included=%v\n",
+						layer, cb.LayerPasses, totalPasses, prevPasses, newPasses, included)
+				}
 			}
 		} else {
 			// Fallback: use old single-layer method
@@ -314,6 +340,7 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 			FirstInclusion: firstIncl,
 		}
 
+
 		// Write inclusion bit
 		if included {
 			bitBuf.writeBit(1)
@@ -321,6 +348,11 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 			bitBuf.writeBit(0)
 			cbIncls = append(cbIncls, cbIncl)
 			continue
+		}
+
+		if fmt.Sprintf("%d:%d", resolution, cb.Index) == "0:0" && layer < 2 {
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] Wrote inclusion bit=1, bitCount=%d\n",
+				layer, bitBuf.bitCount)
 		}
 
 		// If first inclusion, encode zero bitplanes
@@ -337,6 +369,11 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 		// Encode number of coding passes for this layer
 		cbIncl.NumPasses = newPasses
 
+		if fmt.Sprintf("%d:%d", resolution, cb.Index) == "0:0" && layer < 2 {
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] Before encoding passes: bitCount=%d, will encode %d passes\n",
+				layer, bitBuf.bitCount, newPasses)
+		}
+
 		// Encode number of passes (simplified unary code)
 		for i := 0; i < newPasses; i++ {
 			if i < newPasses-1 {
@@ -346,24 +383,101 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 			}
 		}
 
+		if fmt.Sprintf("%d:%d", resolution, cb.Index) == "0:0" && layer < 2 {
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] After encoding passes: bitCount=%d\n",
+				layer, bitBuf.bitCount)
+		}
+
 		// Get data for this layer
 		var layerData []byte
+
+		// DEBUG: Check if we're encoding multi-layer
+		cbKey := fmt.Sprintf("%d:%d", resolution, cb.Index)
+		if cbKey == "0:0" && layer < 2 {
+			if cb.LayerData != nil {
+				fmt.Printf("[PACKET ENC Layer=%d CB 0:0] Multi-layer mode, %d layers\n", layer, len(cb.LayerData))
+			} else {
+				fmt.Printf("[PACKET ENC Layer=%d CB 0:0] Single-layer mode\n", layer)
+			}
+		}
+
 		if cb.LayerData != nil && layer < len(cb.LayerData) {
 			// Multi-layer: use pre-calculated layer data (incremental)
 			layerData = cb.LayerData[layer]
+
+			if cbKey == "0:0" {
+				showBytes := 3
+				if len(layerData) < showBytes {
+					showBytes = len(layerData)
+				}
+				fmt.Printf("[PACKET ENC Layer=%d CB 0:0] layerData len=%d, first bytes=%02x\n",
+					layer, len(layerData), layerData[:showBytes])
+			}
 		} else {
 			// Fallback to single-layer data
 			layerData = cb.Data
 		}
 
 		dataLen := len(layerData)
-		cbIncl.DataLength = dataLen
 		cbIncl.Data = layerData
 
+		// Copy PassLengths for multi-layer support
+		// In multi-layer mode, extract only the pass lengths for this layer
+		if cb.LayerData != nil && layer < len(cb.LayerPasses) {
+			// Get the range of passes for this layer
+			totalPasses := cb.LayerPasses[layer]
+			prevPasses := 0
+			if layer > 0 {
+				prevPasses = cb.LayerPasses[layer-1]
+			}
+
+			// Extract pass lengths for this layer's passes
+			// Convert from absolute to relative (within this layer's data)
+			if totalPasses <= len(cb.PassLengths) {
+				layerPassLengths := make([]int, totalPasses-prevPasses)
+				baseOffset := 0
+				if prevPasses > 0 && prevPasses <= len(cb.PassLengths) {
+					baseOffset = cb.PassLengths[prevPasses-1]
+				}
+				for i := prevPasses; i < totalPasses && i < len(cb.PassLengths); i++ {
+					layerPassLengths[i-prevPasses] = cb.PassLengths[i] - baseOffset
+				}
+				cbIncl.PassLengths = layerPassLengths
+
+			}
+		} else {
+			// Single layer: use all pass lengths as-is
+			cbIncl.PassLengths = cb.PassLengths
+		}
+		cbIncl.UseTERMALL = cb.UseTERMALL
+
+		// Calculate total DataLength including metadata
+		if cbIncl.UseTERMALL && len(cbIncl.PassLengths) > 0 {
+			metadataBytes := 1 + len(cbIncl.PassLengths)*2
+			cbIncl.DataLength = dataLen + metadataBytes
+		} else {
+			cbIncl.DataLength = dataLen
+		}
+
 		// Encode length (16-bit fixed for simplicity)
+		// This encodes the TOTAL length (metadata + data) in TERMALL mode
+		encodedLength := cbIncl.DataLength
+
+		if cbKey == "0:0" && layer < 2 {
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] Before DataLength: bitCount=%d, bytePos=%d\n",
+				layer, bitBuf.bitCount, bitBuf.buf.Len())
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] DataLength=%d (0x%04x)\n",
+				layer, cbIncl.DataLength, cbIncl.DataLength)
+		}
+
 		for i := 15; i >= 0; i-- {
-			bit := (dataLen >> i) & 1
+			bit := (encodedLength >> i) & 1
 			bitBuf.writeBit(bit)
+		}
+
+		if cbKey == "0:0" && layer < 2 {
+			fmt.Printf("[PACKET ENC Layer=%d CB 0:0] After DataLength: bitCount=%d, bytePos=%d\n",
+				layer, bitBuf.bitCount, bitBuf.buf.Len())
 		}
 
 		cbIncls = append(cbIncls, cbIncl)
@@ -372,7 +486,53 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 	// Flush remaining bits
 	bitBuf.flush()
 
-	return header.Bytes(), cbIncls, nil
+	headerBytes := header.Bytes()
+	if layer < 2 && resolution == 0 {
+		fmt.Printf("[PACKET ENC Header Layer=%d Res=%d] Header length=%d bytes\n",
+			layer, resolution, len(headerBytes))
+		showBytes := 10
+		if len(headerBytes) < showBytes {
+			showBytes = len(headerBytes)
+		}
+		fmt.Printf("[PACKET ENC Header Layer=%d Res=%d] Header bytes: %02x\n",
+			layer, resolution, headerBytes[:showBytes])
+	}
+
+	return headerBytes, cbIncls, nil
+}
+
+// applyByteStuffing applies JPEG 2000 byte-stuffing to code-block data
+// Any 0xFF byte must be followed by 0x00 to distinguish it from markers
+func applyByteStuffing(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+
+	// Count 0xFF bytes to pre-allocate
+	ffCount := 0
+	for _, b := range data {
+		if b == 0xFF {
+			ffCount++
+		}
+	}
+
+	if ffCount == 0 {
+		return data // No stuffing needed
+	}
+
+	// Allocate result buffer
+	result := make([]byte, len(data)+ffCount)
+	j := 0
+	for _, b := range data {
+		result[j] = b
+		j++
+		if b == 0xFF {
+			result[j] = 0x00 // Stuff byte
+			j++
+		}
+	}
+
+	return result
 }
 
 // GetPackets returns the encoded packets
