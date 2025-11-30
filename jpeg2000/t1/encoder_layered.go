@@ -218,14 +218,18 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Get final MQ data
 	var fullMQData []byte
-	if lossless {
-		// In lossless TERMALL mode, all passes including the last one
-		// have been flushed with FlushToOutput(). Just get the buffer.
-		// DO NOT call Flush() again as it would add duplicate termination bytes
+	// For multi-layer encoding (both lossless and lossy), all passes have been
+	// terminated with FlushToOutput(), so just get the buffer
+	// For single-layer lossy with selective termination, non-terminated passes
+	// need final flush
+	if len(layerBoundaries) > 1 {
+		// Multi-layer: all passes already flushed
+		fullMQData = t1.mqe.GetBuffer()
+	} else if lossless {
+		// Single-layer lossless: all passes already flushed
 		fullMQData = t1.mqe.GetBuffer()
 	} else {
-		// In lossy mode with selective termination, non-terminated passes
-		// need final flush
+		// Single-layer lossy with selective termination: final flush needed
 		fullMQData = t1.mqe.Flush()
 	}
 

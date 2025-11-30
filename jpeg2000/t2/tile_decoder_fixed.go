@@ -2,7 +2,6 @@ package t2
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
 )
@@ -15,14 +14,16 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 	for _, comp := range td.components {
 		// Group code-blocks by resolution to track their spatial layout
 		type cbInfo struct {
-			data           []byte
-			maxBitplane    int
-			maxBitplaneSet bool // Track if maxBitplane has been set
-			resolution     int
-			cbIdx          int   // Code-block index within the resolution
-			passLengths    []int // Cumulative pass lengths (for TERMALL)
-			useTERMALL     bool  // TERMALL mode flag
-			totalPasses    int   // Total passes accumulated across all layers
+			data             []byte
+			maxBitplane      int
+			maxBitplaneSet   bool // Track if maxBitplane has been set
+			zeroBitplanes    int  // Saved from first inclusion, used for all layers
+			zeroBitplanesSet bool // Track if zeroBitplanes has been set
+			resolution       int
+			cbIdx            int   // Code-block index within the resolution
+			passLengths      []int // Cumulative pass lengths (for TERMALL)
+			useTERMALL       bool  // TERMALL mode flag
+			totalPasses      int   // Total passes accumulated across all layers
 		}
 		cbDataMap := make(map[string]cbInfo) // map[key]cbInfo where key = "res:cbIdx"
 
@@ -32,87 +33,112 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				continue
 			}
 
+			// DEBUG
+			if comp.width >= 512 && packet.ResolutionLevel == 1 {
+				includedCount := 0
+				for _, cb := range packet.CodeBlockIncls {
+					if cb.Included {
+						includedCount++
+					}
+				}
+				fmt.Printf("[TILE DEC] Processing packet res=%d, len(CodeBlockIncls)=%d, includedCount=%d\n",
+					packet.ResolutionLevel, len(packet.CodeBlockIncls), includedCount)
+			}
+
 			// Extract code-block contributions from this packet
 			dataOffset := 0
 			for cbIdx, cbIncl := range packet.CodeBlockIncls {
-				if cbIncl.Included && cbIncl.DataLength > 0 {
-					if dataOffset+cbIncl.DataLength <= len(packet.Body) {
-						// Accumulate code-block data
-						cbData := packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
-
-						// Create unique key: "resolution:cbIdx"
-						key := fmt.Sprintf("%d:%d", packet.ResolutionLevel, cbIdx)
-						existing, ok := cbDataMap[key]
-
-						// DEBUG CB 0:0 data accumulation
-						if key == "0:0" {
-							showBytes := 3
-							if len(cbData) < showBytes {
-								showBytes = len(cbData)
-							}
-						}
-
-						// Save base offset BEFORE appending data
-						baseOffset := len(existing.data)
-
-						if ok {
-							// Append to existing data
-							existing.data = append(existing.data, cbData...)
+				if cbIncl.Included {
+					// Handle code blocks with zero or non-zero data
+					var cbData []byte
+					if cbIncl.DataLength > 0 {
+						if dataOffset+cbIncl.DataLength <= len(packet.Body) {
+							cbData = packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
 						} else {
-							existing.data = cbData
-							existing.resolution = packet.ResolutionLevel
-							existing.cbIdx = cbIdx
+							// Data length exceeds packet body - skip
+							continue
 						}
-
-						dataOffset += cbIncl.DataLength
-
-						// Accumulate PassLengths from each layer
-						if cbIncl.PassLengths != nil && len(cbIncl.PassLengths) > 0 {
-							if existing.passLengths == nil {
-								// First layer: use as-is
-								existing.passLengths = make([]int, len(cbIncl.PassLengths))
-								copy(existing.passLengths, cbIncl.PassLengths)
-
-								// DEBUG first CB
-								if key == "0:0" {
-									// first layer accumulation for this code-block
-								}
-							} else {
-								// Subsequent layers: append with offset (baseOffset was saved before append)
-								if key == "0:0" {
-									// tracking base offset for initial code-block
-								}
-
-								for _, passLen := range cbIncl.PassLengths {
-									existing.passLengths = append(existing.passLengths, baseOffset+passLen)
-								}
-
-								if key == "0:0" {
-									// accumulated pass lengths for first code-block
-								}
-							}
-
-						}
-						if cbIncl.UseTERMALL {
-							existing.useTERMALL = true
-						}
-
-						// Accumulate total passes across layers
-						existing.totalPasses += cbIncl.NumPasses
-
-						// Calculate max bitplane from zero bitplanes
-						// Note: After wavelet transform, coefficients may need extra bits
-						// 5/3 reversible wavelet adds 1 bit per decomposition level
-						componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
-						effectiveBitDepth := componentBitDepth + comp.numLevels
-						maxBP := effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
-						if !existing.maxBitplaneSet || maxBP > existing.maxBitplane {
-							existing.maxBitplane = maxBP
-							existing.maxBitplaneSet = true
-						}
-
-						cbDataMap[key] = existing
+					} else {
+						// Code block included but has zero data (e.g., all-zero coefficients)
+						cbData = []byte{}
 					}
+
+					// Create unique key: "resolution:cbIdx"
+					key := fmt.Sprintf("%d:%d", packet.ResolutionLevel, cbIdx)
+					existing, ok := cbDataMap[key]
+
+					// Save base offset BEFORE appending data
+					baseOffset := len(existing.data)
+
+					// DEBUG: Track CB 1 (LH subband at pos (0,8))
+					if cbIdx == 1 && packet.ResolutionLevel == 1 {
+						fmt.Printf("[DEBUG CB1 LH] Layer %d: cbData len=%d, baseOffset=%d, cbIncl.Included=%v, cbIncl.DataLength=%d\n",
+							packet.LayerIndex, len(cbData), baseOffset, cbIncl.Included, cbIncl.DataLength)
+						if len(cbData) > 0 {
+							fmt.Printf("[DEBUG CB1 LH] Layer %d: cbData first 4 bytes=%v\n",
+								packet.LayerIndex, cbData[:min(4, len(cbData))])
+						}
+					}
+
+					if ok {
+						// Append to existing data
+						existing.data = append(existing.data, cbData...)
+					} else {
+						existing.data = cbData
+						existing.resolution = packet.ResolutionLevel
+						existing.cbIdx = cbIdx
+					}
+
+					dataOffset += cbIncl.DataLength
+
+					// Accumulate PassLengths from each layer
+					if cbIncl.PassLengths != nil && len(cbIncl.PassLengths) > 0 {
+						if existing.passLengths == nil {
+							// First layer: use as-is
+							existing.passLengths = make([]int, len(cbIncl.PassLengths))
+							copy(existing.passLengths, cbIncl.PassLengths)
+
+						} else {
+							// Subsequent layers: append with offset (baseOffset was saved before append)
+							for _, passLen := range cbIncl.PassLengths {
+								existing.passLengths = append(existing.passLengths, baseOffset+passLen)
+							}
+						}
+
+					}
+					if cbIncl.UseTERMALL {
+						existing.useTERMALL = true
+					}
+
+					// Accumulate total passes across layers
+					existing.totalPasses += cbIncl.NumPasses
+
+					// Save zeroBitplanes from first inclusion, use for all subsequent layers
+					// This is critical for multi-layer: zeroBitplanes is only encoded in first layer
+					if !existing.zeroBitplanesSet && cbIncl.ZeroBitplanes >= 0 {
+						existing.zeroBitplanes = cbIncl.ZeroBitplanes
+						existing.zeroBitplanesSet = true
+					}
+
+					// Calculate max bitplane from zero bitplanes
+					// Note: After wavelet transform, coefficients may need extra bits
+					// 5/3 reversible wavelet adds 1 bit per decomposition level
+					componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+					effectiveBitDepth := componentBitDepth + comp.numLevels
+
+					// Use saved zeroBitplanes for consistent maxBitplane across all layers
+					zbp := existing.zeroBitplanes
+					if !existing.zeroBitplanesSet {
+						zbp = cbIncl.ZeroBitplanes  // Fallback if not set yet
+					}
+					maxBP := effectiveBitDepth - 1 - zbp
+
+					if !existing.maxBitplaneSet {
+						existing.maxBitplane = maxBP
+						existing.maxBitplaneSet = true
+					}
+
+					cbDataMap[key] = existing
 				}
 			}
 		}
@@ -160,119 +186,182 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 		// Create code-blocks with correct spatial positions
 		codeBlocks := make([]*CodeBlockDecoder, 0)
 
-		// Convert map to sorted slice to ensure deterministic processing order
-		// Sort by resolution first, then by code block index
-		cbList := make([]cbInfo, 0, len(cbDataMap))
-		for _, info := range cbDataMap {
-			cbList = append(cbList, info)
+		// DEBUG: Print cbDataMap size
+		if comp.width >= 256 {
+			fmt.Printf("[DEBUG] cbDataMap size: %d entries for %dx%d image, numLevels=%d\n", len(cbDataMap), comp.width, comp.height, comp.numLevels)
 		}
 
-		// Sort by resolution, then by cbIdx
-		sort.Slice(cbList, func(i, j int) bool {
-			if cbList[i].resolution != cbList[j].resolution {
-				return cbList[i].resolution < cbList[j].resolution
-			}
-			return cbList[i].cbIdx < cbList[j].cbIdx
-		})
-
-		for _, cbInfo := range cbList {
-			res := cbInfo.resolution
-			cbIdx := cbInfo.cbIdx
+		// Create code-blocks for ALL possible positions (including not-included ones)
+		// Iterate through all resolutions and subbands
+		totalCBsCreated := 0
+		for res := 0; res <= comp.numLevels; res++ {
 			layouts := resolutionLayouts[res]
 
-			// Calculate which subband this code-block belongs to
-			subbandIdx := 0
-			localCBIdx := cbIdx
-			totalCBsPerSubband := 0
-
-			// For resolution 0, there's only one subband (LL)
-			// For resolution > 0, code-blocks are ordered as: HL, LH, HH
-			if res > 0 {
-				totalCBsPerSubband = layouts[0].numCBX * layouts[0].numCBY
-				subbandIdx = localCBIdx / totalCBsPerSubband
-				if subbandIdx >= len(layouts) {
-					subbandIdx = len(layouts) - 1
+			// For each subband in this resolution
+			for subbandIdx, layout := range layouts {
+				numCBsInSubband := layout.numCBX * layout.numCBY
+				if comp.width >= 512 && res == 1 {
+					fmt.Printf("[LOOP] res=%d, subbandIdx=%d, numCBsInSubband=%d\n", res, subbandIdx, numCBsInSubband)
 				}
-				localCBIdx = localCBIdx % totalCBsPerSubband
-			}
 
-			layout := layouts[subbandIdx]
+				// For each code-block in this subband
+				for localCBIdx := 0; localCBIdx < numCBsInSubband; localCBIdx++ {
+					// Calculate global cbIdx for this resolution
+					// Resolution 0: cbIdx = localCBIdx (only LL subband)
+					// Resolution > 0: cbIdx = subbandIdx * numCBsInSubband + localCBIdx
+					var cbIdx int
+					if res == 0 {
+						cbIdx = localCBIdx
+					} else {
+						cbIdx = subbandIdx * numCBsInSubband + localCBIdx
+					}
 
-			// Calculate code-block position within subband
-			cbx := localCBIdx % layout.numCBX
-			cby := localCBIdx / layout.numCBX
+					// Look up code-block data from map
+					key := fmt.Sprintf("%d:%d", res, cbIdx)
+					cbInfoData, exists := cbDataMap[key]
+					if !exists {
+						// Code-block not included in packet - use empty data (all-zero coefficients)
+						cbInfoData = cbInfo{
+							data:             []byte{},
+							resolution:       res,
+							cbIdx:            cbIdx,
+							maxBitplane:      -1, // All zeros
+							maxBitplaneSet:   true,
+							zeroBitplanesSet: false,
+						}
+					}
 
-			// Calculate code-block bounds within the subband
-			localX0 := cbx * cbWidth
-			localY0 := cby * cbHeight
-			localX1 := localX0 + cbWidth
-			localY1 := localY0 + cbHeight
+					// Calculate code-block position within subband
+					cbx := localCBIdx % layout.numCBX
+					cby := localCBIdx / layout.numCBX
 
-			// Clip to subband bounds
-			if localX1 > layout.width {
-				localX1 = layout.width
-			}
-			if localY1 > layout.height {
-				localY1 = layout.height
-			}
+					// Calculate code-block bounds within the subband
+					localX0 := cbx * cbWidth
+					localY0 := cby * cbHeight
+					localX1 := localX0 + cbWidth
+					localY1 := localY0 + cbHeight
 
-			// Convert to global coordinates in coefficient array
-			x0 := layout.x0 + localX0
-			y0 := layout.y0 + localY0
-			x1 := layout.x0 + localX1
-			y1 := layout.y0 + localY1
+					// Clip to subband bounds
+					if localX1 > layout.width {
+						localX1 = layout.width
+					}
+					if localY1 > layout.height {
+						localY1 = layout.height
+					}
 
-			actualWidth := x1 - x0
-			actualHeight := y1 - y0
+					// Convert to global coordinates in coefficient array
+					x0 := layout.x0 + localX0
+					y0 := layout.y0 + localY0
+					x1 := layout.x0 + localX1
+					y1 := layout.y0 + localY1
 
-			if actualWidth <= 0 || actualHeight <= 0 {
-				continue
-			}
+					actualWidth := x1 - x0
+					actualHeight := y1 - y0
 
-			// Create code-block decoder
-			// Use accumulated totalPasses from all layers, or calculate from maxBitplane if not available
-			numPasses := cbInfo.totalPasses
-			if numPasses == 0 {
-				// Fallback: calculate from maxBitplane (3 passes per bitplane)
-				numPasses = (cbInfo.maxBitplane + 1) * 3
-			}
+					if actualWidth <= 0 || actualHeight <= 0 {
+						continue
+					}
 
-			cbd := &CodeBlockDecoder{
-				x0:        x0,
-				y0:        y0,
-				x1:        x1,
-				y1:        y1,
-				data:      cbInfo.data,
-				numPasses: numPasses,
-				t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
-			}
+				// DEBUG: Track LH code block creation
+				if x0 == 0 && y0 == 8 {
+					fmt.Printf("[CREATE CB LH] res=%d, cbIdx=%d, pos=(%d,%d), dataLen=%d, totalPasses=%d\n",
+						res, cbIdx, x0, y0, len(cbInfoData.data), cbInfoData.totalPasses)
+				}
 
-			// Decode the code-block
-			if len(cbInfo.data) > 0 {
-				var err error
-				if cbInfo.passLengths != nil && len(cbInfo.passLengths) > 0 {
-					// Multi-layer mode: use DecodeLayeredWithMode
-					// useTERMALL flag determines whether passes are terminated independently
-					// lossless flag (from COD transformation) determines whether contexts are reset
-					lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
-					// Multi-layer mode logs removed
-					err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfo.data, cbInfo.passLengths, cbInfo.maxBitplane, 0, cbInfo.useTERMALL, lossless)
+				// Create code-block decoder
+				// Use accumulated totalPasses from all layers, or calculate from maxBitplane if not available
+				numPasses := cbInfoData.totalPasses
+				if numPasses == 0 {
+					// Fallback: calculate from maxBitplane (3 passes per bitplane)
+					numPasses = (cbInfoData.maxBitplane + 1) * 3
+				}
+
+				cbd := &CodeBlockDecoder{
+					x0:        x0,
+					y0:        y0,
+					x1:        x1,
+					y1:        y1,
+					data:      cbInfoData.data,
+					numPasses: numPasses,
+					t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+				}
+
+				// Decode the code-block
+				// Skip decoding if: 1) no data, 2) all passes have zero length, or 3) maxBitplane < 0 (all zeros)
+				shouldDecode := len(cbInfoData.data) > 0
+				if shouldDecode && cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0 {
+					// Check if all PassLengths are zero (no actual data to decode)
+					allZero := true
+					for _, pl := range cbInfoData.passLengths {
+						if pl > 0 {
+							allZero = false
+							break
+						}
+					}
+					if allZero {
+						shouldDecode = false
+					}
+				}
+				if cbInfoData.maxBitplane < 0 {
+					// All-zero code block
+					shouldDecode = false
+				}
+
+				// DEBUG: Track LH decoding
+				if x0 == 0 && y0 == 8 {
+					fmt.Printf("[DECODE CB LH] shouldDecode=%v, hasPassLengths=%v, maxBitplane=%d\n",
+						shouldDecode, cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0, cbInfoData.maxBitplane)
+				}
+
+				if shouldDecode {
+					var err error
+					if cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0 {
+						// Multi-layer mode: use DecodeLayeredWithMode
+						// useTERMALL flag determines whether passes are terminated independently
+						// lossless flag (from COD transformation) determines whether contexts are reset
+						lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
+						// Multi-layer mode logs removed
+						err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, lossless)
+					} else {
+						// Single-layer mode: use DecodeWithBitplane
+						err = cbd.t1Decoder.DecodeWithBitplane(cbInfoData.data, cbd.numPasses, cbInfoData.maxBitplane, 0)
+						// Error logging trimmed; caller propagates error below
+					}
+
+					// DEBUG: Track LH decoding result
+					if x0 == 0 && y0 == 8 {
+						if err != nil {
+							fmt.Printf("[DECODE CB LH] DecodeLayeredWithMode error: %v\n", err)
+						} else {
+							coeffs := cbd.t1Decoder.GetData()
+							fmt.Printf("[DECODE CB LH] Decoded successfully, coeffs len=%d, first 4=%v\n",
+								len(coeffs), coeffs[:min(4, len(coeffs))])
+						}
+					}
+
+					if err != nil {
+						cbd.coeffs = make([]int32, actualWidth*actualHeight)
+					} else {
+						cbd.coeffs = cbd.t1Decoder.GetData()
+					}
 				} else {
-					// Single-layer mode: use DecodeWithBitplane
-					// Single-layer mode logs removed
-					err = cbd.t1Decoder.DecodeWithBitplane(cbInfo.data, cbd.numPasses, cbInfo.maxBitplane, 0)
-					// Error logging trimmed; caller propagates error below
-				}
-				if err != nil {
+					// No data or all-zero code block - use all-zero coefficients
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)
-				} else {
-					cbd.coeffs = cbd.t1Decoder.GetData()
-				}
-			} else {
-				cbd.coeffs = make([]int32, actualWidth*actualHeight)
-			}
 
-			codeBlocks = append(codeBlocks, cbd)
+					// DEBUG: Track LH all-zero path
+					if x0 == 0 && y0 == 8 {
+						fmt.Printf("[DECODE CB LH] Using all-zero coefficients (shouldDecode=false)\n")
+					}
+				}
+
+				codeBlocks = append(codeBlocks, cbd)
+				totalCBsCreated++
+				}
+			}
+		}
+
+		if comp.width >= 512 {
+			fmt.Printf("[TOTAL] totalCBsCreated=%d\n", totalCBsCreated)
 		}
 
 		// Store code-blocks for assembly

@@ -35,6 +35,22 @@ func NewPacketEncoder(numComponents, numLayers, numResolutions int, progression 
 
 // AddCodeBlock adds a code-block to a precinct
 func (pe *PacketEncoder) AddCodeBlock(component, resolution, precinctIdx int, codeBlock *PrecinctCodeBlock) {
+	// DEBUG: Track LH subband addition
+	if resolution == 1 && codeBlock.X0 == 0 && codeBlock.Y0 == 8 {
+		fmt.Printf("[ADDCODEBLOCK LH] res=%d, LayerData len=%d, LayerPasses len=%d\n",
+			resolution, len(codeBlock.LayerData), len(codeBlock.LayerPasses))
+		if codeBlock.LayerData != nil {
+			for i, ld := range codeBlock.LayerData {
+				fmt.Printf("[ADDCODEBLOCK LH]   LayerData[%d] len=%d\n", i, len(ld))
+			}
+		}
+		if codeBlock.LayerPasses != nil {
+			for i, lp := range codeBlock.LayerPasses {
+				fmt.Printf("[ADDCODEBLOCK LH]   LayerPasses[%d]=%d\n", i, lp)
+			}
+		}
+	}
+
 	// Ensure maps exist
 	if pe.precincts[component] == nil {
 		pe.precincts[component] = make(map[int]map[int][]*Precinct)
@@ -294,12 +310,32 @@ func (bw *bitWriter) flush() {
 // encodePacketHeaderLayered encodes a packet header for multi-layer support
 // This version properly handles layer-specific pass allocation
 func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, resolution int) ([]byte, []CodeBlockIncl, error) {
+	// DEBUG: Check LH subband (CB[1] at pos (0,8))
+	if resolution == 1 && layer == 0 && len(precinct.CodeBlocks) > 1 {
+		cb := precinct.CodeBlocks[1]  // LH is CB[1]
+		if cb.X0 == 0 && cb.Y0 == 8 {
+			fmt.Printf("[ENCODE_HEADER LH] layer=%d, LayerData len=%d, LayerPasses len=%d\n",
+				layer, len(cb.LayerData), len(cb.LayerPasses))
+			if len(cb.LayerData) > 0 {
+				for i := 0; i < len(cb.LayerData); i++ {
+					fmt.Printf("[ENCODE_HEADER LH]   LayerData[%d] len=%d, cap=%d, ptr=%p\n",
+						i, len(cb.LayerData[i]), cap(cb.LayerData[i]), cb.LayerData[i])
+				}
+			}
+			if len(cb.LayerPasses) > 0 {
+				for i := 0; i < len(cb.LayerPasses); i++ {
+					fmt.Printf("[ENCODE_HEADER LH]   LayerPasses[%d]=%d\n", i, cb.LayerPasses[i])
+				}
+			}
+		}
+	}
+
 	header := &bytes.Buffer{}
 	cbIncls := make([]CodeBlockIncl, 0)
 
 	bitBuf := newBitWriter(header)
 
-	for _, cb := range precinct.CodeBlocks {
+	for cbIdx, cb := range precinct.CodeBlocks {
 		// Determine if this code-block is included in this layer
 		included := false
 		newPasses := 0
@@ -315,6 +351,11 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 				newPasses = totalPasses - prevPasses
 				included = newPasses > 0
 
+				// DEBUG: Track LH subband (CB[1] at pos (0,8))
+				if resolution == 1 && cbIdx == 1 {
+					fmt.Printf("[PKT ENC LH] layer=%d, totalPasses=%d, prevPasses=%d, newPasses=%d, included=%v, layerDataLen=%d\n",
+						layer, totalPasses, prevPasses, newPasses, included, len(cb.LayerData[layer]))
+				}
 			}
 		} else {
 			// Fallback: use old single-layer method

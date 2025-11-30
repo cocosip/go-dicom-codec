@@ -209,14 +209,14 @@ func (mqe *MQEncoder) FlushToOutput() {
 	// Write last byte if not 0xFF
 	if mqe.lastByte != 0xFF {
 		mqe.output.WriteByte(mqe.lastByte)
-		mqe.hasOutput = true
-		mqe.lastByte = 0
 	}
 
-	// Reset state for next pass (but don't reset output buffer)
+	// Reset state for next pass (but don't reset output buffer or contexts)
 	mqe.a = 0x8000
 	mqe.c = 0
 	mqe.ct = 12
+	mqe.lastByte = 0
+	mqe.hasOutput = false
 }
 
 // Reset resets the encoder state

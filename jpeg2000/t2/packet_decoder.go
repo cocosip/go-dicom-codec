@@ -2,7 +2,6 @@ package t2
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 )
 
@@ -179,30 +178,34 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 		if cbIncl.Included && cbIncl.DataLength > 0 {
 			// In TERMALL mode, read PassLengths metadata first
 			if useTERMALL {
-				// Read number of passes (1 byte)
-				if pd.offset >= len(pd.data) {
-					break
-				}
-				numPasses := int(pd.data[pd.offset])
-				pd.offset++
+				// Read PassLengths metadata WITH unstuffing
+				// Metadata is (1 + numPasses*2) bytes, but may contain stuffed bytes
 
-				// Read pass lengths (2 bytes each, big-endian)
+				// Read number of passes (1 byte) with unstuffing
+				numPassesByte, bytesRead := readByteWithUnstuff(pd.data, pd.offset)
+				pd.offset += bytesRead
+				numPasses := int(numPassesByte)
+
+				// Read pass lengths (2 bytes each, big-endian) with unstuffing
 				cbIncl.PassLengths = make([]int, numPasses)
 				for j := 0; j < numPasses; j++ {
-					if pd.offset+2 > len(pd.data) {
-						break
-					}
-					passLen := binary.BigEndian.Uint16(pd.data[pd.offset : pd.offset+2])
+					// Read 2 bytes with unstuffing
+					byte1, bytesRead1 := readByteWithUnstuff(pd.data, pd.offset)
+					pd.offset += bytesRead1
+					byte2, bytesRead2 := readByteWithUnstuff(pd.data, pd.offset)
+					pd.offset += bytesRead2
+
+					passLen := uint16(byte1)<<8 | uint16(byte2)
 					cbIncl.PassLengths[j] = int(passLen)
-					pd.offset += 2
 				}
 				cbIncl.UseTERMALL = true
 
-				// Adjust cbIncl.DataLength: header contains TOTAL (metadata + data)
-				// We've already consumed metadata bytes, so subtract them
-				metadataBytes := 1 + numPasses*2
-				if cbIncl.DataLength >= metadataBytes {
-					cbIncl.DataLength -= metadataBytes
+				// Adjust cbIncl.DataLength: header contains TOTAL (unstuffed metadata + data)
+				// We've consumed the stuffed metadata bytes (tracked by pd.offset - metadataStart),
+				// but DataLength refers to unstuffed size, so subtract unstuffed metadata size
+				unstuffedMetadataBytes := 1 + numPasses*2
+				if cbIncl.DataLength >= unstuffedMetadataBytes {
+					cbIncl.DataLength -= unstuffedMetadataBytes
 				} else {
 					cbIncl.DataLength = 0
 				}
@@ -246,10 +249,19 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 	// Calculate number of code-blocks for this resolution level
 	maxCodeBlocks := pd.calculateNumCodeBlocks(resolution)
 
+	// DEBUG
+	if pd.imageWidth >= 512 && resolution == 1 {
+		fmt.Printf("[PKT DEC] res=%d, maxCodeBlocks=%d\n", resolution, maxCodeBlocks)
+	}
+
 	for i := 0; i < maxCodeBlocks; i++ {
 		// Read inclusion bit
 		inclBit, err := bitReader.readBit()
 		if err != nil {
+			// DEBUG
+			if pd.imageWidth >= 512 && resolution == 1 {
+				fmt.Printf("[PKT DEC] readBit error at i=%d: %v\n", i, err)
+			}
 			break // End of header
 		}
 
@@ -312,6 +324,11 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 
 		// NOTE: Removed incorrect safety check that would break on dataLen=0
 		// In JPEG 2000, empty code-blocks are valid and we need to read all maxCodeBlocks
+	}
+
+	// DEBUG
+	if pd.imageWidth >= 512 && resolution == 1 {
+		fmt.Printf("[PKT DEC] Loop finished, len(cbIncls)=%d (expected %d)\n", len(cbIncls), maxCodeBlocks)
 	}
 
 	// Update offset to after header
@@ -411,6 +428,25 @@ func readAndUnstuff(data []byte, targetUnstuffedLen int) ([]byte, int) {
 		}
 	}
 	return result, i
+}
+
+// readByteWithUnstuff reads a single byte from data at offset, handling byte unstuffing
+// Returns the unstuffed byte and the number of bytes consumed (1 or 2 if 0xFF 0x00 was skipped)
+func readByteWithUnstuff(data []byte, offset int) (byte, int) {
+	if offset >= len(data) {
+		return 0, 0
+	}
+
+	b := data[offset]
+
+	// If this byte is 0xFF and next is 0x00 (stuffed byte), skip the 0x00
+	if b == 0xFF && offset+1 < len(data) && data[offset+1] == 0x00 {
+		// Return 0xFF and consume 2 bytes (0xFF 0x00)
+		return 0xFF, 2
+	}
+
+	// Normal byte
+	return b, 1
 }
 
 // GetPackets returns the decoded packets

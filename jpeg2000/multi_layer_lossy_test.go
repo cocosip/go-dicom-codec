@@ -22,6 +22,7 @@ func TestMultiLayerLossy(t *testing.T) {
 	params.NumLayers = 2
 	params.Lossless = false
 	params.NumLevels = 5
+	params.Quality = 80 // Add quality parameter like TestMultiLayerLossyEncoding
 
 	encoder := NewEncoder(params)
 	encoded, err := encoder.Encode(pixelData)

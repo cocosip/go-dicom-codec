@@ -484,14 +484,19 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 
 	// Simply copy all code-blocks at their x0,y0 positions
 	// The encoder has already set the correct x0,y0 for each code-block
-	cbCount := 0
-	for _, cb := range comp.codeBlocks {
+	for cbIdx, cb := range comp.codeBlocks {
 		x0 := cb.x0
 		y0 := cb.y0
 		x1 := cb.x1
 		y1 := cb.y1
 		actualWidth := x1 - x0
 		actualHeight := y1 - y0
+
+		// DEBUG: Print ALL code blocks with positions
+		if len(cb.coeffs) > 0 {
+			fmt.Printf("[ASSEMBLE CB %d] pos=(%d,%d)-(%d,%d), coeffsLen=%d, first 4=%v\n",
+				cbIdx, x0, y0, x1, y1, len(cb.coeffs), cb.coeffs[:min(4, len(cb.coeffs))])
+		}
 
 		// Copy decoded coefficients from code-block to full array
 		for y := 0; y < actualHeight; y++ {
@@ -504,7 +509,6 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 				}
 			}
 		}
-		cbCount++
 	}
 
 	return nil
