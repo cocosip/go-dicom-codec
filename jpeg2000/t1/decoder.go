@@ -78,7 +78,6 @@ func (t1 *T1Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane i
 // DecodeLayeredWithMode decodes a code-block with optional TERMALL mode
 // lossless parameter controls whether to reset MQ contexts between passes
 func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error {
-	debugLH := false // Disabled debug output
 
 	if len(data) == 0 {
 		return fmt.Errorf("empty code-block data")
@@ -86,7 +85,6 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 	if len(passLengths) == 0 {
 		return fmt.Errorf("no pass lengths provided")
 	}
-
 
 	// 对于不启用 TERMALL 的情况，直接复用标准路径以保持行为一致
 	if !useTERMALL {
@@ -102,6 +100,9 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 
 	passIdx := 0
 	prevEnd := 0
+
+	// For lossy mode: create decoder once, then use SetData for subsequent passes
+	var mqcInitialized bool
 
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
 		// Clear VISIT flags at start of each bitplane
@@ -129,26 +130,20 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 				// Lossless: always use fresh decoder (reset contexts)
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
 			} else {
-				// Lossy: WORKAROUND - use fresh decoder until context preservation is fixed
-				// TODO: Should use NewMQDecoderWithContexts to preserve contexts
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				// Lossy: preserve contexts across passes
+				if !mqcInitialized {
+					// First pass: create new decoder
+					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+					mqcInitialized = true
+				} else {
+					// Subsequent passes: update data while keeping contexts
+					t1.mqc.SetData(passData)
+				}
 			}
 			prevEnd = currentEnd
 
 			if err := t1.decodeSigPropPass(); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
-			}
-
-			// DEBUG: Check contexts after SPP
-			if debugLH && !lossless {
-				contexts := t1.mqc.GetContexts()
-				nonZeroCtx := 0
-				for _, ctx := range contexts {
-					if ctx != 0 {
-						nonZeroCtx++
-					}
-				}
-				fmt.Printf("[AFTER SPP %d] bp=%d, nonZeroContexts=%d/%d\n", passIdx, t1.bitplane, nonZeroCtx, len(contexts))
 			}
 
 			passIdx++
@@ -168,9 +163,13 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 				// Lossless: always use fresh decoder (reset contexts)
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
 			} else {
-				// Lossy: WORKAROUND - use fresh decoder until context preservation is fixed
-				// TODO: Should use NewMQDecoderWithContexts to preserve contexts
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				// Lossy: preserve contexts across passes
+				if !mqcInitialized {
+					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+					mqcInitialized = true
+				} else {
+					t1.mqc.SetData(passData)
+				}
 			}
 			prevEnd = currentEnd
 
@@ -189,24 +188,19 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			}
 			passData := data[prevEnd:currentEnd]
 
-			// DEBUG: Track first CP call
-			if debugLH && t1.bitplane == 5 {
-				fmt.Printf("[BEFORE CP] bitplane=%d, passIdx=%d, passDataLen=%d, width=%d, height=%d\n",
-					t1.bitplane, passIdx, len(passData), t1.width, t1.height)
-				if len(passData) > 0 {
-					fmt.Printf("[BEFORE CP] passData bytes: %v\n", passData[:min(len(passData), 12)])
-				}
-			}
-
 			// TERMALL mode: each pass is flushed independently by encoder
 			// Encoder resets C/A/ct after flush but preserves contexts in lossy mode
 			if lossless {
 				// Lossless: always use fresh decoder (reset contexts)
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
 			} else {
-				// Lossy: WORKAROUND - use fresh decoder until context preservation is fixed
-				// TODO: Should use NewMQDecoderWithContexts to preserve contexts
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				// Lossy: preserve contexts across passes
+				if !mqcInitialized {
+					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+					mqcInitialized = true
+				} else {
+					t1.mqc.SetData(passData)
+				}
 			}
 			prevEnd = currentEnd
 
@@ -215,21 +209,6 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			}
 
 			passIdx++
-		}
-	}
-
-	// DEBUG: Check final data state
-	if debugLH {
-		nonZero := 0
-		for _, v := range t1.data {
-			if v != 0 {
-				nonZero++
-			}
-		}
-		fmt.Printf("[T1 DECODE LH DONE] Decoded %d passes, data len=%d, nonZero count=%d\n",
-			passIdx, len(t1.data), nonZero)
-		if len(t1.data) >= 4 {
-			fmt.Printf("[T1 DECODE LH DONE] First 4 values: %v\n", t1.data[:4])
 		}
 	}
 
@@ -443,7 +422,6 @@ func (t1 *T1Decoder) GetData() []int32 {
 func (t1 *T1Decoder) decodeSigPropPass() error {
 	paddedWidth := t1.width + 2
 	sigCount := 0 // DEBUG counter
-	debugLH := false // Disabled debug output
 	decodeCount := 0
 
 	for y := 0; y < t1.height; y++ {
@@ -465,12 +443,6 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 			ctx := getZeroCodingContext(flags)
 			bit := t1.mqc.Decode(int(ctx))
 			decodeCount++
-
-			// DEBUG: Track first few MQ decodes for LH
-			if debugLH && decodeCount <= 5 {
-				fmt.Printf("[SPP MQ] pos=(%d,%d), ctx=%d, bit=%d, hasNeighbors=%v\n",
-					x, y, ctx, bit, flags&T1_SIG_NEIGHBORS != 0)
-			}
 
 			if bit != 0 {
 				sigCount++ // DEBUG
@@ -553,12 +525,7 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 func (t1 *T1Decoder) decodeCleanupPass() error {
 	paddedWidth := t1.width + 2
 	sigCount := 0 // DEBUG counter
-	debugLH := false // Disabled debug output
 	mqDecodeCount := 0
-
-	if debugLH {
-		fmt.Printf("[CP START] width=%d, height=%d, bitplane=%d\n", t1.width, t1.height, t1.bitplane)
-	}
 
 	// Process in groups of 4 rows (vertical RL decoding)
 	for k := 0; k < t1.height; k += 4 {
@@ -568,7 +535,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 			if k+3 < t1.height {
 				// Check if run-length coding can be applied to this 4-coeff vertical run
 				canUseRL := true
-				failReason := ""
 
 				for dy := 0; dy < 4; dy++ {
 					y := k + dy
@@ -577,34 +543,20 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					// Skip if already visited
 					if (t1.flags[idx] & T1_VISIT) != 0 {
 						canUseRL = false
-						failReason = "visited"
 						break
 					}
 
 					// Check if coefficient or neighbors are already significant
 					if (t1.flags[idx]&T1_SIG) != 0 || (t1.flags[idx]&T1_SIG_NEIGHBORS) != 0 {
 						canUseRL = false
-						failReason = "sig or sig_neighbors"
 						break
 					}
-				}
-
-				// DEBUG: Track first few canUseRL checks
-				if debugLH && (i*10+k) < 5 {
-					fmt.Printf("[CP CANUSE] col=%d, rowGroup=%d, canUseRL=%v, reason=%s\n",
-						i, k, canUseRL, failReason)
 				}
 
 				if canUseRL {
 					// Decode run-length bit
 					rlBit := t1.mqc.Decode(CTX_RL)
 					mqDecodeCount++
-
-					// DEBUG: Track LH RL decoding for first few columns
-					if debugLH && mqDecodeCount <= 5 {
-						fmt.Printf("[CP RL] col=%d, row_group=%d, rlBit=%d, canUseRL=%v\n",
-							i, k, rlBit, canUseRL)
-					}
 
 					if rlBit == 0 {
 						// All 4 remain insignificant
@@ -618,11 +570,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 					runlen |= bit1 << 1
 					bit2 := t1.mqc.Decode(CTX_UNI)
 					runlen |= bit2
-
-					// DEBUG: Track LH RL runlen
-					if debugLH && mqDecodeCount <= 5 {
-						fmt.Printf("[CP RL] rlBit=1, runlen=%d, bit1=%d, bit2=%d\n", runlen, bit1, bit2)
-					}
 
 					// Coefficients before runlen remain insignificant
 					// VISIT flags will be cleared at start of next bitplane

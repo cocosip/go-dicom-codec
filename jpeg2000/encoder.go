@@ -942,12 +942,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			pcb.PassLengths[i] = pass.ActualBytes
 		}
 
-		// DEBUG: Print original PassLengths (limit to first 10 code-blocks)
-		if e.params.NumLayers > 1 && cbIdx < 10 {
-			fmt.Printf("[ENCODER CB %d] numPasses=%d, PassLengths=%v\n", cbIdx, len(passes), pcb.PassLengths)
-			fmt.Printf("[ENCODER CB %d] completeData length: %d bytes\n", cbIdx, len(completeData))
-		}
-
 		prevByteEnd := 0
 		for layer := 0; layer < e.params.NumLayers; layer++ {
 			// Get cumulative passes for this layer
@@ -973,12 +967,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 			// Store incremental data for this layer (from prevByteEnd to currentByteEnd)
 			pcb.LayerData[layer] = completeData[prevByteEnd:currentByteEnd]
-
-			// DEBUG: Print layer data info (limit to first 10 code-blocks)
-			if e.params.NumLayers > 1 && cbIdx < 10 {
-				fmt.Printf("[ENCODER CB %d] Layer %d: passes=%d, byteRange=[%d:%d], dataLen=%d\n",
-					cbIdx, layer, totalPassesForLayer, prevByteEnd, currentByteEnd, len(pcb.LayerData[layer]))
-			}
 
 			prevByteEnd = currentByteEnd
 		}

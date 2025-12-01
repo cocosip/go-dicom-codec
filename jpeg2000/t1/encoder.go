@@ -151,17 +151,6 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 	// Flush MQ encoder
 	result := t1.mqe.Flush()
 
-	// DEBUG: Print MQ data for small code-blocks (single-layer mode)
-	if numPasses <= 15 {
-		fmt.Printf("[T1_ENC SINGLE] numPasses=%d, lossless=true, numLayers=1\n", numPasses)
-		printLen := len(result)
-		if printLen > 20 {
-			printLen = 20
-		}
-		fmt.Printf("[T1_ENC SINGLE] fullMQData len=%d, first %d bytes: %v\n",
-			len(result), printLen, result[:printLen])
-	}
-
 	return result, nil
 }
 
