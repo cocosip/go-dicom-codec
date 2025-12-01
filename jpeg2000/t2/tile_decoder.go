@@ -80,16 +80,41 @@ type CodeBlockDecoder struct {
 }
 
 type ROIInfo struct {
-	X0, Y0 int
-	X1, Y1 int
-	Shifts []int // per component shift (MaxShift)
+	Rects            []ROIRect   // legacy/global
+	RectsByComponent [][]ROIRect // per-component rectangles
+	Shifts           []int       // per component shift (MaxShift)
 }
 
-func (r *ROIInfo) intersects(x0, y0, x1, y1 int) bool {
+// ROIRect is an axis-aligned rectangle.
+type ROIRect struct {
+	X0, Y0 int
+	X1, Y1 int
+}
+
+func (r ROIRect) Intersects(x0, y0, x1, y1 int) bool {
+	return r.X0 < x1 && x0 < r.X1 && r.Y0 < y1 && y0 < r.Y1
+}
+
+func (r *ROIInfo) intersects(compIdx, x0, y0, x1, y1 int) bool {
 	if r == nil {
 		return false
 	}
-	return r.X0 < x1 && x0 < r.X1 && r.Y0 < y1 && y0 < r.Y1
+
+	if compIdx >= 0 && compIdx < len(r.RectsByComponent) && len(r.RectsByComponent[compIdx]) > 0 {
+		for _, rect := range r.RectsByComponent[compIdx] {
+			if rect.Intersects(x0, y0, x1, y1) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, rect := range r.Rects {
+		if rect.Intersects(x0, y0, x1, y1) {
+			return true
+		}
+	}
+	return false
 }
 
 // NewTileDecoder creates a new tile decoder
@@ -290,7 +315,7 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 					roishift := 0
 					if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
 						shift := td.roi.Shifts[comp.componentIdx]
-						if shift > 0 && !td.roi.intersects(x0, y0, x1, y1) {
+						if shift > 0 && !td.roi.intersects(comp.componentIdx, x0, y0, x1, y1) {
 							roishift = shift
 						}
 					}
@@ -463,7 +488,7 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				roishift := 0
 				if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
 					shift := td.roi.Shifts[comp.componentIdx]
-					if shift > 0 && !td.roi.intersects(x0, y0, x1, y1) {
+					if shift > 0 && !td.roi.intersects(comp.componentIdx, x0, y0, x1, y1) {
 						roishift = shift
 					}
 				}

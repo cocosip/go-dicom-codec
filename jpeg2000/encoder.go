@@ -46,6 +46,8 @@ type EncodeParams struct {
 
 	// Region of Interest (ROI)
 	ROI *ROIParams // Optional single-rectangle ROI with MaxShift
+	// ROIConfig supports multiple ROI entries (MVP: multiple rectangles, MaxShift only)
+	ROIConfig *ROIConfig
 }
 
 // DefaultEncodeParams returns default encoding parameters for lossless encoding
@@ -71,8 +73,10 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 
 // Encoder implements JPEG 2000 encoding
 type Encoder struct {
-	params *EncodeParams
-	data   [][]int32 // [component][pixel]
+	params    *EncodeParams
+	data      [][]int32 // [component][pixel]
+	roiShifts []int
+	roiRects  [][]roiRect // per-component rectangles
 }
 
 // NewEncoder creates a new JPEG 2000 encoder
@@ -177,6 +181,12 @@ func (e *Encoder) validateParams() error {
 		return fmt.Errorf("invalid number of layers: %d (must be > 0)", p.NumLayers)
 	}
 
+	if p.ROIConfig != nil && !p.ROIConfig.IsEmpty() {
+		if err := p.ROIConfig.Validate(p.Width, p.Height); err != nil {
+			return fmt.Errorf("invalid ROIConfig: %w", err)
+		}
+	}
+
 	if p.ROI != nil {
 		if !p.ROI.IsValid(p.Width, p.Height) {
 			return fmt.Errorf("invalid ROI parameters: %+v", *p.ROI)
@@ -236,6 +246,11 @@ func (e *Encoder) convertPixelData(pixelData []byte) error {
 
 // buildCodestream builds the JPEG 2000 codestream
 func (e *Encoder) buildCodestream() ([]byte, error) {
+	// Resolve ROI (supports legacy ROI and ROIConfig)
+	if err := e.resolveROI(); err != nil {
+		return nil, fmt.Errorf("failed to resolve ROI: %w", err)
+	}
+
 	buf := &bytes.Buffer{}
 
 	// Write SOC (Start of Codestream)
@@ -274,6 +289,43 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal slices.
+func (e *Encoder) resolveROI() error {
+	e.roiShifts = nil
+	e.roiRects = nil
+
+	// ROIConfig takes priority when present
+	if e.params.ROIConfig != nil && !e.params.ROIConfig.IsEmpty() {
+		shifts, rectsByComp, err := e.params.ROIConfig.ResolveMaxShiftRectangles(e.params.Width, e.params.Height, e.params.Components)
+		if err != nil {
+			return err
+		}
+		e.roiShifts = shifts
+		e.roiRects = rectsByComp
+		return nil
+	}
+
+	// Legacy single-rectangle ROI
+	if e.params.ROI != nil {
+		if !e.params.ROI.IsValid(e.params.Width, e.params.Height) {
+			return fmt.Errorf("invalid ROI parameters: %+v", *e.params.ROI)
+		}
+		e.roiShifts = make([]int, e.params.Components)
+		e.roiRects = make([][]roiRect, e.params.Components)
+		for c := 0; c < e.params.Components; c++ {
+			e.roiShifts[c] = e.params.ROI.Shift
+			e.roiRects[c] = []roiRect{{
+				x0: e.params.ROI.X0,
+				y0: e.params.ROI.Y0,
+				x1: e.params.ROI.X0 + e.params.ROI.Width,
+				y1: e.params.ROI.Y0 + e.params.ROI.Height,
+			}}
+		}
+	}
+
+	return nil
 }
 
 // writeSIZ writes the SIZ (Image and Tile Size) segment
@@ -433,18 +485,25 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 // writeRGN writes ROI (Region of Interest) marker segments (main header) if ROI is enabled.
 // Baseline: MaxShift, one RGN per component, Crgn fits in 1 byte.
 func (e *Encoder) writeRGN(buf *bytes.Buffer) error {
-	if e.params.ROI == nil {
+	if len(e.roiShifts) == 0 {
 		return nil
 	}
 
-	shift := byte(e.params.ROI.Shift)
 	for comp := 0; comp < e.params.Components; comp++ {
+		shift := 0
+		if comp < len(e.roiShifts) {
+			shift = e.roiShifts[comp]
+		}
+		if shift <= 0 {
+			continue
+		}
+
 		segment := &bytes.Buffer{}
 		// Lrgn = 5 (length includes itself)
 		_ = binary.Write(segment, binary.BigEndian, uint16(5))
-		segment.WriteByte(byte(comp)) // Crgn
-		segment.WriteByte(0)          // Srgn: 0 = MaxShift
-		segment.WriteByte(shift)      // SPrgn
+		segment.WriteByte(byte(comp))  // Crgn
+		segment.WriteByte(0)           // Srgn: 0 = MaxShift
+		segment.WriteByte(byte(shift)) // SPrgn
 
 		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerRGN); err != nil {
 			return err
@@ -698,7 +757,7 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 			// Process each subband
 			for _, subband := range subbands {
 				// Partition subband into code-blocks
-				codeBlocks := e.partitionIntoCodeBlocks(subband)
+				codeBlocks := e.partitionIntoCodeBlocks(subband, comp)
 
 				// Encode each code-block with T1
 				for _, cb := range codeBlocks {
@@ -841,6 +900,7 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 }
 
 type codeBlockInfo struct {
+	compIdx  int
 	data     []int32
 	width    int
 	height   int
@@ -849,7 +909,7 @@ type codeBlockInfo struct {
 }
 
 // partitionIntoCodeBlocks partitions a subband into code-blocks
-func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
+func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []codeBlockInfo {
 	cbWidth := e.params.CodeBlockWidth
 	cbHeight := e.params.CodeBlockHeight
 
@@ -891,6 +951,7 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo) []codeBlockInfo {
 			globalY0 := subband.y0 + y0
 
 			codeBlocks = append(codeBlocks, codeBlockInfo{
+				compIdx:  compIdx,
 				data:     cbData,
 				width:    actualWidth,
 				height:   actualHeight,
@@ -1047,7 +1108,12 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 // If ROI is enabled and the block does not intersect the ROI rectangle, the shift is applied.
 // Blocks intersecting ROI keep full quality (shift=0).
 func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
-	if e.params.ROI == nil || e.params.ROI.Shift <= 0 {
+	if cb.compIdx < 0 || cb.compIdx >= len(e.roiShifts) {
+		return 0
+	}
+
+	shift := e.roiShifts[cb.compIdx]
+	if shift <= 0 {
 		return 0
 	}
 
@@ -1056,10 +1122,13 @@ func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
 	x1 := cb.globalX0 + cb.width
 	y1 := cb.globalY0 + cb.height
 
-	if e.params.ROI.Intersects(x0, y0, x1, y1) {
-		return 0
+	rects := e.roiRects[cb.compIdx]
+	for _, rect := range rects {
+		if rect.intersects(x0, y0, x1, y1) {
+			return 0
+		}
 	}
-	return e.params.ROI.Shift
+	return shift
 }
 
 // calculateMaxBitplane finds the highest bit-plane that contains a '1' bit

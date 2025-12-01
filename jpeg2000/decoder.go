@@ -13,7 +13,9 @@ type Decoder struct {
 	cs *codestream.Codestream
 	// ROI
 	roi       *ROIParams
+	roiConfig *ROIConfig
 	roiShifts []int
+	roiRects  [][]roiRect // per-component rectangles
 
 	// Decoded image data
 	width      int
@@ -36,6 +38,11 @@ func (d *Decoder) SetROI(roi *ROIParams) {
 	d.roi = roi
 }
 
+// SetROIConfig sets ROI configuration (MVP: multiple rectangles, MaxShift).
+func (d *Decoder) SetROIConfig(cfg *ROIConfig) {
+	d.roiConfig = cfg
+}
+
 // Decode decodes a JPEG 2000 codestream
 func (d *Decoder) Decode(data []byte) error {
 	// Parse codestream
@@ -55,9 +62,9 @@ func (d *Decoder) Decode(data []byte) error {
 	// Capture ROI shift values from RGN segments
 	d.captureROIShifts()
 
-	// Validate ROI parameters against image size if provided
-	if d.roi != nil && !d.roi.IsValid(d.width, d.height) {
-		return fmt.Errorf("invalid ROI parameters for decoded image: %+v", *d.roi)
+	// Resolve ROI geometry (legacy ROI or ROIConfig)
+	if err := d.resolveROI(); err != nil {
+		return fmt.Errorf("invalid ROI configuration: %w", err)
 	}
 
 	// Decode all tiles
@@ -105,6 +112,45 @@ func (d *Decoder) captureROIShifts() {
 	}
 }
 
+// resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal rectangles.
+func (d *Decoder) resolveROI() error {
+	d.roiRects = nil
+
+	// ROIConfig takes priority when present
+	if d.roiConfig != nil && !d.roiConfig.IsEmpty() {
+		if err := d.roiConfig.Validate(d.width, d.height); err != nil {
+			return err
+		}
+		shifts, rects, err := d.roiConfig.ResolveMaxShiftRectangles(d.width, d.height, d.components)
+		if err != nil {
+			return err
+		}
+		d.roiShifts = shifts
+		d.roiRects = rects
+		return nil
+	}
+
+	// Legacy single-rectangle ROI
+	if d.roi != nil {
+		if !d.roi.IsValid(d.width, d.height) {
+			return fmt.Errorf("invalid ROI parameters for decoded image: %+v", *d.roi)
+		}
+		d.roiShifts = make([]int, d.components)
+		d.roiRects = make([][]roiRect, d.components)
+		for c := 0; c < d.components; c++ {
+			d.roiShifts[c] = d.roi.Shift
+			d.roiRects[c] = []roiRect{{
+				x0: d.roi.X0,
+				y0: d.roi.Y0,
+				x1: d.roi.X0 + d.roi.Width,
+				y1: d.roi.Y0 + d.roi.Height,
+			}}
+		}
+	}
+
+	return nil
+}
+
 // decodeTiles decodes all tiles in the codestream
 func (d *Decoder) decodeTiles() error {
 	if len(d.cs.Tiles) == 0 {
@@ -116,14 +162,21 @@ func (d *Decoder) decodeTiles() error {
 
 	// Build ROI info for tile decoders
 	var roiInfo *t2.ROIInfo
-	if d.roi != nil && len(d.roiShifts) == d.components {
-		roiInfo = &t2.ROIInfo{
-			X0:     d.roi.X0,
-			Y0:     d.roi.Y0,
-			X1:     d.roi.X0 + d.roi.Width,
-			Y1:     d.roi.Y0 + d.roi.Height,
-			Shifts: d.roiShifts,
+	if len(d.roiRects) > 0 && len(d.roiShifts) == d.components {
+		rectsByComp := make([][]t2.ROIRect, len(d.roiRects))
+		for comp := range d.roiRects {
+			rects := d.roiRects[comp]
+			rectsByComp[comp] = make([]t2.ROIRect, len(rects))
+			for i, r := range rects {
+				rectsByComp[comp][i] = t2.ROIRect{
+					X0: r.x0,
+					Y0: r.y0,
+					X1: r.x1,
+					Y1: r.y1,
+				}
+			}
 		}
+		roiInfo = &t2.ROIInfo{RectsByComponent: rectsByComp, Shifts: d.roiShifts}
 	}
 
 	// Decode all tiles
