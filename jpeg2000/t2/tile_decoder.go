@@ -25,6 +25,9 @@ type TileDecoder struct {
 
 	// Output
 	decodedData [][]int32 // [component][pixel]
+
+	// ROI
+	roi *ROIInfo
 }
 
 // ComponentDecoder decodes a single component within a tile
@@ -76,18 +79,33 @@ type CodeBlockDecoder struct {
 	coeffs    []int32 // Decoded coefficients
 }
 
+type ROIInfo struct {
+	X0, Y0 int
+	X1, Y1 int
+	Shifts []int // per component shift (MaxShift)
+}
+
+func (r *ROIInfo) intersects(x0, y0, x1, y1 int) bool {
+	if r == nil {
+		return false
+	}
+	return r.X0 < x1 && x0 < r.X1 && r.Y0 < y1 && y0 < r.Y1
+}
+
 // NewTileDecoder creates a new tile decoder
 func NewTileDecoder(
 	tile *codestream.Tile,
 	siz *codestream.SIZSegment,
 	cod *codestream.CODSegment,
 	qcd *codestream.QCDSegment,
+	roi *ROIInfo,
 ) *TileDecoder {
 	td := &TileDecoder{
 		tile: tile,
 		siz:  siz,
 		cod:  cod,
 		qcd:  qcd,
+		roi:  roi,
 	}
 
 	return td
@@ -269,6 +287,14 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 				// Decode the code-block
 				if hasData && len(cbData) > 0 {
+					roishift := 0
+					if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
+						shift := td.roi.Shifts[comp.componentIdx]
+						if shift > 0 && !td.roi.intersects(x0, y0, x1, y1) {
+							roishift = shift
+						}
+					}
+
 					// Check if TERMALL mode is enabled
 					useTERMALL := cbUseTERMALLMap[cbIdx]
 					passLengths, hasPassLengths := cbPassLengthsMap[cbIdx]
@@ -276,10 +302,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 					var err error
 					if useTERMALL && hasPassLengths && len(passLengths) > 0 {
 						// TERMALL mode: use DecodeLayered with per-pass lengths
-						err = cbd.t1Decoder.DecodeLayered(cbData, passLengths, maxBitplane, 0)
+						err = cbd.t1Decoder.DecodeLayered(cbData, passLengths, maxBitplane, roishift)
 					} else {
 						// Normal mode: use DecodeWithBitplane
-						err = cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+						err = cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, roishift)
 					}
 
 					if err != nil {
@@ -434,8 +460,16 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 			// Decode the code-block
 			if hasData && len(cbData) > 0 {
+				roishift := 0
+				if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
+					shift := td.roi.Shifts[comp.componentIdx]
+					if shift > 0 && !td.roi.intersects(x0, y0, x1, y1) {
+						roishift = shift
+					}
+				}
+
 				// Use DecodeWithBitplane for accurate reconstruction
-				err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
+				err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, roishift)
 				if err != nil {
 					// If decode fails, use zeros
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)

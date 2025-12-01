@@ -112,6 +112,13 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			}
 			cs.QCD = qcd
 
+		case MarkerRGN:
+			rgn, err := p.parseRGN()
+			if err != nil {
+				return fmt.Errorf("failed to parse RGN: %w", err)
+			}
+			cs.RGN = append(cs.RGN, *rgn)
+
 		case MarkerCOM:
 			com, err := p.parseCOM()
 			if err != nil {
@@ -195,6 +202,12 @@ func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 			}
 			tile.QCD = qcd
 
+		case MarkerRGN:
+			// Parse tile-part RGN and ignore (MVP uses main-header ROI only)
+			if _, err := p.parseRGN(); err != nil {
+				return nil, err
+			}
+
 		default:
 			// Skip unknown tile-part header segments
 			if err := p.skipSegment(); err != nil {
@@ -208,6 +221,45 @@ func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 	tile.Data = p.readTileData()
 
 	return tile, nil
+}
+
+// parseRGN parses the RGN marker segment (ROI)
+// Baseline assumption: Csiz <= 256, so Crgn fits in 1 byte.
+func (p *Parser) parseRGN() (*RGNSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	if length < 5 {
+		return nil, fmt.Errorf("invalid RGN length: %d", length)
+	}
+
+	crgn, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	srgn, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	sprgn, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+
+	// Skip remaining bytes if any
+	remain := int(length) - 5
+	if remain > 0 {
+		if _, err := p.read(make([]byte, remain)); err != nil {
+			return nil, err
+		}
+	}
+
+	return &RGNSegment{
+		Crgn:  uint16(crgn),
+		Srgn:  srgn,
+		SPrgn: sprgn,
+	}, nil
 }
 
 // parseSIZ parses the SIZ marker segment

@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom/pkg/dicom/endian"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
+	"github.com/cocosip/go-dicom/pkg/dicom/uid"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -20,11 +22,16 @@ type Codec struct {
 // NewCodec creates a new JPEG 2000 Lossy codec
 // quality: 1-100, where 100 is near-lossless (default: 80)
 func NewCodec(quality int) *Codec {
+	return NewCodecWithTransferSyntax(transfer.JPEG2000, quality)
+}
+
+// NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
+func NewCodecWithTransferSyntax(ts *transfer.TransferSyntax, quality int) *Codec {
 	if quality < 1 || quality > 100 {
 		quality = 80 // default
 	}
 	return &Codec{
-		transferSyntax: transfer.JPEG2000, // Lossy or Lossless
+		transferSyntax: ts, // Lossy or Lossless
 		quality:        quality,
 	}
 }
@@ -43,6 +50,10 @@ func (c *Codec) TransferSyntax() *transfer.TransferSyntax {
 func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
 	if src == nil || dst == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
+	}
+
+	if isHTJ2K(c.transferSyntax) {
+		return fmt.Errorf("HTJ2K lossy encode not implemented for transfer syntax %s", c.transferSyntax.UID().UID())
 	}
 
 	// Validate input data
@@ -125,6 +136,10 @@ func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
+	if isHTJ2K(c.transferSyntax) {
+		return fmt.Errorf("HTJ2K lossy decode not implemented for transfer syntax %s", c.transferSyntax.UID().UID())
+	}
+
 	// Validate input data
 	if len(src.Data) == 0 {
 		return fmt.Errorf("source pixel data is empty")
@@ -162,6 +177,44 @@ func RegisterJPEG2000LossyCodec() {
 	registry.RegisterCodec(transfer.JPEG2000, j2kCodec)
 }
 
+// RegisterJPEG2000MultiComponentCodec registers JPEG 2000 Part 2 multi-component codec.
+func RegisterJPEG2000MultiComponentCodec() {
+	registry := codec.GetGlobalRegistry()
+	ts := transfer.NewBuilder(uid.JPEG2000MC).
+		SetExplicitVR(true).
+		SetEncapsulated(true).
+		SetLossy(true, "ISO_15444_2").
+		SetEndian(endian.Little).
+		Build()
+	j2kCodec := NewCodecWithTransferSyntax(ts, 80)
+	registry.RegisterCodec(ts, j2kCodec)
+}
+
+// RegisterHTJ2KCodec registers HTJ2K codec placeholder.
+func RegisterHTJ2KCodec() {
+	registry := codec.GetGlobalRegistry()
+	ts := transfer.NewBuilder(uid.HTJ2K).
+		SetExplicitVR(true).
+		SetEncapsulated(true).
+		SetLossy(true, "ISO_15444_15").
+		SetEndian(endian.Little).
+		Build()
+	j2kCodec := NewCodecWithTransferSyntax(ts, 80)
+	registry.RegisterCodec(ts, j2kCodec)
+}
+
 func init() {
 	RegisterJPEG2000LossyCodec()
+	RegisterJPEG2000MultiComponentCodec()
+	RegisterHTJ2KCodec()
+}
+
+func isHTJ2K(ts *transfer.TransferSyntax) bool {
+	if ts == nil {
+		return false
+	}
+	u := ts.UID().UID()
+	return u == uid.HTJ2KLossless.UID() ||
+		u == uid.HTJ2KLosslessRPCL.UID() ||
+		u == uid.HTJ2K.UID()
 }

@@ -11,6 +11,9 @@ import (
 type Decoder struct {
 	// Codestream
 	cs *codestream.Codestream
+	// ROI
+	roi       *ROIParams
+	roiShifts []int
 
 	// Decoded image data
 	width      int
@@ -28,6 +31,11 @@ func NewDecoder() *Decoder {
 	return &Decoder{}
 }
 
+// SetROI sets the ROI rectangle for decoding (required if ROI is used in the codestream).
+func (d *Decoder) SetROI(roi *ROIParams) {
+	d.roi = roi
+}
+
 // Decode decodes a JPEG 2000 codestream
 func (d *Decoder) Decode(data []byte) error {
 	// Parse codestream
@@ -42,6 +50,14 @@ func (d *Decoder) Decode(data []byte) error {
 	// Extract image parameters
 	if err := d.extractImageParameters(); err != nil {
 		return fmt.Errorf("failed to extract image parameters: %w", err)
+	}
+
+	// Capture ROI shift values from RGN segments
+	d.captureROIShifts()
+
+	// Validate ROI parameters against image size if provided
+	if d.roi != nil && !d.roi.IsValid(d.width, d.height) {
+		return fmt.Errorf("invalid ROI parameters for decoded image: %+v", *d.roi)
 	}
 
 	// Decode all tiles
@@ -75,6 +91,20 @@ func (d *Decoder) extractImageParameters() error {
 	return nil
 }
 
+// captureROIShifts builds per-component ROI shift table from RGN segments.
+// If no RGN is present, shifts remain zero.
+func (d *Decoder) captureROIShifts() {
+	if d.cs == nil || d.cs.SIZ == nil {
+		return
+	}
+	d.roiShifts = make([]int, d.components)
+	for _, rgn := range d.cs.RGN {
+		if int(rgn.Crgn) < len(d.roiShifts) && rgn.Srgn == 0 {
+			d.roiShifts[int(rgn.Crgn)] = int(rgn.SPrgn)
+		}
+	}
+}
+
 // decodeTiles decodes all tiles in the codestream
 func (d *Decoder) decodeTiles() error {
 	if len(d.cs.Tiles) == 0 {
@@ -84,10 +114,22 @@ func (d *Decoder) decodeTiles() error {
 	// Create tile assembler
 	assembler := NewTileAssembler(d.cs.SIZ)
 
+	// Build ROI info for tile decoders
+	var roiInfo *t2.ROIInfo
+	if d.roi != nil && len(d.roiShifts) == d.components {
+		roiInfo = &t2.ROIInfo{
+			X0:     d.roi.X0,
+			Y0:     d.roi.Y0,
+			X1:     d.roi.X0 + d.roi.Width,
+			Y1:     d.roi.Y0 + d.roi.Height,
+			Shifts: d.roiShifts,
+		}
+	}
+
 	// Decode all tiles
 	for tileIdx, tile := range d.cs.Tiles {
 		// Create tile decoder
-		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD)
+		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo)
 
 		// Decode tile
 		tileData, err := tileDecoder.Decode()

@@ -43,6 +43,9 @@ type EncodeParams struct {
 
 	// Layer parameters
 	NumLayers int // Number of quality layers (default 1)
+
+	// Region of Interest (ROI)
+	ROI *ROIParams // Optional single-rectangle ROI with MaxShift
 }
 
 // DefaultEncodeParams returns default encoding parameters for lossless encoding
@@ -62,6 +65,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		CodeBlockHeight:  64,
 		ProgressionOrder: 0, // LRCP
 		NumLayers:        1,
+		ROI:              nil,
 	}
 }
 
@@ -173,6 +177,15 @@ func (e *Encoder) validateParams() error {
 		return fmt.Errorf("invalid number of layers: %d (must be > 0)", p.NumLayers)
 	}
 
+	if p.ROI != nil {
+		if !p.ROI.IsValid(p.Width, p.Height) {
+			return fmt.Errorf("invalid ROI parameters: %+v", *p.ROI)
+		}
+		if p.ROI.Shift > 255 {
+			return fmt.Errorf("invalid ROI shift: %d (must be <=255)", p.ROI.Shift)
+		}
+	}
+
 	return nil
 }
 
@@ -243,6 +256,11 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 	// Write QCD (Quantization Default)
 	if err := e.writeQCD(buf); err != nil {
 		return nil, fmt.Errorf("failed to write QCD: %w", err)
+	}
+
+	// Write RGN (ROI) if present
+	if err := e.writeRGN(buf); err != nil {
+		return nil, fmt.Errorf("failed to write RGN: %w", err)
 	}
 
 	// Write tiles
@@ -408,6 +426,33 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerQCD))
 	_ = binary.Write(buf, binary.BigEndian, uint16(qcdData.Len()+2))
 	buf.Write(qcdData.Bytes())
+
+	return nil
+}
+
+// writeRGN writes ROI (Region of Interest) marker segments (main header) if ROI is enabled.
+// Baseline: MaxShift, one RGN per component, Crgn fits in 1 byte.
+func (e *Encoder) writeRGN(buf *bytes.Buffer) error {
+	if e.params.ROI == nil {
+		return nil
+	}
+
+	shift := byte(e.params.ROI.Shift)
+	for comp := 0; comp < e.params.Components; comp++ {
+		segment := &bytes.Buffer{}
+		// Lrgn = 5 (length includes itself)
+		_ = binary.Write(segment, binary.BigEndian, uint16(5))
+		segment.WriteByte(byte(comp)) // Crgn
+		segment.WriteByte(0)          // Srgn: 0 = MaxShift
+		segment.WriteByte(shift)      // SPrgn
+
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerRGN); err != nil {
+			return err
+		}
+		if _, err := buf.Write(segment.Bytes()); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
@@ -895,6 +940,9 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	// Create T1 encoder
 	t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
 
+	// Compute ROI shift: background blocks get MaxShift, ROI blocks keep full bitplanes
+	roishift := e.roiShiftForCodeBlock(cb)
+
 	// Create PrecinctCodeBlock structure
 	pcb := &t2.PrecinctCodeBlock{
 		Index:          0, // Will be set by caller if needed
@@ -921,7 +969,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		// Multi-layer encoding: use layered encoder with layer boundaries
 		// Pass actual lossless parameter to control context resets
 		// TERMALL mode (bit 0x04 in COD) controls pass termination separately
-		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, 0, layerBoundaries, e.params.Lossless)
+		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, e.params.Lossless)
 		if err != nil || len(passes) == 0 {
 			// Fallback to single layer on error
 			encodedData := []byte{0x00}
@@ -979,7 +1027,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 	} else {
 		// Single layer: use original encoder
-		encodedData, err := t1Enc.Encode(cbData, numPasses, 0)
+		encodedData, err := t1Enc.Encode(cbData, numPasses, roishift)
 		if err != nil {
 			// Return minimal code-block on error
 			encodedData = []byte{0x00}
@@ -993,6 +1041,25 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	}
 
 	return pcb
+}
+
+// roiShiftForCodeBlock returns the MaxShift value for the given code-block.
+// If ROI is enabled and the block does not intersect the ROI rectangle, the shift is applied.
+// Blocks intersecting ROI keep full quality (shift=0).
+func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
+	if e.params.ROI == nil || e.params.ROI.Shift <= 0 {
+		return 0
+	}
+
+	x0 := cb.globalX0
+	y0 := cb.globalY0
+	x1 := cb.globalX0 + cb.width
+	y1 := cb.globalY0 + cb.height
+
+	if e.params.ROI.Intersects(x0, y0, x1, y1) {
+		return 0
+	}
+	return e.params.ROI.Shift
 }
 
 // calculateMaxBitplane finds the highest bit-plane that contains a '1' bit

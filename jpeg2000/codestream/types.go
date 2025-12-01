@@ -3,9 +3,10 @@ package codestream
 // Codestream represents a complete JPEG 2000 codestream
 type Codestream struct {
 	// Main header
-	SIZ *SIZSegment // Image and tile size
-	COD *CODSegment // Coding style default
-	QCD *QCDSegment // Quantization default
+	SIZ *SIZSegment  // Image and tile size
+	COD *CODSegment  // Coding style default
+	QCD *QCDSegment  // Quantization default
+	RGN []RGNSegment // Region of Interest (main header only)
 	COM []COMSegment // Comments (optional)
 
 	// Tiles
@@ -60,8 +61,8 @@ type CODSegment struct {
 	//   2: EPH marker segments
 
 	// SGcod - General coding style parameters
-	ProgressionOrder      uint8  // 0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL
-	NumberOfLayers        uint16 // Number of layers
+	ProgressionOrder           uint8  // 0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL
+	NumberOfLayers             uint16 // Number of layers
 	MultipleComponentTransform uint8  // 0=none, 1=RCT or ICT
 
 	// SPcod - Coding style parameters
@@ -115,13 +116,21 @@ type COMSegment struct {
 	Data []byte // Comment data
 }
 
+// RGNSegment - Region of Interest marker segment (MaxShift)
+// ISO/IEC 15444-1 A.6.3
+type RGNSegment struct {
+	Crgn  uint16 // Component index
+	Srgn  uint8  // ROI style (0 = MaxShift)
+	SPrgn uint8  // ROI shift value (number of most significant bit-planes to skip)
+}
+
 // Tile represents a single tile in the codestream
 type Tile struct {
-	Index    int  // Tile index
-	SOT      *SOTSegment // Start of tile
-	COD      *CODSegment // Coding style (optional, overrides default)
-	QCD      *QCDSegment // Quantization (optional, overrides default)
-	Data     []byte      // Compressed tile data (after SOD marker)
+	Index int         // Tile index
+	SOT   *SOTSegment // Start of tile
+	COD   *CODSegment // Coding style (optional, overrides default)
+	QCD   *QCDSegment // Quantization (optional, overrides default)
+	Data  []byte      // Compressed tile data (after SOD marker)
 
 	// Decoded components (filled during decode)
 	Components []*TileComponent
@@ -170,9 +179,9 @@ type SubbandType int
 
 const (
 	SubbandLL SubbandType = iota // Low-Low (approximation)
-	SubbandHL                     // High-Low (horizontal detail)
-	SubbandLH                     // Low-High (vertical detail)
-	SubbandHH                     // High-High (diagonal detail)
+	SubbandHL                    // High-Low (horizontal detail)
+	SubbandLH                    // Low-High (vertical detail)
+	SubbandHH                    // High-High (diagonal detail)
 )
 
 // String returns the subband type name
@@ -193,10 +202,10 @@ func (s SubbandType) String() string {
 
 // CodeBlock represents one code-block
 type CodeBlock struct {
-	X0, Y0       int     // Top-left position in subband
-	X1, Y1       int     // Bottom-right position in subband
-	Data         []byte  // Compressed data
-	Passes       int     // Number of coding passes
+	X0, Y0 int    // Top-left position in subband
+	X1, Y1 int    // Bottom-right position in subband
+	Data   []byte // Compressed data
+	Passes int    // Number of coding passes
 
 	// Decoded coefficients (filled during decode)
 	Coefficients []int32
