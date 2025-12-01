@@ -102,15 +102,17 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 		}
 
 		rect := roi.Rect
-		if rect == nil {
-			return fmt.Errorf("ROI[%d]: rectangle required for shape rectangle", i)
+		hasPolygon := len(roi.Polygon) >= 3
+		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+		if rect == nil && !hasPolygon && !hasMask {
+			return fmt.Errorf("ROI[%d]: rectangle or polygon/mask required for shape rectangle", i)
 		}
 
 		shift := roi.Shift
 		if roi.Scale > 0 {
 			shift = roi.Scale
 		}
-		if shift <= 0 {
+		if shift <= 0 && rect != nil {
 			shift = rect.Shift
 		}
 		if shift <= 0 {
@@ -118,7 +120,14 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 		}
 
 		// Fill shift for validation and reuse.
-		if shift > 0 {
+		if rect == nil && hasPolygon {
+			b := boundingRect(roi.Polygon)
+			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+		} else if rect == nil && hasMask {
+			rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
+		}
+
+		if rect != nil && shift > 0 {
 			rect = &ROIParams{
 				X0:     rect.X0,
 				Y0:     rect.Y0,
@@ -128,7 +137,7 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 			}
 		}
 
-		if rect == nil || !rect.IsValid(imgWidth, imgHeight) {
+		if rect != nil && !rect.IsValid(imgWidth, imgHeight) {
 			return fmt.Errorf("ROI[%d]: invalid rectangle %+v", i, roi.Rect)
 		}
 

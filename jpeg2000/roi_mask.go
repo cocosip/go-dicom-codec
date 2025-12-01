@@ -1,10 +1,15 @@
 package jpeg2000
 
+import "fmt"
+
 // roiMask represents a per-component ROI mask (full-resolution boolean map).
 type roiMask struct {
 	width  int
 	height int
 	data   []bool
+
+	// cache for downsampled blocks: key = "x0,y0,w,h,step"
+	cache map[string][][]bool
 }
 
 func newROIMask(width, height int) *roiMask {
@@ -12,6 +17,7 @@ func newROIMask(width, height int) *roiMask {
 		width:  width,
 		height: height,
 		data:   make([]bool, width*height),
+		cache:  make(map[string][][]bool),
 	}
 }
 
@@ -71,6 +77,11 @@ func (m *roiMask) downsample(x0, y0, x1, y1, step int) [][]bool {
 		y1 = m.height
 	}
 
+	key := fmt.Sprintf("%d,%d,%d,%d,%d", x0, y0, x1, y1, step)
+	if cached, ok := m.cache[key]; ok {
+		return cached
+	}
+
 	outW := (x1 - x0 + step - 1) / step
 	outH := (y1 - y0 + step - 1) / step
 	out := make([][]bool, outH)
@@ -93,6 +104,7 @@ func (m *roiMask) downsample(x0, y0, x1, y1, step int) [][]bool {
 			out[j][i] = val
 		}
 	}
+	m.cache[key] = out
 	return out
 }
 
