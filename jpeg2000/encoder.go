@@ -640,6 +640,9 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 	// Process each component
 	for comp := 0; comp < e.params.Components; comp++ {
+		// Global code-block index across all resolutions
+		globalCBIdx := 0
+
 		// Process each resolution level
 		// Resolution 0 = LL subband (lowest frequency)
 		// Resolution 1+ = HL, LH, HH subbands
@@ -648,14 +651,16 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 			subbands := e.getSubbandsForResolution(tileData[comp], width, height, res)
 
 			// Process each subband
-			globalCBIdx := 0
 			for _, subband := range subbands {
 				// Partition subband into code-blocks
 				codeBlocks := e.partitionIntoCodeBlocks(subband)
 
 				// Encode each code-block with T1
-				for cbIdx, cb := range codeBlocks {
-					encodedCB := e.encodeCodeBlock(cb, cbIdx)
+				for _, cb := range codeBlocks {
+					encodedCB := e.encodeCodeBlock(cb, globalCBIdx)
+
+					// Set the code-block index correctly
+					encodedCB.Index = globalCBIdx
 
 					// Add to T2 packet encoder
 					packetEnc.AddCodeBlock(comp, res, 0, encodedCB) // precinctIdx=0 (single precinct)
@@ -937,6 +942,12 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			pcb.PassLengths[i] = pass.ActualBytes
 		}
 
+		// DEBUG: Print original PassLengths (limit to first 10 code-blocks)
+		if e.params.NumLayers > 1 && cbIdx < 10 {
+			fmt.Printf("[ENCODER CB %d] numPasses=%d, PassLengths=%v\n", cbIdx, len(passes), pcb.PassLengths)
+			fmt.Printf("[ENCODER CB %d] completeData length: %d bytes\n", cbIdx, len(completeData))
+		}
+
 		prevByteEnd := 0
 		for layer := 0; layer < e.params.NumLayers; layer++ {
 			// Get cumulative passes for this layer
@@ -962,6 +973,13 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 			// Store incremental data for this layer (from prevByteEnd to currentByteEnd)
 			pcb.LayerData[layer] = completeData[prevByteEnd:currentByteEnd]
+
+			// DEBUG: Print layer data info (limit to first 10 code-blocks)
+			if e.params.NumLayers > 1 && cbIdx < 10 {
+				fmt.Printf("[ENCODER CB %d] Layer %d: passes=%d, byteRange=[%d:%d], dataLen=%d\n",
+					cbIdx, layer, totalPassesForLayer, prevByteEnd, currentByteEnd, len(pcb.LayerData[layer]))
+			}
+
 			prevByteEnd = currentByteEnd
 		}
 

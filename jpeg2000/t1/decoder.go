@@ -87,6 +87,7 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 		return fmt.Errorf("no pass lengths provided")
 	}
 
+
 	// 对于不启用 TERMALL 的情况，直接复用标准路径以保持行为一致
 	if !useTERMALL {
 		return t1.DecodeWithOptions(data, len(passLengths), maxBitplane, roishift, false)

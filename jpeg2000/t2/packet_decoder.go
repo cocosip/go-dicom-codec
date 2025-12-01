@@ -188,6 +188,7 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 			if useTERMALL {
 				// Read PassLengths metadata WITH unstuffing
 				// Metadata is (1 + numPasses*2) bytes, but may contain stuffed bytes
+				metadataStartOffset := pd.offset
 
 				// Read number of passes (1 byte) with unstuffing
 				numPassesByte, bytesRead := readByteWithUnstuff(pd.data, pd.offset)
@@ -208,14 +209,31 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				}
 				cbIncl.UseTERMALL = true
 
+				// Calculate how many stuffed bytes we actually consumed
+				stuffedMetadataBytes := pd.offset - metadataStartOffset
+				unstuffedMetadataBytes := 1 + numPasses*2
+
+				// DEBUG: Print metadata parsing info
+				if i == 0 && layer == 0 {
+					fmt.Printf("[PACKET_DEC] CB %d Layer %d: numPasses=%d\n", i, layer, numPasses)
+					fmt.Printf("[PACKET_DEC] CB %d Layer %d: PassLengths=%v\n", i, layer, cbIncl.PassLengths)
+					fmt.Printf("[PACKET_DEC] CB %d Layer %d: stuffedMetadataBytes=%d, unstuffedMetadataBytes=%d\n",
+						i, layer, stuffedMetadataBytes, unstuffedMetadataBytes)
+					fmt.Printf("[PACKET_DEC] CB %d Layer %d: original DataLength=%d\n", i, layer, cbIncl.DataLength)
+				}
+
 				// Adjust cbIncl.DataLength: header contains TOTAL (unstuffed metadata + data)
 				// We've consumed the stuffed metadata bytes (tracked by pd.offset - metadataStart),
 				// but DataLength refers to unstuffed size, so subtract unstuffed metadata size
-				unstuffedMetadataBytes := 1 + numPasses*2
 				if cbIncl.DataLength >= unstuffedMetadataBytes {
 					cbIncl.DataLength -= unstuffedMetadataBytes
 				} else {
 					cbIncl.DataLength = 0
+				}
+
+				// DEBUG: Print adjusted DataLength
+				if i == 0 && layer == 0 {
+					fmt.Printf("[PACKET_DEC] CB %d Layer %d: adjusted DataLength=%d\n", i, layer, cbIncl.DataLength)
 				}
 			}
 

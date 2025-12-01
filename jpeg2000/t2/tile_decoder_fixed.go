@@ -42,7 +42,11 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 					var cbData []byte
 					if cbIncl.DataLength > 0 {
 						if dataOffset+cbIncl.DataLength <= len(packet.Body) {
-							cbData = packet.Body[dataOffset : dataOffset+cbIncl.DataLength]
+							// CRITICAL FIX: Create a copy instead of slicing to avoid shared backing array
+							// When slicing packet.Body, cbData shares the same backing array
+							// This causes data corruption when packet.Body is reused across packets
+							cbData = make([]byte, cbIncl.DataLength)
+							copy(cbData, packet.Body[dataOffset:dataOffset+cbIncl.DataLength])
 						} else {
 							// Data length exceeds packet body - skip
 							continue
@@ -54,6 +58,7 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 
 					// Create unique key: "resolution:cbIdx"
 					key := fmt.Sprintf("%d:%d", packet.ResolutionLevel, cbIdx)
+
 					existing, ok := cbDataMap[key]
 
 					// Save base offset BEFORE appending data
@@ -278,7 +283,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						// useTERMALL flag determines whether passes are terminated independently
 						// lossless flag (from COD transformation) determines whether contexts are reset
 						lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
-						// Multi-layer mode logs removed
 						err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, lossless)
 					} else {
 						// Single-layer mode: use DecodeWithBitplane

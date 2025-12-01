@@ -412,6 +412,13 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 				}
 				cbIncl.PassLengths = layerPassLengths
 
+				// DEBUG: Print PassLengths conversion (limit to first 10 code-blocks)
+				if cb.Index < 10 {
+					fmt.Printf("[PACKET_ENC CB %d] Layer %d: prevPasses=%d, totalPasses=%d, baseOffset=%d\n",
+						cb.Index, layer, prevPasses, totalPasses, baseOffset)
+					fmt.Printf("[PACKET_ENC CB %d] Layer %d: relative PassLengths=%v\n", cb.Index, layer, layerPassLengths)
+				}
+
 			}
 		} else {
 			// Single layer: use all pass lengths as-is
