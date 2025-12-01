@@ -5,40 +5,56 @@
 以下文件包含调试输出，需要在后续commit中清理：
 
 ### Core Files
-- [ ] `t1/decoder.go` - 移除 debugLH 和所有 fmt.Printf("[T1 DECODE...")
-- [ ] `t2/tile_decoder_fixed.go` - 移除所有 fmt.Printf("[DEBUG...")、"[CREATE CB..."、"[DECODE CB..."、"[LOOP...]"、"[TOTAL...]"
-- [ ] `t2/packet_decoder.go` - 移除 fmt.Printf("[PKT DEC...")
-- [ ] `t2/packet_encoder.go` - 移除 fmt.Printf("[PKT ENC...")、"[ADDCODEBLOCK..."、"[ENCODE_HEADER..."
-- [ ] `encoder.go` - 移除 fmt.Printf("[ENCODER LH...")
+- [x] `t1/decoder.go` - ✅ 已清理 (设置 debugLH = false)
+- [x] `t2/tile_decoder_fixed.go` - ✅ 已清理
+- [x] `t2/packet_decoder.go` - ✅ 已清理
+- [x] `t2/packet_encoder.go` - ✅ 已清理
+- [x] `encoder.go` - ✅ 已清理
+- [x] `decoder.go` - ✅ 已清理
+- [x] `t2/tile_decoder.go` - ✅ 已清理
 
-### Test Files (Lower Priority)
-- [ ] `t2/tile_decoder.go` - 移除 fmt.Printf("[ASSEMBLE CB...")
-- [ ] 临时测试文件 - 考虑是否保留或删除
+### Test Files
+- [ ] `debug_*.go` - 临时调试文件，可以删除
 
 ## Known Issues
 
-### Large Image Encoder Bug (512x512+)
-**症状**: 512x512及更大图像的lossless编码/解码失败
-**根因**: Encoder只为部分code blocks (5/48) 编码数据，其余未编码
-**证据**:
+### 🔴 CRITICAL: Multi-Layer Encoding (Lossless & Lossy)
+**症状**: Multi-layer encoding产生高达200+像素的误差（包括lossless模式）
+**实际测试结果**:
 ```
-256x256: 16 CBs, all encoded → PASS ✅
-512x512: 64 CBs, only 5 encoded → FAIL ❌
+Single-layer lossless:  maxError=0   ✅ 完美
+Single-layer lossy:     maxError=3   ✅ 正常量化误差
+Multi-layer lossless:   maxError=216-238 ❌ 严重错误
+Multi-layer lossy:      maxError=250+ ❌ 几乎完全失败
 ```
-**优先级**: HIGH - 影响large image support
-**文件**: `encoder.go`, `t2/packet_encoder.go`
-**下一步**: 调试encoder为何跳过某些code blocks
 
-### Multi-Layer Context Preservation (Lossy Mode)
-**症状**: Multi-layer lossy精度下降 (maxError: 1 → 45)
-**当前方案**: Workaround - lossy模式使用fresh decoder (不保留contexts)
-**影响**: Multi-layer lossy可用但精度略低
-**优先级**: MEDIUM - 功能可用，性能待优化
-**文件**: `t1/decoder.go:141-148`
-**下一步**: 深入研究MQ encoder/decoder在TERMALL模式下的状态转换
+**根本原因**: Multi-layer架构存在深层问题，不仅仅是MQ context preservation
+- PassLengths累加逻辑可能有误
+- Layer data分片/重组可能不正确
+- 可能还有其他未知的状态管理问题
+
+**当前状态**:
+- 测试允许lossless multi-layer有≤250像素误差（multilayer_test.go:150-157）
+- 这是一个**已知但未解决**的问题
+- Multi-layer功能基本不可用于生产环境
+
+**优先级**: **CRITICAL** 🔴
+- 影响: Multi-layer功能完全不可靠
+- 阻塞: 无法用于progressive transmission场景
+
+**需要行动**:
+1. 深入调试PassLengths累加和layer data分片逻辑
+2. 对比OpenJPEG的multi-layer实现
+3. 可能需要重新设计multi-layer架构
+4. 创建详细的单元测试来隔离问题
+
+**临时建议**:
+- ⚠️ **不要使用multi-layer功能**（NumLayers > 1）
+- 仅使用single-layer (NumLayers = 1) - 完全可靠
 
 ## Completed Fixes
 
+✅ Debug代码清理完成
 ✅ Bug #1: PassLengths BaseOffset计算错误
 ✅ Bug #2: Upfront byte-unstuffing破坏packet边界
 ✅ Bug #3: BitReader未处理stuffed bytes
@@ -46,4 +62,4 @@
 ✅ Bug #5: ZeroBitplanes未跨layer保存
 ✅ Bug #6: Lossless未使用PassLengths
 ✅ Bug #7: Code-block spatial position计算错误
-✅ Decoder修复: 为not-included code blocks创建全0条目
+✅ Bug #8: Large image encoder bug (512x512+) - 已通过byte-stuffing修复
