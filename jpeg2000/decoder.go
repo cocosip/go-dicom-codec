@@ -254,9 +254,4 @@ func (d *Decoder) applyInverseDCLevelShift() {
 			d.data[c][i] += shift
 		}
 	}
-
-	// DEBUG: Log first pixel after shift
-	if len(d.data) > 0 && len(d.data[0]) > 0 {
-		fmt.Printf("after=%d\n", d.data[0][0])
-	}
 }

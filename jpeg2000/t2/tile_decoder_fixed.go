@@ -33,17 +33,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				continue
 			}
 
-			// DEBUG
-			if comp.width >= 512 && packet.ResolutionLevel == 1 {
-				includedCount := 0
-				for _, cb := range packet.CodeBlockIncls {
-					if cb.Included {
-						includedCount++
-					}
-				}
-				fmt.Printf("[TILE DEC] Processing packet res=%d, len(CodeBlockIncls)=%d, includedCount=%d\n",
-					packet.ResolutionLevel, len(packet.CodeBlockIncls), includedCount)
-			}
 
 			// Extract code-block contributions from this packet
 			dataOffset := 0
@@ -69,16 +58,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 
 					// Save base offset BEFORE appending data
 					baseOffset := len(existing.data)
-
-					// DEBUG: Track CB 1 (LH subband at pos (0,8))
-					if cbIdx == 1 && packet.ResolutionLevel == 1 {
-						fmt.Printf("[DEBUG CB1 LH] Layer %d: cbData len=%d, baseOffset=%d, cbIncl.Included=%v, cbIncl.DataLength=%d\n",
-							packet.LayerIndex, len(cbData), baseOffset, cbIncl.Included, cbIncl.DataLength)
-						if len(cbData) > 0 {
-							fmt.Printf("[DEBUG CB1 LH] Layer %d: cbData first 4 bytes=%v\n",
-								packet.LayerIndex, cbData[:min(4, len(cbData))])
-						}
-					}
 
 					if ok {
 						// Append to existing data
@@ -186,23 +165,14 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 		// Create code-blocks with correct spatial positions
 		codeBlocks := make([]*CodeBlockDecoder, 0)
 
-		// DEBUG: Print cbDataMap size
-		if comp.width >= 256 {
-			fmt.Printf("[DEBUG] cbDataMap size: %d entries for %dx%d image, numLevels=%d\n", len(cbDataMap), comp.width, comp.height, comp.numLevels)
-		}
-
 		// Create code-blocks for ALL possible positions (including not-included ones)
 		// Iterate through all resolutions and subbands
-		totalCBsCreated := 0
 		for res := 0; res <= comp.numLevels; res++ {
 			layouts := resolutionLayouts[res]
 
 			// For each subband in this resolution
 			for subbandIdx, layout := range layouts {
 				numCBsInSubband := layout.numCBX * layout.numCBY
-				if comp.width >= 512 && res == 1 {
-					fmt.Printf("[LOOP] res=%d, subbandIdx=%d, numCBsInSubband=%d\n", res, subbandIdx, numCBsInSubband)
-				}
 
 				// For each code-block in this subband
 				for localCBIdx := 0; localCBIdx < numCBsInSubband; localCBIdx++ {
@@ -262,12 +232,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						continue
 					}
 
-				// DEBUG: Track LH code block creation
-				if x0 == 0 && y0 == 8 {
-					fmt.Printf("[CREATE CB LH] res=%d, cbIdx=%d, pos=(%d,%d), dataLen=%d, totalPasses=%d\n",
-						res, cbIdx, x0, y0, len(cbInfoData.data), cbInfoData.totalPasses)
-				}
-
 				// Create code-block decoder
 				// Use accumulated totalPasses from all layers, or calculate from maxBitplane if not available
 				numPasses := cbInfoData.totalPasses
@@ -307,12 +271,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 					shouldDecode = false
 				}
 
-				// DEBUG: Track LH decoding
-				if x0 == 0 && y0 == 8 {
-					fmt.Printf("[DECODE CB LH] shouldDecode=%v, hasPassLengths=%v, maxBitplane=%d\n",
-						shouldDecode, cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0, cbInfoData.maxBitplane)
-				}
-
 				if shouldDecode {
 					var err error
 					if cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0 {
@@ -328,17 +286,6 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						// Error logging trimmed; caller propagates error below
 					}
 
-					// DEBUG: Track LH decoding result
-					if x0 == 0 && y0 == 8 {
-						if err != nil {
-							fmt.Printf("[DECODE CB LH] DecodeLayeredWithMode error: %v\n", err)
-						} else {
-							coeffs := cbd.t1Decoder.GetData()
-							fmt.Printf("[DECODE CB LH] Decoded successfully, coeffs len=%d, first 4=%v\n",
-								len(coeffs), coeffs[:min(4, len(coeffs))])
-						}
-					}
-
 					if err != nil {
 						cbd.coeffs = make([]int32, actualWidth*actualHeight)
 					} else {
@@ -347,21 +294,11 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 				} else {
 					// No data or all-zero code block - use all-zero coefficients
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)
-
-					// DEBUG: Track LH all-zero path
-					if x0 == 0 && y0 == 8 {
-						fmt.Printf("[DECODE CB LH] Using all-zero coefficients (shouldDecode=false)\n")
-					}
 				}
 
 				codeBlocks = append(codeBlocks, cbd)
-				totalCBsCreated++
 				}
 			}
-		}
-
-		if comp.width >= 512 {
-			fmt.Printf("[TOTAL] totalCBsCreated=%d\n", totalCBsCreated)
 		}
 
 		// Store code-blocks for assembly

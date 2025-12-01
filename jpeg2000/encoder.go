@@ -649,26 +649,13 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 			// Process each subband
 			globalCBIdx := 0
-			for subbandIdx, subband := range subbands {
+			for _, subband := range subbands {
 				// Partition subband into code-blocks
 				codeBlocks := e.partitionIntoCodeBlocks(subband)
 
 				// Encode each code-block with T1
 				for cbIdx, cb := range codeBlocks {
 					encodedCB := e.encodeCodeBlock(cb, cbIdx)
-
-					// DEBUG: Track LH subband (res=1, subbandIdx=1 which is LH)
-					if res == 1 && subbandIdx == 1 && cbIdx == 0 {
-						// This is LH subband at resolution 1
-						if e.params.NumLayers > 1 && encodedCB.LayerData != nil {
-							fmt.Printf("[ENCODER LH CB] res=%d, NumLayers=%d, totalDataLen=%d\n",
-								res, len(encodedCB.LayerData), len(encodedCB.Data))
-							for layer := 0; layer < len(encodedCB.LayerData); layer++ {
-								fmt.Printf("[ENCODER LH CB] Layer %d: data len=%d\n",
-									layer, len(encodedCB.LayerData[layer]))
-							}
-						}
-					}
 
 					// Add to T2 packet encoder
 					packetEnc.AddCodeBlock(comp, res, 0, encodedCB) // precinctIdx=0 (single precinct)
@@ -692,7 +679,6 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		writeWithByteStuffing(buf, packet.Header)
 		// Write packet body with byte-stuffing
 		writeWithByteStuffing(buf, packet.Body)
-
 	}
 
 	return buf.Bytes()
@@ -927,15 +913,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			layerBoundaries[layer] = layerAlloc.GetPassesForLayer(0, layer)
 		}
 
-		// DEBUG: Track LH subband layer allocation
-		if cb.globalX0 == 0 && cb.globalY0 == 8 {
-			fmt.Printf("[ENCODER LH ALLOC] numPasses=%d, numLayers=%d\n", numPasses, e.params.NumLayers)
-			for layer := 0; layer < e.params.NumLayers; layer++ {
-				fmt.Printf("[ENCODER LH ALLOC]   layer[%d]: boundary=%d passes\n",
-					layer, layerBoundaries[layer])
-			}
-		}
-
 		// Multi-layer encoding: use layered encoder with layer boundaries
 		// Pass actual lossless parameter to control context resets
 		// TERMALL mode (bit 0x04 in COD) controls pass termination separately
@@ -946,21 +923,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			pcb.Data = encodedData
 			pcb.LayerData = [][]byte{encodedData}
 			pcb.LayerPasses = []int{1}
-
-			// DEBUG: Track errors
-			if cb.globalX0 == 0 && cb.globalY0 == 8 {
-				fmt.Printf("[ENCODER LH ERROR] EncodeLayered failed: err=%v, len(passes)=%d\n", err, len(passes))
-			}
 			return pcb
-		}
-
-		// DEBUG: Track LH subband passes
-		if cb.globalX0 == 0 && cb.globalY0 == 8 {
-			fmt.Printf("[ENCODER LH PASSES] numPasses=%d, len(passes)=%d, len(completeData)=%d\n",
-				numPasses, len(passes), len(completeData))
-			for i, p := range passes {
-				fmt.Printf("[ENCODER LH PASSES]   pass[%d]: ActualBytes=%d\n", i, p.ActualBytes)
-			}
 		}
 
 		// Build layer metadata using pass Rate information
@@ -979,12 +942,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			// Get cumulative passes for this layer
 			totalPassesForLayer := layerAlloc.GetPassesForLayer(0, layer)
 			pcb.LayerPasses[layer] = totalPassesForLayer
-
-			// DEBUG: Track LH subband layer passes
-			if cb.globalX0 == 0 && cb.globalY0 == 8 {
-				fmt.Printf("[ENCODER LH LAYERPASSES] layer[%d]: totalPassesForLayer=%d\n",
-					layer, totalPassesForLayer)
-			}
 
 			// Use ActualBytes from passes to determine byte end
 			// ActualBytes is the actual position in the buffer (not including rate_extra_bytes estimate)
@@ -1005,13 +962,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 			// Store incremental data for this layer (from prevByteEnd to currentByteEnd)
 			pcb.LayerData[layer] = completeData[prevByteEnd:currentByteEnd]
-
-			// DEBUG: Track LH subband layer data
-			if cb.globalX0 == 0 && cb.globalY0 == 8 {
-				fmt.Printf("[ENCODER LH LAYERDATA] layer[%d]: prevByteEnd=%d, currentByteEnd=%d, layerDataLen=%d\n",
-					layer, prevByteEnd, currentByteEnd, len(pcb.LayerData[layer]))
-			}
-
 			prevByteEnd = currentByteEnd
 		}
 

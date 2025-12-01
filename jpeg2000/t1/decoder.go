@@ -6,6 +6,9 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
 
+// Debug flag - set to false to disable all debug output
+const debugEnabled = false
+
 // T1Decoder implements EBCOT Tier-1 decoding
 // Reference: ISO/IEC 15444-1:2019 Annex D
 type T1Decoder struct {
@@ -75,21 +78,13 @@ func (t1 *T1Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane i
 // DecodeLayeredWithMode decodes a code-block with optional TERMALL mode
 // lossless parameter controls whether to reset MQ contexts between passes
 func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error {
+	debugLH := false // Disabled debug output
+
 	if len(data) == 0 {
 		return fmt.Errorf("empty code-block data")
 	}
 	if len(passLengths) == 0 {
 		return fmt.Errorf("no pass lengths provided")
-	}
-
-	// DEBUG: Track LH subband decode
-	debugLH := len(data) == 58 && len(passLengths) == 18
-	if debugLH {
-		fmt.Printf("[T1 DECODE LH] dataLen=%d, passLengths len=%d, maxBitplane=%d, useTERMALL=%v, lossless=%v\n",
-			len(data), len(passLengths), maxBitplane, useTERMALL, lossless)
-		if len(passLengths) >= 3 {
-			fmt.Printf("[T1 DECODE LH] First 3 passLengths: %v\n", passLengths[:3])
-		}
 	}
 
 	// 对于不启用 TERMALL 的情况，直接复用标准路径以保持行为一致
@@ -126,15 +121,6 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 				return fmt.Errorf("invalid pass length for SPP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
 			}
 			passData := data[prevEnd:currentEnd]
-
-			// DEBUG: Track first SPP
-			if debugLH && passIdx == 0 {
-				fmt.Printf("[T1 DECODE LH SPP0] bitplane=%d, passIdx=%d, prevEnd=%d, currentEnd=%d, passDataLen=%d\n",
-					t1.bitplane, passIdx, prevEnd, currentEnd, len(passData))
-				if len(passData) > 0 {
-					fmt.Printf("[T1 DECODE LH SPP0] passData first bytes: %v\n", passData[:min(8, len(passData))])
-				}
-			}
 
 			// TERMALL mode: each pass is flushed independently by encoder
 			// Encoder resets C/A/ct after flush but preserves contexts in lossy mode
@@ -456,7 +442,7 @@ func (t1 *T1Decoder) GetData() []int32 {
 func (t1 *T1Decoder) decodeSigPropPass() error {
 	paddedWidth := t1.width + 2
 	sigCount := 0 // DEBUG counter
-	debugLH := t1.width == 8 && t1.height == 8 && t1.bitplane == 5 // LH subband detection
+	debugLH := false // Disabled debug output
 	decodeCount := 0
 
 	for y := 0; y < t1.height; y++ {
@@ -521,11 +507,6 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 		}
 	}
 
-	// DEBUG: Print significance count for first pass
-	if sigCount > 0 {
-		fmt.Printf("[SPP DEBUG] bitplane=%d, sigCount=%d\n", t1.bitplane, sigCount)
-	}
-
 	return nil
 }
 
@@ -571,7 +552,7 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 func (t1 *T1Decoder) decodeCleanupPass() error {
 	paddedWidth := t1.width + 2
 	sigCount := 0 // DEBUG counter
-	debugLH := t1.width == 8 && t1.height == 8 && t1.bitplane == 5 // LH subband detection
+	debugLH := false // Disabled debug output
 	mqDecodeCount := 0
 
 	if debugLH {
@@ -770,11 +751,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				// VISIT flag will be cleared at start of next bitplane
 			}
 		}
-	}
-
-	// DEBUG: Print significance count for cleanup pass
-	if sigCount > 0 {
-		fmt.Printf("[CP DEBUG] bitplane=%d, sigCount=%d\n", t1.bitplane, sigCount)
 	}
 
 	return nil

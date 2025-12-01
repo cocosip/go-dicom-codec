@@ -172,6 +172,14 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 	// Check if TERMALL mode is enabled (bit 2 of CodeBlockStyle)
 	useTERMALL := (pd.codeBlockStyle & 0x04) != 0
 
+	// DEBUG: Count included CBs
+	includedCBs := 0
+	for _, cbIncl := range cbIncls {
+		if cbIncl.Included {
+			includedCBs++
+		}
+	}
+
 	body := &bytes.Buffer{}
 	for i := range cbIncls {
 		cbIncl := &cbIncls[i] // Get pointer to modify the slice element
@@ -249,19 +257,10 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 	// Calculate number of code-blocks for this resolution level
 	maxCodeBlocks := pd.calculateNumCodeBlocks(resolution)
 
-	// DEBUG
-	if pd.imageWidth >= 512 && resolution == 1 {
-		fmt.Printf("[PKT DEC] res=%d, maxCodeBlocks=%d\n", resolution, maxCodeBlocks)
-	}
-
 	for i := 0; i < maxCodeBlocks; i++ {
 		// Read inclusion bit
 		inclBit, err := bitReader.readBit()
 		if err != nil {
-			// DEBUG
-			if pd.imageWidth >= 512 && resolution == 1 {
-				fmt.Printf("[PKT DEC] readBit error at i=%d: %v\n", i, err)
-			}
 			break // End of header
 		}
 
@@ -324,11 +323,6 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component int) ([
 
 		// NOTE: Removed incorrect safety check that would break on dataLen=0
 		// In JPEG 2000, empty code-blocks are valid and we need to read all maxCodeBlocks
-	}
-
-	// DEBUG
-	if pd.imageWidth >= 512 && resolution == 1 {
-		fmt.Printf("[PKT DEC] Loop finished, len(cbIncls)=%d (expected %d)\n", len(cbIncls), maxCodeBlocks)
 	}
 
 	// Update offset to after header
@@ -394,7 +388,21 @@ func (br *bitReader) bytesRead() int {
 	// Return physical bytes read from stuffed bitstream
 	// physicalPos is incremented at the start of reading each byte
 	// so it already accounts for the current byte being read
-	return br.physicalPos
+
+	bytesRead := br.physicalPos
+
+	// Special case: If we just finished reading a byte (bitPos == 0) and that byte was 0xFF,
+	// the NEXT byte should be a stuffed 0x00 that will be skipped when readBit() is called next.
+	// We need to account for this pending stuffed byte in our count.
+	if br.bitPos == 0 && br.bytePos > 0 {
+		prevByte := br.data[br.bytePos-1]
+		if prevByte == 0xFF && br.bytePos < len(br.data) && br.data[br.bytePos] == 0x00 {
+			// There's a pending stuffed 0x00 byte that hasn't been skipped yet
+			bytesRead++
+		}
+	}
+
+	return bytesRead
 }
 
 // removeByteStuffing removes JPEG 2000 byte-stuffing (0xFF 0x00 -> 0xFF)
