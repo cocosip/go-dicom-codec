@@ -43,6 +43,18 @@ type ROIRegion struct {
 	// Shift overrides Rect.Shift for MaxShift if >0.
 	Shift int
 
+	// Scale is an alias for General Scaling k (same semantics as Shift).
+	// If >0 it overrides Shift.
+	Scale int
+
+	// Polygon vertices (optional). If provided, polygon area is added to mask.
+	Polygon []Point
+
+	// Mask bitmap (optional). If provided, must match image size.
+	MaskWidth  int
+	MaskHeight int
+	MaskData   []bool // row-major MaskWidth*MaskHeight
+
 	// Components limits ROI to certain component indices (empty = all).
 	Components []int
 }
@@ -61,7 +73,7 @@ func (cfg *ROIConfig) IsEmpty() bool {
 	return cfg == nil || len(cfg.ROIs) == 0
 }
 
-// Validate ensures current MVP constraints: rectangle + MaxShift only, with valid geometry and shift.
+// Validate ensures current MVP constraints: rectangle + MaxShift/GeneralScaling only, with valid geometry and shift.
 func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 	if cfg == nil || len(cfg.ROIs) == 0 {
 		return nil
@@ -77,8 +89,8 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 		if style == ROIStyle(0) {
 			style = ROIStyleMaxShift
 		}
-		if style != ROIStyleMaxShift {
-			return fmt.Errorf("ROI[%d]: style %v not supported (only MaxShift MVP)", i, style)
+		if style != ROIStyleMaxShift && style != ROIStyleGeneralScaling {
+			return fmt.Errorf("ROI[%d]: style %v not supported (must be MaxShift or GeneralScaling)", i, style)
 		}
 
 		shape := roi.Shape
@@ -95,6 +107,9 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 		}
 
 		shift := roi.Shift
+		if roi.Scale > 0 {
+			shift = roi.Scale
+		}
 		if shift <= 0 {
 			shift = rect.Shift
 		}
@@ -128,27 +143,51 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 	return nil
 }
 
-// ResolveMaxShiftRectangles returns per-component MaxShift values and rectangle lists (MVP: MaxShift only).
-func (cfg *ROIConfig) ResolveMaxShiftRectangles(imgWidth, imgHeight, components int) ([]int, [][]roiRect, error) {
+// ResolveRectangles returns Srgn style, per-component MaxShift/Scaling values, and rectangle lists.
+// MVP: supports Srgn 0 (MaxShift) or 1 (General Scaling) with rectangular geometry.
+func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (byte, []int, [][]roiRect, error) {
 	if cfg == nil || len(cfg.ROIs) == 0 {
-		return nil, nil, nil
+		return 0, nil, nil, nil
 	}
 
 	if err := cfg.Validate(imgWidth, imgHeight); err != nil {
-		return nil, nil, err
+		return 0, nil, nil, err
 	}
 
 	if components <= 0 {
-		return nil, nil, fmt.Errorf("invalid component count: %d", components)
+		return 0, nil, nil, fmt.Errorf("invalid component count: %d", components)
 	}
 
 	shifts := make([]int, components)
 	rectsByComp := make([][]roiRect, components)
+	srgn := byte(0) // default MaxShift
+	styleSet := false
 
 	for i := range cfg.ROIs {
 		roi := cfg.ROIs[i]
 
+		style := roi.Style
+		if style == ROIStyle(0) {
+			style = cfg.DefaultStyle
+		}
+		if style == ROIStyle(0) {
+			style = ROIStyleMaxShift
+		}
+		if style != ROIStyleMaxShift && style != ROIStyleGeneralScaling {
+			return 0, nil, nil, fmt.Errorf("ROI[%d]: unsupported style %v", i, style)
+		}
+
+		if !styleSet {
+			srgn = byte(style)
+			styleSet = true
+		} else if srgn != byte(style) {
+			return 0, nil, nil, fmt.Errorf("ROI[%d]: mixed ROI styles not supported (got %d vs %d)", i, style, srgn)
+		}
+
 		roiShift := roi.Shift
+		if roi.Scale > 0 {
+			roiShift = roi.Scale
+		}
 		if roiShift <= 0 && roi.Rect != nil {
 			roiShift = roi.Rect.Shift
 		}
@@ -156,10 +195,10 @@ func (cfg *ROIConfig) ResolveMaxShiftRectangles(imgWidth, imgHeight, components 
 			roiShift = cfg.DefaultShift
 		}
 		if roiShift <= 0 {
-			return nil, nil, fmt.Errorf("ROI[%d]: missing MaxShift value after defaults", i)
+			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", i)
 		}
 		if roiShift > 255 {
-			return nil, nil, fmt.Errorf("ROI[%d]: shift %d exceeds 255", i, roiShift)
+			return 0, nil, nil, fmt.Errorf("ROI[%d]: shift %d exceeds 255", i, roiShift)
 		}
 
 		targetComponents := roi.Components
@@ -172,10 +211,10 @@ func (cfg *ROIConfig) ResolveMaxShiftRectangles(imgWidth, imgHeight, components 
 
 		for _, comp := range targetComponents {
 			if comp < 0 || comp >= components {
-				return nil, nil, fmt.Errorf("ROI[%d]: component index %d out of range", i, comp)
+				return 0, nil, nil, fmt.Errorf("ROI[%d]: component index %d out of range", i, comp)
 			}
 			if shifts[comp] != 0 && shifts[comp] != roiShift {
-				return nil, nil, fmt.Errorf("ROI[%d]: mixed shifts for component %d (%d vs %d)", i, comp, shifts[comp], roiShift)
+				return 0, nil, nil, fmt.Errorf("ROI[%d]: mixed shifts for component %d (%d vs %d)", i, comp, shifts[comp], roiShift)
 			}
 			shifts[comp] = roiShift
 			rectsByComp[comp] = append(rectsByComp[comp], roiRect{
@@ -187,7 +226,7 @@ func (cfg *ROIConfig) ResolveMaxShiftRectangles(imgWidth, imgHeight, components 
 		}
 	}
 
-	return shifts, rectsByComp, nil
+	return srgn, shifts, rectsByComp, nil
 }
 
 func (r roiRect) intersects(x0, y0, x1, y1 int) bool {

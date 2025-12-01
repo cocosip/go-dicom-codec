@@ -15,8 +15,17 @@
 ## 进度更新（2025-12-01）
 - [x] 完成 ROIConfig/ROIRegion MVP 设计与校验（多矩形 MaxShift，兼容 legacy ROI）。
 - [x] 编解码管线接入多矩形 MaxShift：统一 RGN shift，ROIInfo 支持多矩形判定。
-- [x] 新增 ROIConfig 校验与多矩形编码/解码单元测试。
-- [ ] General Scaling、掩码/多边形、tile 级 RGN/私有元数据仍待实现。
+- [x] General Scaling（Srgn=1）基础支持：ROIConfig/编码端可写 Srgn=1，按组件的 shift 与矩形管理（当前仍使用统一 shift/矩形语义，后续需补齐真正的 General Scaling 权重与掩码管线）。
+- [x] 新增 ROIConfig 校验与多矩形/General Scaling 编码/解码单元测试。
+- [x] General Scaling 的真实缩放应用：Srgn=1 时对 ROI 系数执行 2^k 上移/反缩放（矩形/掩码路径）。
+- [x] 掩码/多边形基础：支持 Polygon/MaskData 输入，生成全分辨率掩码并用于 ROI 判定，编码/解码均可透传掩码。
+- [ ] 掩码多分辨率/tile 映射优化（缓存/按 block 步长下采样）、tile 级 RGN/私有元数据仍待实现。
+
+## 下一步（短期）
+- General Scaling：在编码端实现权重/bitplane 处理（Srgn=1），在解码端解析 Srgn=1 并正确反缩放。
+- ROI 样式透传：解码端读取 RGN 的 Srgn（0/1），以便后续样式特定处理。
+- 掩码/多边形：定义输入接口与 rasterization，支撑多分辨率/tile 映射。
+- tile 级 RGN：支持按 tile/tile-part 写入/解析 RGN，保持向后兼容。
 
 ## 范围与不做
 - 范围：编码器、解码器、ROI 参数与数据结构、码流标记、掩码生成/映射、测试验证。

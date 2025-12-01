@@ -16,6 +16,8 @@ type Decoder struct {
 	roiConfig *ROIConfig
 	roiShifts []int
 	roiRects  [][]roiRect // per-component rectangles
+	roiSrgn   []byte      // per-component ROI style (Srgn)
+	roiMasks  []*roiMask  // per-component ROI mask
 
 	// Decoded image data
 	width      int
@@ -105,9 +107,11 @@ func (d *Decoder) captureROIShifts() {
 		return
 	}
 	d.roiShifts = make([]int, d.components)
+	d.roiSrgn = make([]byte, d.components)
 	for _, rgn := range d.cs.RGN {
-		if int(rgn.Crgn) < len(d.roiShifts) && rgn.Srgn == 0 {
+		if int(rgn.Crgn) < len(d.roiShifts) {
 			d.roiShifts[int(rgn.Crgn)] = int(rgn.SPrgn)
+			d.roiSrgn[int(rgn.Crgn)] = rgn.Srgn
 		}
 	}
 }
@@ -121,12 +125,19 @@ func (d *Decoder) resolveROI() error {
 		if err := d.roiConfig.Validate(d.width, d.height); err != nil {
 			return err
 		}
-		shifts, rects, err := d.roiConfig.ResolveMaxShiftRectangles(d.width, d.height, d.components)
+		srgn, shifts, rects, err := d.roiConfig.ResolveRectangles(d.width, d.height, d.components)
 		if err != nil {
 			return err
 		}
 		d.roiShifts = shifts
 		d.roiRects = rects
+		d.roiMasks = buildMasksFromConfig(d.width, d.height, d.components, rects, d.roiConfig)
+		if len(shifts) > 0 {
+			d.roiSrgn = make([]byte, len(shifts))
+			for i := range d.roiSrgn {
+				d.roiSrgn[i] = srgn
+			}
+		}
 		return nil
 	}
 
@@ -136,15 +147,20 @@ func (d *Decoder) resolveROI() error {
 			return fmt.Errorf("invalid ROI parameters for decoded image: %+v", *d.roi)
 		}
 		d.roiShifts = make([]int, d.components)
+		d.roiSrgn = make([]byte, d.components)
 		d.roiRects = make([][]roiRect, d.components)
+		d.roiMasks = make([]*roiMask, d.components)
 		for c := 0; c < d.components; c++ {
 			d.roiShifts[c] = d.roi.Shift
+			d.roiSrgn[c] = 0
 			d.roiRects[c] = []roiRect{{
 				x0: d.roi.X0,
 				y0: d.roi.Y0,
 				x1: d.roi.X0 + d.roi.Width,
 				y1: d.roi.Y0 + d.roi.Height,
 			}}
+			d.roiMasks[c] = newROIMask(d.width, d.height)
+			d.roiMasks[c].setRect(d.roi.X0, d.roi.Y0, d.roi.X0+d.roi.Width, d.roi.Y0+d.roi.Height)
 		}
 	}
 
@@ -176,7 +192,21 @@ func (d *Decoder) decodeTiles() error {
 				}
 			}
 		}
-		roiInfo = &t2.ROIInfo{RectsByComponent: rectsByComp, Shifts: d.roiShifts}
+		roiInfo = &t2.ROIInfo{
+			RectsByComponent: rectsByComp,
+			Shifts:           d.roiShifts,
+			Styles:           d.roiSrgn,
+		}
+		roiInfo.Masks = make([]*t2.ROIMask, len(d.roiMasks))
+		for i := range d.roiMasks {
+			if d.roiMasks[i] != nil {
+				roiInfo.Masks[i] = &t2.ROIMask{
+					Width:  d.roiMasks[i].width,
+					Height: d.roiMasks[i].height,
+					Data:   d.roiMasks[i].data,
+				}
+			}
+		}
 	}
 
 	// Decode all tiles

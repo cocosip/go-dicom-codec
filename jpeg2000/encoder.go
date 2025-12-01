@@ -77,6 +77,8 @@ type Encoder struct {
 	data      [][]int32 // [component][pixel]
 	roiShifts []int
 	roiRects  [][]roiRect // per-component rectangles
+	roiStyles []byte      // per-component Srgn value: 0=MaxShift, 1=GeneralScaling
+	roiMasks  []*roiMask  // per-component ROI mask (full-res)
 }
 
 // NewEncoder creates a new JPEG 2000 encoder
@@ -295,15 +297,24 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 func (e *Encoder) resolveROI() error {
 	e.roiShifts = nil
 	e.roiRects = nil
+	e.roiStyles = nil
+	e.roiMasks = nil
 
 	// ROIConfig takes priority when present
 	if e.params.ROIConfig != nil && !e.params.ROIConfig.IsEmpty() {
-		shifts, rectsByComp, err := e.params.ROIConfig.ResolveMaxShiftRectangles(e.params.Width, e.params.Height, e.params.Components)
+		style, shifts, rectsByComp, err := e.params.ROIConfig.ResolveRectangles(e.params.Width, e.params.Height, e.params.Components)
 		if err != nil {
 			return err
 		}
 		e.roiShifts = shifts
 		e.roiRects = rectsByComp
+		e.roiMasks = buildMasksFromConfig(e.params.Width, e.params.Height, e.params.Components, rectsByComp, e.params.ROIConfig)
+		if len(shifts) > 0 {
+			e.roiStyles = make([]byte, len(shifts))
+			for i := range e.roiStyles {
+				e.roiStyles[i] = style
+			}
+		}
 		return nil
 	}
 
@@ -314,14 +325,19 @@ func (e *Encoder) resolveROI() error {
 		}
 		e.roiShifts = make([]int, e.params.Components)
 		e.roiRects = make([][]roiRect, e.params.Components)
+		e.roiStyles = make([]byte, e.params.Components)
+		e.roiMasks = make([]*roiMask, e.params.Components)
 		for c := 0; c < e.params.Components; c++ {
 			e.roiShifts[c] = e.params.ROI.Shift
+			e.roiStyles[c] = 0
 			e.roiRects[c] = []roiRect{{
 				x0: e.params.ROI.X0,
 				y0: e.params.ROI.Y0,
 				x1: e.params.ROI.X0 + e.params.ROI.Width,
 				y1: e.params.ROI.Y0 + e.params.ROI.Height,
 			}}
+			e.roiMasks[c] = newROIMask(e.params.Width, e.params.Height)
+			e.roiMasks[c].setRect(e.params.ROI.X0, e.params.ROI.Y0, e.params.ROI.X0+e.params.ROI.Width, e.params.ROI.Y0+e.params.ROI.Height)
 		}
 	}
 
@@ -498,11 +514,16 @@ func (e *Encoder) writeRGN(buf *bytes.Buffer) error {
 			continue
 		}
 
+		style := byte(0)
+		if comp < len(e.roiStyles) {
+			style = e.roiStyles[comp]
+		}
+
 		segment := &bytes.Buffer{}
 		// Lrgn = 5 (length includes itself)
 		_ = binary.Write(segment, binary.BigEndian, uint16(5))
 		segment.WriteByte(byte(comp))  // Crgn
-		segment.WriteByte(0)           // Srgn: 0 = MaxShift
+		segment.WriteByte(style)       // Srgn: 0 = MaxShift, 1 = General Scaling
 		segment.WriteByte(byte(shift)) // SPrgn
 
 		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerRGN); err != nil {
@@ -906,6 +927,7 @@ type codeBlockInfo struct {
 	height   int
 	globalX0 int // Global X position in coefficient array
 	globalY0 int // Global Y position in coefficient array
+	mask     [][]bool
 }
 
 // partitionIntoCodeBlocks partitions a subband into code-blocks
@@ -950,6 +972,11 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 			globalX0 := subband.x0 + x0
 			globalY0 := subband.y0 + y0
 
+			var mask [][]bool
+			if compIdx < len(e.roiMasks) && e.roiMasks[compIdx] != nil {
+				mask = e.roiMasks[compIdx].downsample(globalX0, globalY0, globalX0+actualWidth, globalY0+actualHeight, 1)
+			}
+
 			codeBlocks = append(codeBlocks, codeBlockInfo{
 				compIdx:  compIdx,
 				data:     cbData,
@@ -957,6 +984,7 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 				height:   actualHeight,
 				globalX0: globalX0,
 				globalY0: globalY0,
+				mask:     mask,
 			})
 		}
 	}
@@ -1001,8 +1029,22 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	// Create T1 encoder
 	t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
 
-	// Compute ROI shift: background blocks get MaxShift, ROI blocks keep full bitplanes
-	roishift := e.roiShiftForCodeBlock(cb)
+	// ROI handling: determine style/shift/inside and apply scaling/roishift
+	style, roiShift, inside := e.roiContext(cb)
+	roishift := 0
+	if roiShift > 0 {
+		if style == 1 {
+			// General Scaling: scale ROI blocks before coding, background unchanged
+			if inside {
+				applyGeneralScaling(cbData, roiShift)
+			}
+		} else {
+			// MaxShift: shift background blocks
+			if !inside {
+				roishift = roiShift
+			}
+		}
+	}
 
 	// Create PrecinctCodeBlock structure
 	pcb := &t2.PrecinctCodeBlock{
@@ -1105,30 +1147,85 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 }
 
 // roiShiftForCodeBlock returns the MaxShift value for the given code-block.
-// If ROI is enabled and the block does not intersect the ROI rectangle, the shift is applied.
-// Blocks intersecting ROI keep full quality (shift=0).
+// For MaxShift: shift is applied to background blocks (non-ROI).
+// For General Scaling: shift is reported for ROI blocks (background 0) but caller may apply scaling separately.
 func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
-	if cb.compIdx < 0 || cb.compIdx >= len(e.roiShifts) {
-		return 0
-	}
+	_, shift, inside := e.roiContext(cb)
+	return shiftIfApplicable(e.roiStyles, cb.compIdx, shift, inside)
+}
 
+// roiContext returns ROI style, shift, and whether the block intersects ROI.
+func (e *Encoder) roiContext(cb codeBlockInfo) (byte, int, bool) {
+	if cb.compIdx < 0 || cb.compIdx >= len(e.roiShifts) {
+		return 0, 0, false
+	}
+	style := byte(0)
+	if cb.compIdx < len(e.roiStyles) {
+		style = e.roiStyles[cb.compIdx]
+	}
 	shift := e.roiShifts[cb.compIdx]
 	if shift <= 0 {
-		return 0
+		return style, 0, false
 	}
-
 	x0 := cb.globalX0
 	y0 := cb.globalY0
 	x1 := cb.globalX0 + cb.width
 	y1 := cb.globalY0 + cb.height
 
-	rects := e.roiRects[cb.compIdx]
-	for _, rect := range rects {
-		if rect.intersects(x0, y0, x1, y1) {
-			return 0
+	inside := false
+	if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
+		for _, row := range cb.mask {
+			for _, v := range row {
+				if v {
+					inside = true
+					break
+				}
+			}
+			if inside {
+				break
+			}
+		}
+	} else {
+		rects := e.roiRects[cb.compIdx]
+		for _, rect := range rects {
+			if rect.intersects(x0, y0, x1, y1) {
+				inside = true
+				break
+			}
 		}
 	}
+	return style, shift, inside
+}
+
+func shiftIfApplicable(styles []byte, compIdx, shift int, inside bool) int {
+	style := byte(0)
+	if compIdx >= 0 && compIdx < len(styles) {
+		style = styles[compIdx]
+	}
+	if shift <= 0 {
+		return 0
+	}
+	if style == 1 {
+		if inside {
+			return shift
+		}
+		return 0
+	}
+	if inside {
+		return 0
+	}
 	return shift
+}
+
+// applyGeneralScaling multiplies coefficients in-place by 2^shift.
+func applyGeneralScaling(data []int32, shift int) {
+	if shift <= 0 {
+		return
+	}
+	factor := int32(1 << shift)
+	for i := range data {
+		data[i] *= factor
+	}
 }
 
 // calculateMaxBitplane finds the highest bit-plane that contains a '1' bit

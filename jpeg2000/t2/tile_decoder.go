@@ -82,7 +82,9 @@ type CodeBlockDecoder struct {
 type ROIInfo struct {
 	Rects            []ROIRect   // legacy/global
 	RectsByComponent [][]ROIRect // per-component rectangles
-	Shifts           []int       // per component shift (MaxShift)
+	Shifts           []int       // per component shift (MaxShift or GeneralScaling)
+	Styles           []byte      // per component Srgn style (0=MaxShift, 1=GeneralScaling)
+	Masks            []*ROIMask  // per-component mask
 }
 
 // ROIRect is an axis-aligned rectangle.
@@ -95,9 +97,45 @@ func (r ROIRect) Intersects(x0, y0, x1, y1 int) bool {
 	return r.X0 < x1 && x0 < r.X1 && r.Y0 < y1 && y0 < r.Y1
 }
 
+// ROIMask wraps a boolean mask.
+type ROIMask struct {
+	Width  int
+	Height int
+	Data   []bool
+}
+
 func (r *ROIInfo) intersects(compIdx, x0, y0, x1, y1 int) bool {
 	if r == nil {
 		return false
+	}
+
+	// Prefer mask if available
+	if compIdx >= 0 && compIdx < len(r.Masks) && r.Masks[compIdx] != nil {
+		m := r.Masks[compIdx]
+		// sample mask region; if any pixel inside ROI
+		if m.Width > 0 && m.Height > 0 && len(m.Data) == m.Width*m.Height {
+			clamp := func(v, max int) int {
+				if v < 0 {
+					return 0
+				}
+				if v > max {
+					return max
+				}
+				return v
+			}
+			x0c := clamp(x0, m.Width)
+			y0c := clamp(y0, m.Height)
+			x1c := clamp(x1, m.Width)
+			y1c := clamp(y1, m.Height)
+			for yy := y0c; yy < y1c; yy++ {
+				row := yy * m.Width
+				for xx := x0c; xx < x1c; xx++ {
+					if m.Data[row+xx] {
+						return true
+					}
+				}
+			}
+		}
 	}
 
 	if compIdx >= 0 && compIdx < len(r.RectsByComponent) && len(r.RectsByComponent[compIdx]) > 0 {
@@ -115,6 +153,41 @@ func (r *ROIInfo) intersects(compIdx, x0, y0, x1, y1 int) bool {
 		}
 	}
 	return false
+}
+
+func (r *ROIInfo) roiShift(compIdx, x0, y0, x1, y1 int) int {
+	if r == nil {
+		return 0
+	}
+	shift, style, inside := r.context(compIdx, x0, y0, x1, y1)
+	if shift <= 0 {
+		return 0
+	}
+	if style == 1 {
+		// General Scaling handled by explicit scaling; roishift only for MaxShift
+		return 0
+	}
+	// MaxShift: shift background
+	if inside {
+		return 0
+	}
+	return shift
+}
+
+func (r *ROIInfo) context(compIdx, x0, y0, x1, y1 int) (int, byte, bool) {
+	if r == nil || compIdx < 0 || compIdx >= len(r.Shifts) {
+		return 0, 0, false
+	}
+	shift := r.Shifts[compIdx]
+	style := byte(0)
+	if compIdx < len(r.Styles) {
+		style = r.Styles[compIdx]
+	}
+	if shift <= 0 {
+		return 0, style, false
+	}
+	inside := r.intersects(compIdx, x0, y0, x1, y1)
+	return shift, style, inside
 }
 
 // NewTileDecoder creates a new tile decoder
@@ -312,12 +385,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 				// Decode the code-block
 				if hasData && len(cbData) > 0 {
+					shiftVal, style, inside := td.roi.context(comp.componentIdx, x0, y0, x1, y1)
 					roishift := 0
-					if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
-						shift := td.roi.Shifts[comp.componentIdx]
-						if shift > 0 && !td.roi.intersects(comp.componentIdx, x0, y0, x1, y1) {
-							roishift = shift
-						}
+					if td.roi != nil {
+						roishift = td.roi.roiShift(comp.componentIdx, x0, y0, x1, y1)
 					}
 
 					// Check if TERMALL mode is enabled
@@ -339,6 +410,11 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 					} else {
 						// Get decoded coefficients
 						cbd.coeffs = cbd.t1Decoder.GetData()
+
+						// Inverse General Scaling for ROI blocks (Srgn=1)
+						if style == 1 && shiftVal > 0 && inside {
+							applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+						}
 					}
 				} else {
 					// No data - use zeros
@@ -485,12 +561,10 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 			// Decode the code-block
 			if hasData && len(cbData) > 0 {
+				shiftVal, style, inside := td.roi.context(comp.componentIdx, x0, y0, x1, y1)
 				roishift := 0
-				if td.roi != nil && len(td.roi.Shifts) > comp.componentIdx {
-					shift := td.roi.Shifts[comp.componentIdx]
-					if shift > 0 && !td.roi.intersects(comp.componentIdx, x0, y0, x1, y1) {
-						roishift = shift
-					}
+				if td.roi != nil {
+					roishift = td.roi.roiShift(comp.componentIdx, x0, y0, x1, y1)
 				}
 
 				// Use DecodeWithBitplane for accurate reconstruction
@@ -501,6 +575,11 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				} else {
 					// Get decoded coefficients
 					cbd.coeffs = cbd.t1Decoder.GetData()
+
+					// Inverse General Scaling for ROI blocks (Srgn=1)
+					if style == 1 && shiftVal > 0 && inside {
+						applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+					}
 				}
 			} else {
 				// No data - use zeros
@@ -731,4 +810,15 @@ func (td *TileDecoder) GetComponentData(componentIdx int) ([]int32, error) {
 // GetAllComponentsData returns decoded data for all components
 func (td *TileDecoder) GetAllComponentsData() [][]int32 {
 	return td.decodedData
+}
+
+// applyInverseGeneralScaling divides coefficients by 2^shift in-place.
+func applyInverseGeneralScaling(data []int32, shift int) {
+	if shift <= 0 {
+		return
+	}
+	factor := int32(1 << shift)
+	for i := range data {
+		data[i] /= factor
+	}
 }
