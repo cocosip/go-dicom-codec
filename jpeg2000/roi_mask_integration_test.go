@@ -16,7 +16,7 @@ func TestIntegrationMaskGeneralScaling(t *testing.T) {
 	}
 
 	params := DefaultEncodeParams(width, height, 1, 8, false)
-	params.NumLevels = 0 // Keep mask-to-coefficient mapping 1:1 for this test.
+	params.NumLevels = 0 // keep mask and coefficient grids aligned
 	params.ROIConfig = &ROIConfig{
 		DefaultStyle: ROIStyleGeneralScaling,
 		DefaultShift: 2,

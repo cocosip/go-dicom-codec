@@ -192,10 +192,6 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: unsupported style %v", i, style)
 		}
 
-		if hasMask {
-			style = ROIStyleMaxShift
-		}
-
 		if !styleSet {
 			srgn = byte(style)
 			styleSet = true
@@ -212,9 +208,6 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 		}
 		if roiShift <= 0 {
 			roiShift = cfg.DefaultShift
-		}
-		if hasMask {
-			roiShift = 0
 		}
 		if roiShift <= 0 && !hasMask {
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", i)
