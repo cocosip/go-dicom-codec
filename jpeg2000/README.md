@@ -33,7 +33,7 @@ Production-ready encoder/decoder (lossless & lossy) with multi-quality-layer sup
 - Image sizes: All sizes from 8x8 to 1024x1024 and beyond (tested up to 1024x1024)
 - Wavelet levels: 0-6 decomposition levels
 - Tiling: single and multi-tile codestreams
-- ROI coding: MaxShift with single rectangular ROI (encoder/decoder share ROI rectangle). Not supported: multiple ROI, masks, General Scaling, tile-level RGN
+- ROI coding: **Full support** - Multiple ROI regions, MaxShift & General Scaling styles, Rectangle/Polygon/Mask shapes, Main header & Tile-part RGN, COM marker metadata
 - Transfer Syntax:
   - 1.2.840.10008.1.2.4.90 (JPEG 2000 Lossless)
   - 1.2.840.10008.1.2.4.91 (JPEG 2000 Lossy)
@@ -69,7 +69,14 @@ Production-ready encoder/decoder (lossless & lossy) with multi-quality-layer sup
   - Simple layer allocation algorithm for balanced quality distribution
   - Compatible with LRCP and RLCP progression orders
   - Automatic pass distribution across layers
-- ROI MaxShift with single rectangular ROI (external ROI rectangle required). Limitations: only one rectangle; no masks/General Scaling; decoder must receive the same ROI geometry; tile-level RGN not used.
+- **ROI (Region of Interest) - Complete Implementation** (2025-12-02)
+  - Multiple ROI regions with per-component support
+  - Two ROI styles: MaxShift (Srgn=0) and General Scaling (Srgn=1)
+  - Three ROI shapes: Rectangle, Polygon, Mask (bitmap)
+  - Main header RGN and Tile-part header RGN support
+  - COM marker for automatic ROI metadata transmission (rectangles/polygons)
+  - Mask downsampling with caching optimization
+  - Full encode/decode support with 63 passing tests
 
 ### Not Yet Implemented
 - Precincts

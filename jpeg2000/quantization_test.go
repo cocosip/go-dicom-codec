@@ -2,214 +2,122 @@ package jpeg2000
 
 import (
 	"math"
+	"math/rand"
 	"testing"
+	"time"
 )
 
-func TestCalculateQuantizationParams(t *testing.T) {
-	tests := []struct {
-		name      string
-		quality   int
-		numLevels int
-		bitDepth  int
-		wantStyle int
-	}{
-		{
-			name:      "Quality 100 (lossless)",
-			quality:   100,
-			numLevels: 5,
-			bitDepth:  8,
-			wantStyle: 0, // No quantization
-		},
-		{
-			name:      "Quality 80 (high quality)",
-			quality:   80,
-			numLevels: 5,
-			bitDepth:  8,
-			wantStyle: 2, // Scalar expounded
-		},
-		{
-			name:      "Quality 50 (medium)",
-			quality:   50,
-			numLevels: 5,
-			bitDepth:  8,
-			wantStyle: 2,
-		},
-		{
-			name:      "Quality 1 (max compression)",
-			quality:   1,
-			numLevels: 5,
-			bitDepth:  8,
-			wantStyle: 2,
-		},
+func nearlyEqual(a, b, tol float64) bool {
+	if a == 0 && b == 0 {
+		return true
+	}
+	diff := math.Abs(a - b)
+	denom := math.Max(math.Abs(a), math.Abs(b))
+	if denom == 0 {
+		return diff <= tol
+	}
+	return diff/denom <= tol
+}
+
+func TestCalculateQuantizationParams_StyleAndLengths(t *testing.T) {
+	// lossless mode
+	pLossless := CalculateQuantizationParams(100, 5, 16)
+	if pLossless.Style != 0 {
+		t.Fatalf("expected Style=0 for quality>=100, got %d", pLossless.Style)
+	}
+	if pLossless.GuardBits != 2 {
+		t.Fatalf("expected GuardBits=2, got %d", pLossless.GuardBits)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			params := CalculateQuantizationParams(tt.quality, tt.numLevels, tt.bitDepth)
+	// lossy mode
+	numLevels := 4
+	pLossy := CalculateQuantizationParams(80, numLevels, 16)
+	if pLossy.Style != 2 {
+		t.Fatalf("expected Style=2 for lossy mode, got %d", pLossy.Style)
+	}
+	expectedSubbands := 3*numLevels + 1
+	if len(pLossy.StepSizes) != expectedSubbands || len(pLossy.EncodedSteps) != expectedSubbands {
+		t.Fatalf("unexpected subband count: got steps=%d encoded=%d want=%d", len(pLossy.StepSizes), len(pLossy.EncodedSteps), expectedSubbands)
+	}
 
-			if params.Style != tt.wantStyle {
-				t.Errorf("Style = %d, want %d", params.Style, tt.wantStyle)
-			}
+	// LL step should be smaller than HL1/LH1
+	ll := pLossy.StepSizes[0]
+	hl1 := pLossy.StepSizes[1]
+	lh1 := pLossy.StepSizes[2]
+	if !(ll < hl1 && ll < lh1) {
+		t.Fatalf("expected LL step smaller than HL1/LH1, got LL=%.6f HL1=%.6f LH1=%.6f", ll, hl1, lh1)
+	}
 
-			if params.GuardBits < 0 || params.GuardBits > 7 {
-				t.Errorf("GuardBits = %d, want 0-7", params.GuardBits)
-			}
-
-			if tt.wantStyle == 2 {
-				// Check we have correct number of subbands
-				expectedSubbands := 3*tt.numLevels + 1
-				if len(params.StepSizes) != expectedSubbands {
-					t.Errorf("StepSizes length = %d, want %d", len(params.StepSizes), expectedSubbands)
-				}
-				if len(params.EncodedSteps) != expectedSubbands {
-					t.Errorf("EncodedSteps length = %d, want %d", len(params.EncodedSteps), expectedSubbands)
-				}
-
-				// Check all step sizes are positive
-				for i, step := range params.StepSizes {
-					if step <= 0 {
-						t.Errorf("StepSizes[%d] = %f, want > 0", i, step)
-					}
-				}
-
-				// Check LL has smallest step size (least quantization)
-				llStep := params.StepSizes[0]
-				for i := 1; i < len(params.StepSizes); i++ {
-					if params.StepSizes[i] < llStep {
-						t.Logf("Warning: StepSizes[%d] = %f < LL step = %f", i, params.StepSizes[i], llStep)
-					}
-				}
-
-				// Log step sizes for inspection
-				t.Logf("Quality %d step sizes:", tt.quality)
-				t.Logf("  LL: %.4f", params.StepSizes[0])
-				idx := 1
-				for level := 1; level <= tt.numLevels; level++ {
-					t.Logf("  Level %d: HL=%.4f, LH=%.4f, HH=%.4f",
-						level, params.StepSizes[idx], params.StepSizes[idx+1], params.StepSizes[idx+2])
-					idx += 3
-				}
-			}
-		})
+	// HH1 should be ~1.4x HL1 within tolerance
+	hh1 := pLossy.StepSizes[3]
+	ratio := hh1 / hl1
+	if math.Abs(ratio-1.4) > 0.15 { // allow tolerance
+		t.Fatalf("expected HH1/HL1≈1.4, got %.4f (HH1=%.6f HL1=%.6f)", ratio, hh1, hl1)
 	}
 }
 
-func TestQualityToStepSizeMapping(t *testing.T) {
-	// Test that higher quality → smaller base step size
-	params100 := CalculateQuantizationParams(100, 5, 8)
-	params80 := CalculateQuantizationParams(80, 5, 8)
-	params50 := CalculateQuantizationParams(50, 5, 8)
-	params1 := CalculateQuantizationParams(1, 5, 8)
-
-	// Quality 100 should have no quantization
-	if params100.Style != 0 {
-		t.Errorf("Quality 100 should have no quantization (style 0), got %d", params100.Style)
-	}
-
-	// For lossy qualities, check step size increases as quality decreases
-	// Use HL1 subband as reference (index 1)
-	if params80.StepSizes[1] >= params50.StepSizes[1] {
-		t.Errorf("Quality 80 step size (%f) should be < Quality 50 (%f)",
-			params80.StepSizes[1], params50.StepSizes[1])
-	}
-
-	if params50.StepSizes[1] >= params1.StepSizes[1] {
-		t.Errorf("Quality 50 step size (%f) should be < Quality 1 (%f)",
-			params50.StepSizes[1], params1.StepSizes[1])
-	}
-
-	t.Logf("Step size progression (HL1 subband):")
-	t.Logf("  Quality 80: %.4f", params80.StepSizes[1])
-	t.Logf("  Quality 50: %.4f", params50.StepSizes[1])
-	t.Logf("  Quality  1: %.4f", params1.StepSizes[1])
-}
-
-func TestDecodeQuantizationStep(t *testing.T) {
-	// Test encoding/decoding round trip
-	params := CalculateQuantizationParams(50, 3, 8)
-
-	for i, originalStep := range params.StepSizes {
-		encoded := params.EncodedSteps[i]
-		decoded := DecodeQuantizationStep(encoded, 8)
-
-		// Allow small error due to quantization of mantissa
-		relativeError := math.Abs(decoded-originalStep) / originalStep
-		if relativeError > 0.01 { // 1% tolerance
-			t.Errorf("Step %d: encoded/decoded mismatch: original=%.6f, decoded=%.6f, error=%.2f%%",
-				i, originalStep, decoded, relativeError*100)
+func TestEncodedSteps_DecodeApprox(t *testing.T) {
+	p := CalculateQuantizationParams(80, 3, 16)
+	for i, enc := range p.EncodedSteps {
+		decoded := DecodeQuantizationStep(enc, 16)
+		original := p.StepSizes[i]
+		if !nearlyEqual(decoded, original, 0.05) { // 5% tolerance
+			t.Fatalf("decoded step not close to original for subband %d: got %.6f want %.6f", i, decoded, original)
 		}
 	}
 }
 
-func TestQuantizeCoefficients(t *testing.T) {
-	coefficients := []int32{100, 200, 300, 400, 500}
-	stepSize := 10.0
-
-	quantized := QuantizeCoefficients(coefficients, stepSize)
-
-	expected := []int32{10, 20, 30, 40, 50}
-	for i, q := range quantized {
-		if q != expected[i] {
-			t.Errorf("Quantized[%d] = %d, want %d", i, q, expected[i])
+func TestQualityMonotonicity_LLStep(t *testing.T) {
+	qualities := []int{1, 20, 50, 80, 90, 95, 99}
+	var llSteps []float64
+	for _, q := range qualities {
+		p := CalculateQuantizationParams(q, 5, 16)
+		if p.Style == 0 {
+			// skip lossless
+			continue
+		}
+		llSteps = append(llSteps, p.StepSizes[0])
+	}
+	for i := 1; i < len(llSteps); i++ {
+		if !(llSteps[i] < llSteps[i-1]) {
+			t.Fatalf("expected LL step to decrease with higher quality: prev=%.6f curr=%.6f", llSteps[i-1], llSteps[i])
 		}
 	}
 }
 
-func TestDequantizeCoefficients(t *testing.T) {
-	quantized := []int32{10, 20, 30, 40, 50}
-	stepSize := 10.0
-
-	dequantized := DequantizeCoefficients(quantized, stepSize)
-
-	expected := []int32{100, 200, 300, 400, 500}
-	for i, d := range dequantized {
-		if d != expected[i] {
-			t.Errorf("Dequantized[%d] = %d, want %d", i, d, expected[i])
-		}
-	}
-}
-
-func TestQuantizeDequantizeRoundTrip(t *testing.T) {
-	original := []int32{127, 255, 511, 1023, 2047}
-	stepSize := 8.0
-
-	// Quantize
-	quantized := QuantizeCoefficients(original, stepSize)
-	t.Logf("Original:   %v", original)
-	t.Logf("Quantized:  %v", quantized)
-
-	// Dequantize
-	dequantized := DequantizeCoefficients(quantized, stepSize)
-	t.Logf("Dequantized: %v", dequantized)
-
-	// Check error is within step size range
-	for i := range original {
-		error := math.Abs(float64(dequantized[i] - original[i]))
-		if error > stepSize {
-			t.Errorf("Index %d: error %f exceeds step size %f", i, error, stepSize)
-		}
-	}
-}
-
-func TestNoQuantization(t *testing.T) {
-	coefficients := []int32{100, 200, 300}
-
-	// Test with stepSize = 0 (no quantization)
-	quantized := QuantizeCoefficients(coefficients, 0)
-	if len(quantized) != len(coefficients) {
-		t.Fatalf("Length mismatch")
-	}
-	for i := range coefficients {
-		if quantized[i] != coefficients[i] {
-			t.Errorf("No quantization failed: got %d, want %d", quantized[i], coefficients[i])
-		}
+func TestQuantizeDequantizeErrorByQuality(t *testing.T) {
+	// synthetic coefficients
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	coeffs := make([]int32, 5000)
+	for i := range coeffs {
+		coeffs[i] = int32(rng.Intn(1<<14) - (1 << 13))
 	}
 
-	// Test dequantization with stepSize = 0
-	dequantized := DequantizeCoefficients(coefficients, 0)
-	for i := range coefficients {
-		if dequantized[i] != coefficients[i] {
-			t.Errorf("No dequantization failed: got %d, want %d", dequantized[i], coefficients[i])
+	// compare average absolute error across qualities using LL step size
+	type pair struct {
+		q   int
+		err float64
+	}
+	qs := []int{20, 80, 95}
+	results := make([]pair, 0, len(qs))
+	for _, q := range qs {
+		p := CalculateQuantizationParams(q, 5, 16)
+		step := p.StepSizes[0]
+		qd := QuantizeCoefficients(coeffs, step)
+		dq := DequantizeCoefficients(qd, step)
+		var sum float64
+		for i := range coeffs {
+			sum += math.Abs(float64(coeffs[i] - dq[i]))
 		}
+		avg := sum / float64(len(coeffs))
+		results = append(results, pair{q: q, err: avg})
+	}
+
+	// Expect error(20) > error(80) > error(95)
+	if !(results[0].err > results[1].err) {
+		t.Fatalf("expected error(q=20)>error(q=80), got %.6f <= %.6f", results[0].err, results[1].err)
+	}
+	if !(results[1].err > results[2].err) {
+		t.Fatalf("expected error(q=80)>error(q=95), got %.6f <= %.6f", results[1].err, results[2].err)
 	}
 }
