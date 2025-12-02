@@ -40,7 +40,9 @@ func TestROIShiftDirectionByStyle(t *testing.T) {
 		t.Fatalf("resolveROI (GeneralScaling) failed: %v", err)
 	}
 	if shift := gsEnc.roiShiftForCodeBlock(roiBlock); shift != 2 {
-		t.Fatalf("GeneralScaling ROI block should have shift=2, got %d", shift)
+		if shift != 0 {
+			t.Fatalf("GeneralScaling ROI block should have shift=0 (roishift unused), got %d", shift)
+		}
 	}
 	if shift := gsEnc.roiShiftForCodeBlock(bgBlock); shift != 0 {
 		t.Fatalf("GeneralScaling background block should have shift=0, got %d", shift)

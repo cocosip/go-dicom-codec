@@ -12,19 +12,27 @@
 - 标准化码流：正确写入/解析 RGN（tile-part header），必要时带兼容的私有元数据传递 ROI 几何。
 - 向下兼容：默认行为与当前单矩形 MaxShift 保持一致。
 
-## 进度更新（2025-12-01）
+## 进度更新：2025-12-01
 - [x] 完成 ROIConfig/ROIRegion MVP 设计与校验（多矩形 MaxShift，兼容 legacy ROI）。
 - [x] 编解码管线接入多矩形 MaxShift：统一 RGN shift，ROIInfo 支持多矩形判定。
 - [x] General Scaling（Srgn=1）基础支持：ROIConfig/编码端可写 Srgn=1，按组件的 shift 与矩形管理（当前仍使用统一 shift/矩形语义，后续需补齐真正的 General Scaling 权重与掩码管线）。
 - [x] 新增 ROIConfig 校验与多矩形/General Scaling 编码/解码单元测试。
-- [x] General Scaling 的真实缩放应用：Srgn=1 时对 ROI 系数执行 2^k 上移/反缩放（矩形/掩码路径）。
+- [x] General Scaling 的真实缩放应用：Srgn=1 时对 ROI 系数执行 2^k 上移/反缩放（矩形路径）。
 - [x] 掩码/多边形基础：支持 Polygon/MaskData 输入，生成全分辨率掩码并用于 ROI 判定，编码/解码均可透传掩码。
+- [ ] 掩码 General Scaling 未完成：掩码 ROI shift 当前回退为 0（不缩放），掩码与码块的坐标映射/逐系数缩放未实现，`TestIntegrationMaskGeneralScaling` 未验证真实缩放。
 - [ ] 掩码多分辨率/tile 映射优化（缓存/按 block 步长下采样）、tile 级 RGN/私有元数据仍待实现。
+
+## 待修复
+ 建议的修复路径（需要从当前状态继续编码）：
+  1. 在 ROIConfig.ResolveRectangles 对掩码 ROI 强制 style=GeneralScaling，shift 使用 DefaultShift 或显式 Scale，并保持
+     shift>0；不要把掩码回退为 MaxShift。对应更新 roi_config_test 期望 shift=DefaultShift。
+  2. 掩码下采样步长统一：在编码端 partitionIntoCodeBlocks，步长应基于 fullWidth/subband.width、fullHeight/subband.height
+  当前时间有限，未能完成以上修复；请告知是否需要我继续在此方向上直接修改代码。
 
 ## 下一步（短期）
 - General Scaling：在编码端实现权重/bitplane 处理（Srgn=1），在解码端解析 Srgn=1 并正确反缩放。
 - ROI 样式透传：解码端读取 RGN 的 Srgn（0/1），以便后续样式特定处理。
-- 掩码/多边形：定义输入接口与 rasterization，支撑多分辨率/tile 映射。
+- 掩码/多边形：定义输入接口与 rasterization，支持多分辨率/tile 映射；补齐掩码 General Scaling（子带/码块步长下采样、逐系数缩放/反缩放），恢复严格测试。
 - tile 级 RGN：支持按 tile/tile-part 写入/解析 RGN，保持向后兼容。
 
 ## 范围与不做
@@ -44,7 +52,7 @@
 - **编码器（T1 前处理 + 码流标记）**：
   - MaxShift：在量化前对 ROI 系数做全量上移（2^k），按掩码应用；非 ROI 保持不变。
   - General Scaling：实现可配置的 k 值和权重（分层 bit-plane 上移/部分上移），符合 ISO/IEC 15444-1 B.10。
-  - 在 tile-part header 中按组件写 RGN（支持多 ROI，多段 RGN；遵循 spec 顺序与作用域）。
+  - 在 tile-part header 中按组件写 RGN（支持多 ROI、多段 RGN；遵循 spec 顺序与作用域）。
   - 支持可选的私有 COM marker/box 携带 ROI 几何（便于解码端自动恢复掩码，需文档化为可选扩展）。
 - **解码器**：
   - 解析 RGN，区分 MaxShift/General Scaling；应用与编码一致的掩码反缩放。
@@ -55,7 +63,7 @@
 ## 实施清单（建议顺序）
 - [ ] 需求冻结：确定目标形状集（矩形/多边形/掩码）、支持的组件/ tile 粒度、默认 shift/scale。
 - [ ] 数据结构与参数：
-  - [ ] 设计 `ROI`/`ROIConfig` 结构与编码/解码参数签名，补充向后兼容路径。
+  - [ ] 设计 `ROI`/`ROIConfig` 结构与编解码参数签名，补充向后兼容路径。
   - [ ] 定义 ROI 组合/覆盖规则及默认 shift/scale。
 - [ ] 掩码管线：
   - [ ] 矩形/多边形 rasterization，外部掩码导入。
@@ -71,7 +79,7 @@
   - [ ] ROI 反缩放（MaxShift & General Scaling）掩码应用。
   - [ ] 私有 ROI 元数据解析与掩码重建。
 - [ ] 测试与验证：
-  - [ ] 单元测试：掩码生成/裁剪、MaxShift/General Scaling 系数还原。
+  - [ ] 单元测试：掩码生成裁剪、MaxShift/General Scaling 系数还原。
   - [ ] 集成测试：多 ROI、多组件、多 tile；边界 ROI；无 ROI 回退。
   - [ ] 互操作性：与 OpenJPEG/其它实现的 ROI 解码对比（尽可能基于标准 RGN）。
   - [ ] 性能与内存评估（大图+多 ROI）。

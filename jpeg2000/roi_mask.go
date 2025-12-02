@@ -265,8 +265,7 @@ func buildMasksFromConfig(width, height, components int, rects [][]roiRect, cfg 
 		}
 		var bitmapMask *roiMask
 		if hasMask {
-			// TODO: For now, rely on bounding rect; skip fine mask to avoid misalignment until block mapping is implemented.
-			bitmapMask = nil
+			bitmapMask = maskFromBitmap(width, height, roi.MaskWidth, roi.MaskHeight, roi.MaskData)
 		}
 
 		for _, comp := range targetComponents {

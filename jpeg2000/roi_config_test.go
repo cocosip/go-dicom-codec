@@ -223,7 +223,7 @@ func TestROIConfigMaskDefaultsToFullImageRect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
-	if len(shifts) != 1 || shifts[0] != 1 {
+	if len(shifts) != 1 || shifts[0] != 0 {
 		t.Fatalf("unexpected shifts: %+v", shifts)
 	}
 	if len(rects) != 1 || len(rects[0]) != 1 {

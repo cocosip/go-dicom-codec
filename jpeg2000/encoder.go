@@ -992,10 +992,9 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 
 			var mask [][]bool
 			if compIdx < len(e.roiMasks) && e.roiMasks[compIdx] != nil {
-				step := subband.scale
-				if step <= 0 {
-					step = 1
-				}
+				stepX := e.params.Width / max(1, subband.width)
+				stepY := e.params.Height / max(1, subband.height)
+				step := max(1, max(stepX, stepY))
 				fullX0 := (subband.x0 + x0) * step
 				fullY0 := (subband.y0 + y0) * step
 				fullX1 := (subband.x0 + x1) * step
@@ -1238,9 +1237,7 @@ func shiftIfApplicable(styles []byte, compIdx, shift int, inside bool) int {
 		return 0
 	}
 	if style == 1 {
-		if inside {
-			return shift
-		}
+		// General Scaling uses explicit coefficient scaling; roishift not used.
 		return 0
 	}
 	if inside {
@@ -1349,6 +1346,13 @@ func log2(n int) int {
 
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
