@@ -280,6 +280,11 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 		return nil, fmt.Errorf("failed to write RGN: %w", err)
 	}
 
+	// Write COM (private ROI metadata) if ROI is enabled
+	if err := e.writeCOM(buf); err != nil {
+		return nil, fmt.Errorf("failed to write COM: %w", err)
+	}
+
 	// Write tiles
 	if err := e.writeTiles(buf); err != nil {
 		return nil, fmt.Errorf("failed to write tiles: %w", err)
@@ -537,6 +542,145 @@ func (e *Encoder) writeRGN(buf *bytes.Buffer) error {
 	return nil
 }
 
+// writeCOM writes a COM (Comment) marker with private ROI metadata.
+// This allows the decoder to reconstruct ROI geometry without external parameters.
+// Format: Magic("JP2ROI") + Version(1) + ROI count + ROI geometries
+func (e *Encoder) writeCOM(buf *bytes.Buffer) error {
+	// Only write COM if we have ROI configuration
+	if e.params.ROIConfig == nil || e.params.ROIConfig.IsEmpty() {
+		return nil
+	}
+
+	data := &bytes.Buffer{}
+
+	// Magic string: "JP2ROI" (6 bytes)
+	data.WriteString("JP2ROI")
+
+	// Version: 1 (1 byte)
+	data.WriteByte(1)
+
+	// Number of ROI regions (2 bytes)
+	_ = binary.Write(data, binary.BigEndian, uint16(len(e.params.ROIConfig.ROIs)))
+
+	// Encode each ROI region
+	for _, roi := range e.params.ROIConfig.ROIs {
+		// Shape type: 0=Rectangle, 1=Polygon, 2=Mask (1 byte)
+		var shapeType byte
+		if roi.Rect != nil {
+			shapeType = 0
+		} else if len(roi.Polygon) > 0 {
+			shapeType = 1
+		} else if roi.MaskData != nil {
+			shapeType = 2
+		}
+		data.WriteByte(shapeType)
+
+		// Number of components (1 byte)
+		numComps := len(roi.Components)
+		if numComps == 0 {
+			numComps = e.params.Components // All components
+		}
+		data.WriteByte(byte(numComps))
+
+		// Component indices
+		if len(roi.Components) > 0 {
+			for _, comp := range roi.Components {
+				data.WriteByte(byte(comp))
+			}
+		} else {
+			// All components
+			for c := 0; c < e.params.Components; c++ {
+				data.WriteByte(byte(c))
+			}
+		}
+
+		// Geometry data based on shape type
+		switch shapeType {
+		case 0: // Rectangle
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.Rect.X0))
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.Rect.Y0))
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.Rect.X0+roi.Rect.Width))
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.Rect.Y0+roi.Rect.Height))
+		case 1: // Polygon
+			_ = binary.Write(data, binary.BigEndian, uint16(len(roi.Polygon)))
+			for _, pt := range roi.Polygon {
+				_ = binary.Write(data, binary.BigEndian, uint32(pt.X))
+				_ = binary.Write(data, binary.BigEndian, uint32(pt.Y))
+			}
+		case 2: // Mask (don't store raw mask, too large - store dimensions only as placeholder)
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.MaskWidth))
+			_ = binary.Write(data, binary.BigEndian, uint32(roi.MaskHeight))
+			// Note: Actual mask data not stored in COM (too large)
+			// Decoder needs external mask or should use rectangle/polygon instead
+		}
+	}
+
+	// Write COM marker
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerCOM); err != nil {
+		return err
+	}
+
+	// Write length (2 bytes for length itself + 2 bytes for Rcom + data)
+	length := uint16(2 + 2 + data.Len())
+	if err := binary.Write(buf, binary.BigEndian, length); err != nil {
+		return err
+	}
+
+	// Write Rcom (Registration value): 0x0001 for binary data (ISO/IEC 8859-15)
+	// We use 0x0000 for private binary format
+	if err := binary.Write(buf, binary.BigEndian, uint16(0x0000)); err != nil {
+		return err
+	}
+
+	// Write data
+	if _, err := buf.Write(data.Bytes()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writeTileRGN writes ROI marker segments in tile-part header.
+// This allows tile-specific ROI information (optional enhancement).
+func (e *Encoder) writeTileRGN(buf *bytes.Buffer) error {
+	// For now, write the same RGN as main header
+	// In the future, this could support tile-specific ROI regions
+	if len(e.roiShifts) == 0 {
+		return nil
+	}
+
+	for comp := 0; comp < e.params.Components; comp++ {
+		shift := 0
+		if comp < len(e.roiShifts) {
+			shift = e.roiShifts[comp]
+		}
+		if shift <= 0 {
+			continue
+		}
+
+		style := byte(0)
+		if comp < len(e.roiStyles) {
+			style = e.roiStyles[comp]
+		}
+
+		segment := &bytes.Buffer{}
+		// Lrgn = 5 (length includes itself)
+		_ = binary.Write(segment, binary.BigEndian, uint16(5))
+		segment.WriteByte(byte(comp))  // Crgn
+		segment.WriteByte(style)       // Srgn: 0 = MaxShift, 1 = General Scaling
+		segment.WriteByte(byte(shift)) // SPrgn
+
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerRGN); err != nil {
+			return err
+		}
+		if _, err := buf.Write(segment.Bytes()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // writeTiles writes all tile data
 func (e *Encoder) writeTiles(buf *bytes.Buffer) error {
 	p := e.params
@@ -615,6 +759,13 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	_ = binary.Write(buf, binary.BigEndian, uint32(tilePartLength))
 	_ = binary.Write(buf, binary.BigEndian, uint8(0)) // TPsot
 	_ = binary.Write(buf, binary.BigEndian, uint8(1)) // TNsot
+
+	// Write tile-part RGN if ROI is enabled (optional, for tile-specific ROI)
+	// Note: Currently we write the same ROI info to each tile-part for consistency
+	// In the future, this could be tile-specific
+	if err := e.writeTileRGN(buf); err != nil {
+		return fmt.Errorf("failed to write tile-part RGN: %w", err)
+	}
 
 	// Write SOD (Start of Data)
 	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
@@ -992,9 +1143,8 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 
 			var mask [][]bool
 			if compIdx < len(e.roiMasks) && e.roiMasks[compIdx] != nil {
-				stepX := e.params.Width / max(1, subband.width)
-				stepY := e.params.Height / max(1, subband.height)
-				step := max(1, max(stepX, stepY))
+				// Use subband.scale to map subband coords to full resolution
+				step := max(1, subband.scale)
 				fullX0 := (subband.x0 + x0) * step
 				fullY0 := (subband.y0 + y0) * step
 				fullX1 := (subband.x0 + x1) * step

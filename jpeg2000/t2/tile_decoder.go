@@ -627,7 +627,9 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 					// Inverse General Scaling for ROI blocks (Srgn=1)
 					if style == 1 && shiftVal > 0 && inside {
 						blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
-						if blockMask == nil || len(blockMask) == 0 || len(blockMask[0]) == 0 {
+						if len(blockMask) > 0 && len(blockMask[0]) > 0 {
+							applyInverseGeneralScalingMasked(cbd.coeffs, blockMask, shiftVal)
+						} else {
 							applyInverseGeneralScaling(cbd.coeffs, shiftVal)
 						}
 					}

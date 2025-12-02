@@ -203,10 +203,12 @@ func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 			tile.QCD = qcd
 
 		case MarkerRGN:
-			// Parse tile-part RGN and ignore (MVP uses main-header ROI only)
-			if _, err := p.parseRGN(); err != nil {
+			// Parse tile-part RGN (tile-specific ROI)
+			rgn, err := p.parseRGN()
+			if err != nil {
 				return nil, err
 			}
+			tile.RGN = append(tile.RGN, rgn)
 
 		default:
 			// Skip unknown tile-part header segments

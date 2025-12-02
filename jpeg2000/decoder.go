@@ -64,6 +64,9 @@ func (d *Decoder) Decode(data []byte) error {
 	// Capture ROI shift values from RGN segments
 	d.captureROIShifts()
 
+	// Extract ROI geometry from COM marker (if present)
+	d.extractROIFromCOM()
+
 	// Resolve ROI geometry (legacy ROI or ROIConfig)
 	if err := d.resolveROI(); err != nil {
 		return fmt.Errorf("invalid ROI configuration: %w", err)
@@ -113,6 +116,47 @@ func (d *Decoder) captureROIShifts() {
 			d.roiShifts[int(rgn.Crgn)] = int(rgn.SPrgn)
 			d.roiSrgn[int(rgn.Crgn)] = rgn.Srgn
 		}
+	}
+}
+
+// extractROIFromCOM extracts ROI geometry from COM marker (private metadata).
+// This allows automatic ROI reconstruction without external parameters.
+func (d *Decoder) extractROIFromCOM() {
+	if d.cs == nil || len(d.cs.COM) == 0 {
+		return
+	}
+
+	// If user already provided ROIConfig, don't override
+	if d.roiConfig != nil && !d.roiConfig.IsEmpty() {
+		return
+	}
+
+	// Search for our private ROI COM marker
+	for _, com := range d.cs.COM {
+		// Check for magic string "JP2ROI"
+		if len(com.Data) < 7 {
+			continue
+		}
+		if string(com.Data[0:6]) != "JP2ROI" {
+			continue
+		}
+
+		// Parse version
+		version := com.Data[6]
+		if version != 1 {
+			continue // Unknown version
+		}
+
+		// Parse ROI configuration
+		cfg, err := parseROIFromCOMData(com.Data[7:])
+		if err != nil {
+			// Invalid format, skip
+			continue
+		}
+
+		// Use this ROI configuration
+		d.roiConfig = cfg
+		return
 	}
 }
 
@@ -379,4 +423,104 @@ func (d *Decoder) applyInverseDCLevelShift() {
 			d.data[c][i] += shift
 		}
 	}
+}
+
+// parseROIFromCOMData parses ROI configuration from COM marker data.
+func parseROIFromCOMData(data []byte) (*ROIConfig, error) {
+	if len(data) < 2 {
+		return nil, fmt.Errorf("COM data too short")
+	}
+
+	// Read number of ROI regions (2 bytes)
+	numRegions := int(data[0])<<8 | int(data[1])
+	offset := 2
+
+	cfg := &ROIConfig{
+		ROIs: make([]ROIRegion, 0, numRegions),
+	}
+
+	for i := 0; i < numRegions; i++ {
+		if offset >= len(data) {
+			return nil, fmt.Errorf("unexpected end of COM data")
+		}
+
+		// Read shape type (1 byte)
+		shapeType := data[offset]
+		offset++
+
+		// Read number of components (1 byte)
+		if offset >= len(data) {
+			return nil, fmt.Errorf("unexpected end of COM data")
+		}
+		numComps := int(data[offset])
+		offset++
+
+		// Read component indices
+		if offset+numComps > len(data) {
+			return nil, fmt.Errorf("unexpected end of COM data")
+		}
+		comps := make([]int, numComps)
+		for j := 0; j < numComps; j++ {
+			comps[j] = int(data[offset])
+			offset++
+		}
+
+		roi := ROIRegion{
+			Components: comps,
+		}
+
+		// Parse geometry based on shape type
+		switch shapeType {
+		case 0: // Rectangle
+			if offset+16 > len(data) {
+				return nil, fmt.Errorf("unexpected end of COM data")
+			}
+			x0 := int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+			y0 := int(data[offset+4])<<24 | int(data[offset+5])<<16 | int(data[offset+6])<<8 | int(data[offset+7])
+			x1 := int(data[offset+8])<<24 | int(data[offset+9])<<16 | int(data[offset+10])<<8 | int(data[offset+11])
+			y1 := int(data[offset+12])<<24 | int(data[offset+13])<<16 | int(data[offset+14])<<8 | int(data[offset+15])
+			offset += 16
+			roi.Rect = &ROIParams{X0: x0, Y0: y0, Width: x1 - x0, Height: y1 - y0}
+			roi.Shape = ROIShapeRectangle
+
+		case 1: // Polygon
+			if offset+2 > len(data) {
+				return nil, fmt.Errorf("unexpected end of COM data")
+			}
+			numPoints := int(data[offset])<<8 | int(data[offset+1])
+			offset += 2
+			if offset+numPoints*8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of COM data")
+			}
+			points := make([]Point, numPoints)
+			for j := 0; j < numPoints; j++ {
+				x := int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+				y := int(data[offset+4])<<24 | int(data[offset+5])<<16 | int(data[offset+6])<<8 | int(data[offset+7])
+				points[j] = Point{X: x, Y: y}
+				offset += 8
+			}
+			roi.Polygon = points
+			roi.Shape = ROIShapePolygon
+
+		case 2: // Mask (placeholder only - actual mask data not stored)
+			if offset+8 > len(data) {
+				return nil, fmt.Errorf("unexpected end of COM data")
+			}
+			width := int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
+			height := int(data[offset+4])<<24 | int(data[offset+5])<<16 | int(data[offset+6])<<8 | int(data[offset+7])
+			offset += 8
+			// Create empty mask data structure (decoder still needs external mask)
+			roi.MaskWidth = width
+			roi.MaskHeight = height
+			roi.Shape = ROIShapeMask
+			// Note: MaskData not populated from COM (too large to store)
+
+		default:
+			return nil, fmt.Errorf("unknown shape type: %d", shapeType)
+		}
+
+		cfg.ROIs = append(cfg.ROIs, roi)
+	}
+
+	return cfg, nil
 }

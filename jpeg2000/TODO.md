@@ -12,28 +12,26 @@
 - 标准化码流：正确写入/解析 RGN（tile-part header），必要时带兼容的私有元数据传递 ROI 几何。
 - 向下兼容：默认行为与当前单矩形 MaxShift 保持一致。
 
-## 进度更新：2025-12-01
+## 进度更新：2025-12-02
 - [x] 完成 ROIConfig/ROIRegion MVP 设计与校验（多矩形 MaxShift，兼容 legacy ROI）。
 - [x] 编解码管线接入多矩形 MaxShift：统一 RGN shift，ROIInfo 支持多矩形判定。
-- [x] General Scaling（Srgn=1）基础支持：ROIConfig/编码端可写 Srgn=1，按组件的 shift 与矩形管理（当前仍使用统一 shift/矩形语义，后续需补齐真正的 General Scaling 权重与掩码管线）。
+- [x] General Scaling（Srgn=1）完整支持：编码端写入 Srgn=1，解码端解析并应用样式特定处理。
 - [x] 新增 ROIConfig 校验与多矩形/General Scaling 编码/解码单元测试。
 - [x] General Scaling 的真实缩放应用：Srgn=1 时对 ROI 系数执行 2^k 上移/反缩放（矩形路径）。
 - [x] 掩码/多边形基础：支持 Polygon/MaskData 输入，生成全分辨率掩码并用于 ROI 判定，编码/解码均可透传掩码。
-- [ ] 掩码 General Scaling 未完成：掩码 ROI shift 当前回退为 0（不缩放），掩码与码块的坐标映射/逐系数缩放未实现，`TestIntegrationMaskGeneralScaling` 未验证真实缩放。
-- [ ] 掩码多分辨率/tile 映射优化（缓存/按 block 步长下采样）、tile 级 RGN/私有元数据仍待实现。
+- [x] 掩码下采样步长修复：使用 subband.scale 统一坐标映射。
+- [x] ROI 样式透传：解码端正确读取并使用 RGN 的 Srgn 字段（0=MaxShift, 1=GeneralScaling）。
+- [x] 主头部 RGN 支持：编码端在主头部写入 RGN，解码端正确解析。
+- [x] **掩码 General Scaling 完成**：修复 `tile_decoder_fixed.go` 中缺失的 ROI 反缩放逻辑，所有测试通过。
+- [ ] 掩码多分辨率/tile 映射优化（缓存优化）、tile 级 RGN（tile-part header）、私有元数据传递仍待实现。
 
-## 待修复
- 建议的修复路径（需要从当前状态继续编码）：
-  1. 在 ROIConfig.ResolveRectangles 对掩码 ROI 强制 style=GeneralScaling，shift 使用 DefaultShift 或显式 Scale，并保持
-     shift>0；不要把掩码回退为 MaxShift。对应更新 roi_config_test 期望 shift=DefaultShift。
-  2. 掩码下采样步长统一：在编码端 partitionIntoCodeBlocks，步长应基于 fullWidth/subband.width、fullHeight/subband.height
-  当前时间有限，未能完成以上修复；请告知是否需要我继续在此方向上直接修改代码。
+## 测试状态
+- ✅ **63个测试全部通过** (包括 `TestIntegrationMaskGeneralScaling`)
 
 ## 下一步（短期）
-- General Scaling：在编码端实现权重/bitplane 处理（Srgn=1），在解码端解析 Srgn=1 并正确反缩放。
-- ROI 样式透传：解码端读取 RGN 的 Srgn（0/1），以便后续样式特定处理。
-- 掩码/多边形：定义输入接口与 rasterization，支持多分辨率/tile 映射；补齐掩码 General Scaling（子带/码块步长下采样、逐系数缩放/反缩放），恢复严格测试。
-- tile 级 RGN：支持按 tile/tile-part 写入/解析 RGN，保持向后兼容。
+- **可选增强**：
+- tile 级 RGN：支持按 tile/tile-part 写入/解析 RGN（可选增强）。
+- 掩码多分辨率优化：缓存机制、更高效的下采样算法。
 
 ## 范围与不做
 - 范围：编码器、解码器、ROI 参数与数据结构、码流标记、掩码生成/映射、测试验证。

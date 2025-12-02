@@ -145,8 +145,8 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 			return fmt.Errorf("ROI[%d]: invalid rectangle %+v", i, roi.Rect)
 		}
 
-		if shift <= 0 && !hasMask {
-			return fmt.Errorf("ROI[%d]: missing MaxShift value", i)
+		if shift <= 0 {
+			return fmt.Errorf("ROI[%d]: missing MaxShift/Scale value", i)
 		}
 		if shift > 255 {
 			return fmt.Errorf("ROI[%d]: shift %d exceeds 255", i, shift)
@@ -193,8 +193,8 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 		}
 
 		if hasMask {
-			// Mask ROI: treat as non-scaling for now.
-			style = ROIStyleMaxShift
+			// Mask ROI: force General Scaling with shift>0.
+			style = ROIStyleGeneralScaling
 		}
 
 		if !styleSet {
@@ -214,10 +214,7 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 		if roiShift <= 0 {
 			roiShift = cfg.DefaultShift
 		}
-		if hasMask {
-			roiShift = 0
-		}
-		if roiShift <= 0 && !hasMask {
+		if roiShift <= 0 {
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", i)
 		}
 		if roiShift > 255 {

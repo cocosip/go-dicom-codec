@@ -126,11 +126,12 @@ type RGNSegment struct {
 
 // Tile represents a single tile in the codestream
 type Tile struct {
-	Index int         // Tile index
-	SOT   *SOTSegment // Start of tile
-	COD   *CODSegment // Coding style (optional, overrides default)
-	QCD   *QCDSegment // Quantization (optional, overrides default)
-	Data  []byte      // Compressed tile data (after SOD marker)
+	Index int            // Tile index
+	SOT   *SOTSegment    // Start of tile
+	COD   *CODSegment    // Coding style (optional, overrides default)
+	QCD   *QCDSegment    // Quantization (optional, overrides default)
+	RGN   []*RGNSegment  // ROI (optional, tile-specific ROI)
+	Data  []byte         // Compressed tile data (after SOD marker)
 
 	// Decoded components (filled during decode)
 	Components []*TileComponent
