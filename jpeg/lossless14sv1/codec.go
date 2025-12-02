@@ -12,7 +12,7 @@ var _ codec.Codec = (*LosslessSV1Codec)(nil)
 // LosslessSV1Codec implements the external codec.Codec interface for JPEG Lossless SV1
 // SV1 (Selection Value 1) means it only uses predictor 1 (left pixel)
 type LosslessSV1Codec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 }
 
 // NewLosslessSV1Codec creates a new JPEG Lossless SV1 codec
@@ -28,7 +28,7 @@ func (c *LosslessSV1Codec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *LosslessSV1Codec) TransferSyntax() *transfer.TransferSyntax {
+func (c *LosslessSV1Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 

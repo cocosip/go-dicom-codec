@@ -186,9 +186,52 @@ func (r *ROIInfo) context(compIdx, x0, y0, x1, y1 int) (int, byte, bool) {
 	if shift <= 0 {
 		return 0, style, false
 	}
-	inside := r.intersects(compIdx, x0, y0, x1, y1)
+	inside := false
+	if compIdx >= 0 && compIdx < len(r.Masks) && r.Masks[compIdx] != nil {
+		blockMask := r.blockMask(compIdx, x0, y0, x1, y1)
+		if len(blockMask) > 0 && len(blockMask[0]) > 0 {
+			inside = maskAnyTrue(blockMask)
+		}
+	}
+	if !inside {
+		inside = r.intersects(compIdx, x0, y0, x1, y1)
+	}
 	return shift, style, inside
 }
+
+// blockMask extracts a boolean mask for the given block region.
+func (r *ROIInfo) blockMask(compIdx, x0, y0, x1, y1 int) [][]bool {
+	if r == nil || compIdx < 0 || compIdx >= len(r.Masks) || r.Masks[compIdx] == nil {
+		return nil
+	}
+	m := r.Masks[compIdx]
+	if m.Width <= 0 || m.Height <= 0 || len(m.Data) != m.Width*m.Height {
+		return nil
+	}
+	w := x1 - x0
+	h := y1 - y0
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+	out := make([][]bool, h)
+	for j := 0; j < h; j++ {
+		out[j] = make([]bool, w)
+		srcY := y0 + j
+		if srcY < 0 || srcY >= m.Height {
+			continue
+		}
+		rowOffset := srcY * m.Width
+		for i := 0; i < w; i++ {
+			srcX := x0 + i
+			if srcX < 0 || srcX >= m.Width {
+				continue
+			}
+			out[j][i] = m.Data[rowOffset+srcX]
+		}
+	}
+	return out
+}
+
 
 // NewTileDecoder creates a new tile decoder
 func NewTileDecoder(
@@ -413,7 +456,12 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 						// Inverse General Scaling for ROI blocks (Srgn=1)
 						if style == 1 && shiftVal > 0 && inside {
-							applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+							blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
+							if len(blockMask) > 0 && len(blockMask[0]) > 0 {
+								applyInverseGeneralScalingMasked(cbd.coeffs, blockMask, shiftVal)
+							} else {
+								applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+							}
 						}
 					}
 				} else {
@@ -578,7 +626,10 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 					// Inverse General Scaling for ROI blocks (Srgn=1)
 					if style == 1 && shiftVal > 0 && inside {
-						applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+						blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
+						if blockMask == nil || len(blockMask) == 0 || len(blockMask[0]) == 0 {
+							applyInverseGeneralScaling(cbd.coeffs, shiftVal)
+						}
 					}
 				}
 			} else {
@@ -821,4 +872,49 @@ func applyInverseGeneralScaling(data []int32, shift int) {
 	for i := range data {
 		data[i] /= factor
 	}
+}
+
+// applyInverseGeneralScalingMasked divides only masked coefficients by 2^shift.
+func applyInverseGeneralScalingMasked(data []int32, mask [][]bool, shift int) {
+	if shift <= 0 || len(mask) == 0 || len(mask[0]) == 0 {
+		return
+	}
+	factor := int32(1 << shift)
+	height := len(mask)
+	width := len(mask[0])
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			if mask[y][x] {
+				idx := y*width + x
+				if idx >= 0 && idx < len(data) {
+					data[idx] /= factor
+				}
+			}
+		}
+	}
+}
+
+func maskAllTrue(mask [][]bool) bool {
+	if len(mask) == 0 || len(mask[0]) == 0 {
+		return false
+	}
+	for y := 0; y < len(mask); y++ {
+		for x := 0; x < len(mask[y]); x++ {
+			if !mask[y][x] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func maskAnyTrue(mask [][]bool) bool {
+	for y := 0; y < len(mask); y++ {
+		for x := 0; x < len(mask[y]); x++ {
+			if mask[y][x] {
+				return true
+			}
+		}
+	}
+	return false
 }

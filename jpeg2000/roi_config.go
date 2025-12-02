@@ -82,6 +82,9 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 	for i := range cfg.ROIs {
 		roi := &cfg.ROIs[i]
 
+		hasPolygon := len(roi.Polygon) >= 3
+		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+
 		style := roi.Style
 		if style == ROIStyle(0) {
 			style = cfg.DefaultStyle
@@ -102,8 +105,16 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 		}
 
 		rect := roi.Rect
-		hasPolygon := len(roi.Polygon) >= 3
-		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+		if rect == nil && hasPolygon {
+			b := boundingRect(roi.Polygon)
+			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+		} else if rect == nil && hasMask {
+			if b, ok := boundingRectFromMask(roi.MaskWidth, roi.MaskHeight, roi.MaskData); ok {
+				rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+			} else {
+				rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
+			}
+		}
 		if rect == nil && !hasPolygon && !hasMask {
 			return fmt.Errorf("ROI[%d]: rectangle or polygon/mask required for shape rectangle", i)
 		}
@@ -119,14 +130,6 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 			shift = cfg.DefaultShift
 		}
 
-		// Fill shift for validation and reuse.
-		if rect == nil && hasPolygon {
-			b := boundingRect(roi.Polygon)
-			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
-		} else if rect == nil && hasMask {
-			rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
-		}
-
 		if rect != nil && shift > 0 {
 			rect = &ROIParams{
 				X0:     rect.X0,
@@ -135,13 +138,14 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 				Height: rect.Height,
 				Shift:  shift,
 			}
+			roi.Rect = rect
 		}
 
 		if rect != nil && !rect.IsValid(imgWidth, imgHeight) {
 			return fmt.Errorf("ROI[%d]: invalid rectangle %+v", i, roi.Rect)
 		}
 
-		if shift <= 0 {
+		if shift <= 0 && !hasMask {
 			return fmt.Errorf("ROI[%d]: missing MaxShift value", i)
 		}
 		if shift > 255 {
@@ -174,6 +178,8 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 
 	for i := range cfg.ROIs {
 		roi := cfg.ROIs[i]
+		hasPolygon := len(roi.Polygon) >= 3
+		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
 
 		style := roi.Style
 		if style == ROIStyle(0) {
@@ -184,6 +190,10 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 		}
 		if style != ROIStyleMaxShift && style != ROIStyleGeneralScaling {
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: unsupported style %v", i, style)
+		}
+
+		if hasMask {
+			style = ROIStyleMaxShift
 		}
 
 		if !styleSet {
@@ -203,11 +213,29 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 		if roiShift <= 0 {
 			roiShift = cfg.DefaultShift
 		}
-		if roiShift <= 0 {
+		if hasMask {
+			roiShift = 0
+		}
+		if roiShift <= 0 && !hasMask {
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", i)
 		}
 		if roiShift > 255 {
 			return 0, nil, nil, fmt.Errorf("ROI[%d]: shift %d exceeds 255", i, roiShift)
+		}
+
+		rect := roi.Rect
+		if rect == nil && hasPolygon {
+			b := boundingRect(roi.Polygon)
+			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+		} else if rect == nil && hasMask {
+			if b, ok := boundingRectFromMask(roi.MaskWidth, roi.MaskHeight, roi.MaskData); ok {
+				rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+			} else {
+				rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
+			}
+		}
+		if rect == nil {
+			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI geometry", i)
 		}
 
 		targetComponents := roi.Components

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
-	"github.com/cocosip/go-dicom/pkg/dicom/endian"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/dicom/uid"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
@@ -15,7 +14,7 @@ var _ codec.Codec = (*Codec)(nil)
 // Codec implements the JPEG 2000 Lossless codec
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.90
 type Codec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 }
 
 // NewCodec creates a new JPEG 2000 Lossless codec
@@ -24,7 +23,7 @@ func NewCodec() *Codec {
 }
 
 // NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
-func NewCodecWithTransferSyntax(ts *transfer.TransferSyntax) *Codec {
+func NewCodecWithTransferSyntax(ts *transfer.Syntax) *Codec {
 	return &Codec{
 		transferSyntax: ts,
 	}
@@ -36,7 +35,7 @@ func (c *Codec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *Codec) TransferSyntax() *transfer.TransferSyntax {
+func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
@@ -164,37 +163,22 @@ func RegisterJPEG2000LosslessCodec() {
 // RegisterJPEG2000MCLosslessCodec registers JPEG 2000 Part 2 Multi-component lossless codec.
 func RegisterJPEG2000MCLosslessCodec() {
 	registry := codec.GetGlobalRegistry()
-	ts := transfer.NewBuilder(uid.JPEG2000MCLossless).
-		SetExplicitVR(true).
-		SetEncapsulated(true).
-		SetEndian(endian.Little).
-		Build()
-	j2kCodec := NewCodecWithTransferSyntax(ts)
-	registry.RegisterCodec(ts, j2kCodec)
+	j2kCodec := NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponentLosslessOnly)
+	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
 }
 
 // RegisterHTJ2KLosslessCodec registers HTJ2K lossless codec placeholder.
 func RegisterHTJ2KLosslessCodec() {
 	registry := codec.GetGlobalRegistry()
-	ts := transfer.NewBuilder(uid.HTJ2KLossless).
-		SetExplicitVR(true).
-		SetEncapsulated(true).
-		SetEndian(endian.Little).
-		Build()
-	j2kCodec := NewCodecWithTransferSyntax(ts)
-	registry.RegisterCodec(ts, j2kCodec)
+	j2kCodec := NewCodecWithTransferSyntax(transfer.HTJ2KLossless)
+	registry.RegisterCodec(transfer.HTJ2KLossless, j2kCodec)
 }
 
 // RegisterHTJ2KLosslessRPCLCodec registers HTJ2K RPCL lossless codec placeholder.
 func RegisterHTJ2KLosslessRPCLCodec() {
 	registry := codec.GetGlobalRegistry()
-	ts := transfer.NewBuilder(uid.HTJ2KLosslessRPCL).
-		SetExplicitVR(true).
-		SetEncapsulated(true).
-		SetEndian(endian.Little).
-		Build()
-	j2kCodec := NewCodecWithTransferSyntax(ts)
-	registry.RegisterCodec(ts, j2kCodec)
+	j2kCodec := NewCodecWithTransferSyntax(transfer.HTJ2KLosslessRPCL)
+	registry.RegisterCodec(transfer.HTJ2KLosslessRPCL, j2kCodec)
 }
 
 func init() {
@@ -204,7 +188,7 @@ func init() {
 	RegisterHTJ2KLosslessRPCLCodec()
 }
 
-func isHTJ2K(ts *transfer.TransferSyntax) bool {
+func isHTJ2K(ts *transfer.Syntax) bool {
 	if ts == nil {
 		return false
 	}

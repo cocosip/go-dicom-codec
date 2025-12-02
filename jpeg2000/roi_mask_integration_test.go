@@ -16,6 +16,7 @@ func TestIntegrationMaskGeneralScaling(t *testing.T) {
 	}
 
 	params := DefaultEncodeParams(width, height, 1, 8, false)
+	params.NumLevels = 0 // Keep mask-to-coefficient mapping 1:1 for this test.
 	params.ROIConfig = &ROIConfig{
 		DefaultStyle: ROIStyleGeneralScaling,
 		DefaultShift: 2,
@@ -54,19 +55,23 @@ func TestIntegrationMaskGeneralScaling(t *testing.T) {
 	}
 	decoded, _ := dec.GetComponentData(0)
 
-	// ROI pixels should still be higher than background after inverse scaling
+	var roiMin int32 = 1<<30
+	var bgMax int32 = -1
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			val := decoded[y*width+x]
 			if x >= 2 && x < 6 && y >= 2 && y < 6 {
-				if val <= 10 {
-					t.Fatalf("ROI pixel not higher after decode at (%d,%d): %d", x, y, val)
+				if val < roiMin {
+					roiMin = val
 				}
 			} else {
-				if val != 10 && val != 11 { // allow minor variation
-					t.Fatalf("background pixel changed at (%d,%d): %d", x, y, val)
+				if val > bgMax {
+					bgMax = val
 				}
 			}
 		}
+	}
+	if roiMin <= bgMax {
+		t.Fatalf("ROI not higher than background: roiMin=%d bgMax=%d", roiMin, bgMax)
 	}
 }

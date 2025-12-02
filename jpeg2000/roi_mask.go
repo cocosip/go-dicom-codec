@@ -137,6 +137,45 @@ func maskFromBitmap(width, height int, mw, mh int, data []bool) *roiMask {
 	return m
 }
 
+// boundingRectFromMask computes the bounding box of true pixels in a bitmap.
+// Returns rect and a boolean indicating whether any pixel was set.
+func boundingRectFromMask(mw, mh int, data []bool) (roiRect, bool) {
+	if mw <= 0 || mh <= 0 || len(data) != mw*mh {
+		return roiRect{}, false
+	}
+	x0, y0 := mw, mh
+	x1, y1 := 0, 0
+	found := false
+	for y := 0; y < mh; y++ {
+		row := y * mw
+		for x := 0; x < mw; x++ {
+			if data[row+x] {
+				if !found {
+					x0, y0, x1, y1 = x, y, x+1, y+1
+					found = true
+				} else {
+					if x < x0 {
+						x0 = x
+					}
+					if y < y0 {
+						y0 = y
+					}
+					if x+1 > x1 {
+						x1 = x + 1
+					}
+					if y+1 > y1 {
+						y1 = y + 1
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		return roiRect{}, false
+	}
+	return roiRect{x0: x0, y0: y0, x1: x1, y1: y1}, true
+}
+
 // rasterizePolygon creates a mask from polygon points using even-odd rule.
 func rasterizePolygon(width, height int, pts []Point) *roiMask {
 	if len(pts) < 3 {
@@ -201,13 +240,12 @@ func buildMasksFromConfig(width, height, components int, rects [][]roiRect, cfg 
 	if cfg == nil || len(cfg.ROIs) == 0 {
 		return buildRectMasks(width, height, rects)
 	}
-	masks := buildRectMasks(width, height, rects)
-	if len(masks) == 0 {
-		masks = make([]*roiMask, components)
-		for i := range masks {
-			masks[i] = newROIMask(width, height)
-		}
+
+	masks := make([]*roiMask, components)
+	for comp := 0; comp < components; comp++ {
+		masks[comp] = newROIMask(width, height)
 	}
+
 	for i := range cfg.ROIs {
 		roi := cfg.ROIs[i]
 		targetComponents := roi.Components
@@ -218,12 +256,15 @@ func buildMasksFromConfig(width, height, components int, rects [][]roiRect, cfg 
 			}
 		}
 
+		hasPolygon := len(roi.Polygon) >= 3
+		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+
 		var polyMask *roiMask
-		if len(roi.Polygon) >= 3 {
+		if hasPolygon {
 			polyMask = rasterizePolygon(width, height, roi.Polygon)
 		}
 		var bitmapMask *roiMask
-		if len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0 {
+		if hasMask {
 			bitmapMask = maskFromBitmap(width, height, roi.MaskWidth, roi.MaskHeight, roi.MaskData)
 		}
 
@@ -234,19 +275,21 @@ func buildMasksFromConfig(width, height, components int, rects [][]roiRect, cfg 
 			if masks[comp] == nil {
 				masks[comp] = newROIMask(width, height)
 			}
-			if polyMask != nil {
+			switch {
+			case hasPolygon && polyMask != nil:
 				for idx, v := range polyMask.data {
 					if v {
 						masks[comp].data[idx] = true
 					}
 				}
-			}
-			if bitmapMask != nil {
+			case hasMask && bitmapMask != nil:
 				for idx, v := range bitmapMask.data {
 					if v {
 						masks[comp].data[idx] = true
 					}
 				}
+			case roi.Rect != nil:
+				masks[comp].setRect(roi.Rect.X0, roi.Rect.Y0, roi.Rect.X0+roi.Rect.Width, roi.Rect.Y0+roi.Rect.Height)
 			}
 		}
 	}

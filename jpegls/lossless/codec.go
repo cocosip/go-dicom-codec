@@ -11,7 +11,7 @@ var _ codec.Codec = (*JPEGLSLosslessCodec)(nil)
 
 // JPEGLSLosslessCodec implements the external codec.Codec interface for JPEG-LS Lossless
 type JPEGLSLosslessCodec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 }
 
 // NewJPEGLSLosslessCodec creates a new JPEG-LS Lossless codec
@@ -27,7 +27,7 @@ func (c *JPEGLSLosslessCodec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *JPEGLSLosslessCodec) TransferSyntax() *transfer.TransferSyntax {
+func (c *JPEGLSLosslessCodec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 

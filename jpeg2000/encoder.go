@@ -832,6 +832,8 @@ type subbandInfo struct {
 	width  int     // Subband width
 	height int     // Subband height
 	band   int     // Band type: 0=LL, 1=HL, 2=LH, 3=HH
+	res    int     // Resolution level (0=LL)
+	scale  int     // Scale factor to map subband coords to full resolution (power of two)
 }
 
 // getSubbandsForResolution extracts subbands for a specific resolution level
@@ -845,6 +847,7 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		// LL subband (top-left quadrant after all decompositions)
 		llWidth := width >> e.params.NumLevels
 		llHeight := height >> e.params.NumLevels
+		scale := 1 << e.params.NumLevels
 
 		llData := make([]int32, llWidth*llHeight)
 		for y := 0; y < llHeight; y++ {
@@ -860,13 +863,19 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			width:  llWidth,
 			height: llHeight,
 			band:   0, // LL
+			res:    0,
+			scale:  scale,
 		})
 	} else {
 		// For resolution r, extract HL, LH, HH from decomposition level (numLevels - r + 1)
 		level := e.params.NumLevels - resolution + 1
+		if level < 0 {
+			level = 0
+		}
 
 		sbWidth := width >> level
 		sbHeight := height >> level
+		scale := 1 << level
 
 		// HL (high-low): right half of top half
 		hlData := make([]int32, sbWidth*sbHeight)
@@ -882,6 +891,8 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			width:  sbWidth,
 			height: sbHeight,
 			band:   1, // HL
+			res:    resolution,
+			scale:  scale,
 		})
 
 		// LH (low-high): left half of bottom half
@@ -898,6 +909,8 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			width:  sbWidth,
 			height: sbHeight,
 			band:   2, // LH
+			res:    resolution,
+			scale:  scale,
 		})
 
 		// HH (high-high): right half of bottom half
@@ -914,6 +927,8 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			width:  sbWidth,
 			height: sbHeight,
 			band:   3, // HH
+			res:    resolution,
+			scale:  scale,
 		})
 	}
 
@@ -927,6 +942,9 @@ type codeBlockInfo struct {
 	height   int
 	globalX0 int // Global X position in coefficient array
 	globalY0 int // Global Y position in coefficient array
+	scale    int // Downsampling factor from full resolution (reserved)
+	resLevel int // Resolution level (0=LL)
+	band     int // Subband identifier (0=LL,1=HL,2=LH,3=HH)
 	mask     [][]bool
 }
 
@@ -974,7 +992,15 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 
 			var mask [][]bool
 			if compIdx < len(e.roiMasks) && e.roiMasks[compIdx] != nil {
-				mask = e.roiMasks[compIdx].downsample(globalX0, globalY0, globalX0+actualWidth, globalY0+actualHeight, 1)
+				step := subband.scale
+				if step <= 0 {
+					step = 1
+				}
+				fullX0 := (subband.x0 + x0) * step
+				fullY0 := (subband.y0 + y0) * step
+				fullX1 := (subband.x0 + x1) * step
+				fullY1 := (subband.y0 + y1) * step
+				mask = e.roiMasks[compIdx].downsample(fullX0, fullY0, fullX1, fullY1, step)
 			}
 
 			codeBlocks = append(codeBlocks, codeBlockInfo{
@@ -984,6 +1010,9 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 				height:   actualHeight,
 				globalX0: globalX0,
 				globalY0: globalY0,
+				scale:    subband.scale,
+				resLevel: subband.res,
+				band:     subband.band,
 				mask:     mask,
 			})
 		}
@@ -1036,7 +1065,11 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		if style == 1 {
 			// General Scaling: scale ROI blocks before coding, background unchanged
 			if inside {
-				applyGeneralScaling(cbData, roiShift)
+				if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
+					applyGeneralScalingMasked(cbData, cb.mask, roiShift)
+				} else {
+					applyGeneralScaling(cbData, roiShift)
+				}
 			}
 		} else {
 			// MaxShift: shift background blocks
@@ -1151,6 +1184,14 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 // For General Scaling: shift is reported for ROI blocks (background 0) but caller may apply scaling separately.
 func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
 	_, shift, inside := e.roiContext(cb)
+	style := byte(0)
+	if cb.compIdx >= 0 && cb.compIdx < len(e.roiStyles) {
+		style = e.roiStyles[cb.compIdx]
+	}
+	if style == 1 && cb.mask != nil {
+		// General Scaling uses explicit coefficient scaling; no roishift when mask is present.
+		return 0
+	}
 	return shiftIfApplicable(e.roiStyles, cb.compIdx, shift, inside)
 }
 
@@ -1173,18 +1214,9 @@ func (e *Encoder) roiContext(cb codeBlockInfo) (byte, int, bool) {
 	y1 := cb.globalY0 + cb.height
 
 	inside := false
-	if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
-		for _, row := range cb.mask {
-			for _, v := range row {
-				if v {
-					inside = true
-					break
-				}
-			}
-			if inside {
-				break
-			}
-		}
+	hasMask := cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0
+	if hasMask {
+		inside = maskAnyTrue(cb.mask)
 	} else {
 		rects := e.roiRects[cb.compIdx]
 		for _, rect := range rects {
@@ -1226,6 +1258,51 @@ func applyGeneralScaling(data []int32, shift int) {
 	for i := range data {
 		data[i] *= factor
 	}
+}
+
+// applyGeneralScalingMasked multiplies only coefficients covered by mask by 2^shift.
+func applyGeneralScalingMasked(data []int32, mask [][]bool, shift int) {
+	if shift <= 0 || len(mask) == 0 || len(mask[0]) == 0 {
+		return
+	}
+	factor := int32(1 << shift)
+	height := len(mask)
+	width := len(mask[0])
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			if mask[y][x] {
+				idx := y*width + x
+				if idx >= 0 && idx < len(data) {
+					data[idx] *= factor
+				}
+			}
+		}
+	}
+}
+
+func maskAllTrue(mask [][]bool) bool {
+	if len(mask) == 0 || len(mask[0]) == 0 {
+		return false
+	}
+	for y := 0; y < len(mask); y++ {
+		for x := 0; x < len(mask[y]); x++ {
+			if !mask[y][x] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func maskAnyTrue(mask [][]bool) bool {
+	for y := 0; y < len(mask); y++ {
+		for x := 0; x < len(mask[y]); x++ {
+			if mask[y][x] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // calculateMaxBitplane finds the highest bit-plane that contains a '1' bit

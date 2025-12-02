@@ -11,7 +11,7 @@ var _ codec.Codec = (*LosslessCodec)(nil)
 
 // LosslessCodec implements the external codec.Codec interface for JPEG Lossless (Process 14)
 type LosslessCodec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 	predictor      int // 0 for auto-select, 1-7 for specific predictor
 }
 
@@ -33,7 +33,7 @@ func (c *LosslessCodec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *LosslessCodec) TransferSyntax() *transfer.TransferSyntax {
+func (c *LosslessCodec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 

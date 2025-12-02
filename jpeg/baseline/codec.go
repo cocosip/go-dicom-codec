@@ -11,7 +11,7 @@ var _ codec.Codec = (*BaselineCodec)(nil)
 
 // BaselineCodec implements the external codec.Codec interface for JPEG Baseline
 type BaselineCodec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 	quality        int // Default quality (1-100)
 }
 
@@ -33,7 +33,7 @@ func (c *BaselineCodec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *BaselineCodec) TransferSyntax() *transfer.TransferSyntax {
+func (c *BaselineCodec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 

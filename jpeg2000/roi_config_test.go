@@ -174,3 +174,63 @@ func TestROIConfigComponentFilter(t *testing.T) {
 		t.Fatalf("unexpected rects: %+v", rects)
 	}
 }
+
+func TestROIConfigPolygonBoundingRect(t *testing.T) {
+	cfg := &ROIConfig{
+		DefaultShift: 3,
+		ROIs: []ROIRegion{
+			{
+				Polygon: []Point{
+					{X: 2, Y: 2},
+					{X: 6, Y: 2},
+					{X: 6, Y: 4},
+					{X: 4, Y: 6},
+					{X: 2, Y: 4},
+				},
+			},
+		},
+	}
+	_, shifts, rects, err := cfg.ResolveRectangles(8, 8, 1)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if len(shifts) != 1 || shifts[0] != 3 {
+		t.Fatalf("unexpected shifts: %+v", shifts)
+	}
+	if len(rects) != 1 || len(rects[0]) != 1 {
+		t.Fatalf("expected one rect from polygon, got %+v", rects)
+	}
+	r := rects[0][0]
+	if r.x0 != 2 || r.y0 != 2 || r.x1 != 7 || r.y1 != 7 {
+		t.Fatalf("unexpected polygon bounding rect: %+v", r)
+	}
+}
+
+func TestROIConfigMaskDefaultsToFullImageRect(t *testing.T) {
+	mask := make([]bool, 4*4)
+	mask[0] = true
+	cfg := &ROIConfig{
+		DefaultShift: 1,
+		ROIs: []ROIRegion{
+			{
+				MaskWidth:  4,
+				MaskHeight: 4,
+				MaskData:   mask,
+			},
+		},
+	}
+	_, shifts, rects, err := cfg.ResolveRectangles(4, 4, 1)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if len(shifts) != 1 || shifts[0] != 0 {
+		t.Fatalf("unexpected shifts: %+v", shifts)
+	}
+	if len(rects) != 1 || len(rects[0]) != 1 {
+		t.Fatalf("expected one rect from mask, got %+v", rects)
+	}
+	r := rects[0][0]
+	if r.x0 != 0 || r.y0 != 0 || r.x1 != 1 || r.y1 != 1 {
+		t.Fatalf("unexpected mask rect: %+v", r)
+	}
+}

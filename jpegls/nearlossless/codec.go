@@ -11,7 +11,7 @@ var _ codec.Codec = (*JPEGLSNearLosslessCodec)(nil)
 
 // JPEGLSNearLosslessCodec implements the external codec.Codec interface for JPEG-LS Near-Lossless
 type JPEGLSNearLosslessCodec struct {
-	transferSyntax *transfer.TransferSyntax
+	transferSyntax *transfer.Syntax
 	defaultNEAR    int // Default NEAR parameter (0-255)
 }
 
@@ -33,7 +33,7 @@ func (c *JPEGLSNearLosslessCodec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *JPEGLSNearLosslessCodec) TransferSyntax() *transfer.TransferSyntax {
+func (c *JPEGLSNearLosslessCodec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 

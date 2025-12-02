@@ -37,7 +37,7 @@ func (c *ExtendedCodec) Name() string {
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *ExtendedCodec) TransferSyntax() *transfer.TransferSyntax {
+func (c *ExtendedCodec) TransferSyntax() *transfer.Syntax {
 	return transfer.JPEGExtended12Bit
 }
 
