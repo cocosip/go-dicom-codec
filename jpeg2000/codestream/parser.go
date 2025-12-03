@@ -126,6 +126,27 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			}
 			cs.COM = append(cs.COM, *com)
 
+		case MarkerMCT:
+			seg, err := p.parseMCT()
+			if err != nil {
+				return fmt.Errorf("failed to parse MCT: %w", err)
+			}
+			cs.MCT = append(cs.MCT, *seg)
+
+		case MarkerMCC:
+			seg, err := p.parseMCC()
+			if err != nil {
+				return fmt.Errorf("failed to parse MCC: %w", err)
+			}
+			cs.MCC = append(cs.MCC, *seg)
+
+		case MarkerMCO:
+			seg, err := p.parseMCO()
+			if err != nil {
+				return fmt.Errorf("failed to parse MCO: %w", err)
+			}
+			cs.MCO = append(cs.MCO, *seg)
+
 		default:
 			// Skip unknown segments
 			if err := p.skipSegment(); err != nil {
@@ -426,6 +447,91 @@ func (p *Parser) parseCOM() (*COMSegment, error) {
 	}
 
 	return com, nil
+}
+
+func (p *Parser) parseMCT() (*MCTSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	payloadLen := int(length) - 2
+	if payloadLen < 8 {
+		return nil, fmt.Errorf("invalid MCT length")
+	}
+	idx, _ := p.readUint8()
+	et, _ := p.readUint8()
+	at, _ := p.readUint8()
+	rows, _ := p.readUint16()
+	cols, _ := p.readUint16()
+	rev, _ := p.readUint8()
+	dataLen := payloadLen - 8
+	buf := make([]byte, dataLen)
+	if _, err := p.read(buf); err != nil {
+		return nil, err
+	}
+	return &MCTSegment{Index: idx, ElementType: MCTElementType(et), ArrayType: MCTArrayType(at), Rows: rows, Cols: cols, Reversible: rev != 0, Data: buf}, nil
+}
+
+func (p *Parser) parseMCC() (*MCCSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	payloadLen := int(length) - 2
+	if payloadLen < 4 {
+		return nil, fmt.Errorf("invalid MCC length")
+	}
+	idx, _ := p.readUint8()
+	assoc, _ := p.readUint8()
+	n, _ := p.readUint16()
+	comps := make([]uint16, int(n))
+	for i := 0; i < int(n); i++ {
+		v, _ := p.readUint16()
+		comps[i] = v
+	}
+	consumed := 1 + 1 + 2 + 2*int(n)
+	remain := payloadLen - consumed
+	var indices []uint8
+	if remain == 1 {
+		v, _ := p.readUint8()
+		indices = []uint8{v}
+	} else if remain >= 2 {
+		count, _ := p.readUint8()
+		indices = make([]uint8, int(count))
+		for i := 0; i < int(count); i++ {
+			vv, _ := p.readUint8()
+			indices[i] = vv
+		}
+		leftover := remain - (1 + int(count))
+		if leftover > 0 {
+			buf := make([]byte, leftover)
+			if _, err := p.read(buf); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		indices = []uint8{0}
+	}
+	return &MCCSegment{Index: idx, AssocType: assoc, NumComponents: n, ComponentIDs: comps, MCTIndices: indices}, nil
+}
+
+func (p *Parser) parseMCO() (*MCOSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	payloadLen := int(length) - 2
+	if payloadLen < 1 {
+		return nil, fmt.Errorf("invalid MCO length")
+	}
+	idx, _ := p.readUint8()
+	opts := make([]byte, payloadLen-1)
+	if len(opts) > 0 {
+		if _, err := p.read(opts); err != nil {
+			return nil, err
+		}
+	}
+	return &MCOSegment{Index: idx, Options: opts}, nil
 }
 
 // parseSOT parses the SOT marker segment

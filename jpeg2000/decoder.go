@@ -2,6 +2,7 @@ package jpeg2000
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
@@ -29,6 +30,24 @@ type Decoder struct {
 
 	// Decoded pixel data per component
 	data [][]int32
+
+	// Custom MCT inverse (experimental, parsed from COM)
+	mctInverse [][]float64
+	// Optional per-component offsets
+	mctOffsets []int32
+	// MCO precision flags
+	mctReversible bool
+	bindings      []mctBinding
+}
+
+type mctBinding struct {
+	compIDs    []int
+	matrixF    [][]float64
+	matrixI    [][]int32
+	offsets    []int32
+	normScale  float64
+	reversible bool
+	rounding   uint8
 }
 
 // NewDecoder creates a new JPEG 2000 decoder
@@ -67,6 +86,8 @@ func (d *Decoder) Decode(data []byte) error {
 
 	// Extract ROI geometry from COM marker (if present)
 	d.extractROIFromCOM()
+	d.extractMCTFromMarkers()
+	d.extractBindings()
 
 	// Resolve ROI geometry (legacy ROI or ROIConfig)
 	if err := d.resolveROI(); err != nil {
@@ -158,6 +179,387 @@ func (d *Decoder) extractROIFromCOM() {
 		// Use this ROI configuration
 		d.roiConfig = cfg
 		return
+	}
+}
+
+// extractMCTFromMarkers parses a custom MCT inverse matrix from MCT marker (experimental)
+func (d *Decoder) extractMCTFromMarkers() {
+	if d.cs == nil {
+		return
+	}
+	var normScale float64
+	if len(d.cs.MCC) > 0 {
+		seg := d.cs.MCC[0]
+		applyOrder := make([]uint8, len(seg.MCTIndices))
+		copy(applyOrder, seg.MCTIndices)
+		// Parse MCO options for overrides
+		if len(d.cs.MCO) > 0 {
+			for _, o := range d.cs.MCO {
+				if o.Index != 0 || len(o.Options) == 0 {
+					continue
+				}
+				off := 0
+				for off < len(o.Options) {
+					t := o.Options[off]
+					off++
+					switch t {
+					case codestream.MCOOptNormScale:
+						if off+4 <= len(o.Options) {
+							v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
+							normScale = float64(math.Float32frombits(v))
+							off += 4
+						} else {
+							off = len(o.Options)
+						}
+					case codestream.MCOOptRecordOrder:
+						if off < len(o.Options) {
+							count := int(o.Options[off])
+							off++
+							if off+count <= len(o.Options) {
+								applyOrder = make([]uint8, count)
+								copy(applyOrder, o.Options[off:off+count])
+								off += count
+							} else {
+								off = len(o.Options)
+							}
+						}
+					default:
+						off = len(o.Options)
+					}
+				}
+			}
+		}
+		// AssocType semantics
+		if seg.AssocType == codestream.MCCAssocMatrixThenOffset || seg.AssocType == codestream.MCCAssocOffsetThenMatrix {
+			var mats, offs []uint8
+			for _, id := range applyOrder {
+				for _, m := range d.cs.MCT {
+					if m.Index == id {
+						if int(m.ArrayType) == 1 {
+							mats = append(mats, id)
+						} else if int(m.ArrayType) == 2 {
+							offs = append(offs, id)
+						}
+						break
+					}
+				}
+			}
+			if seg.AssocType == codestream.MCCAssocMatrixThenOffset {
+				applyOrder = append(mats, offs...)
+			} else {
+				applyOrder = append(offs, mats...)
+			}
+		}
+		for _, idx := range applyOrder {
+			for _, m := range d.cs.MCT {
+				if m.Index == idx {
+					if int(m.ArrayType) == 1 && m.Rows > 0 && m.Cols > 0 {
+						rows := int(m.Rows)
+						cols := int(m.Cols)
+						data := m.Data
+						inv := make([][]float64, rows)
+						off := 0
+						need := rows * cols * 4
+						if len(data) >= need {
+							for r := 0; r < rows; r++ {
+								inv[r] = make([]float64, cols)
+								for c := 0; c < cols; c++ {
+									if int(m.ElementType) == 1 {
+										v := uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3])
+										inv[r][c] = float64(math.Float32frombits(v))
+									} else {
+										v := int32(uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3]))
+										inv[r][c] = float64(v)
+									}
+									off += 4
+								}
+							}
+							if normScale != 0 {
+								for r := 0; r < rows; r++ {
+									for c := 0; c < cols; c++ {
+										inv[r][c] /= normScale
+									}
+								}
+							}
+							d.mctInverse = inv
+						}
+					}
+					if int(m.ElementType) == 0 && int(m.ArrayType) == 2 && m.Rows > 0 && m.Cols > 0 {
+						rows := int(m.Rows)
+						cols := int(m.Cols)
+						if cols == 1 && rows == d.components {
+							data := m.Data
+							need := rows * 4
+							if len(data) >= need {
+								offs := make([]int32, rows)
+								off := 0
+								for r := 0; r < rows; r++ {
+									v := int32(uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3]))
+									off += 4
+									offs[r] = v
+								}
+								d.mctOffsets = offs
+							}
+						}
+					}
+				}
+			}
+		}
+		if d.mctInverse != nil || d.mctOffsets != nil {
+			return
+		}
+	}
+	if len(d.cs.MCT) > 0 {
+		for _, seg := range d.cs.MCT {
+			if int(seg.ElementType) == 1 && int(seg.ArrayType) == 1 && seg.Rows > 0 && seg.Cols > 0 {
+				rows := int(seg.Rows)
+				cols := int(seg.Cols)
+				data := seg.Data
+				need := rows * cols * 4
+				if len(data) >= need {
+					inv := make([][]float64, rows)
+					off := 0
+					for r := 0; r < rows; r++ {
+						inv[r] = make([]float64, cols)
+						for c := 0; c < cols; c++ {
+							v := uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3])
+							off += 4
+							inv[r][c] = float64(math.Float32frombits(v))
+						}
+					}
+					d.mctInverse = inv
+					break
+				}
+			}
+		}
+		if len(d.cs.MCO) > 0 {
+			for _, o := range d.cs.MCO {
+				if o.Index != 0 || len(o.Options) == 0 {
+					continue
+				}
+				off := 0
+				for off < len(o.Options) {
+					t := o.Options[off]
+					off++
+					switch t {
+					case codestream.MCOOptNormScale:
+						if off+4 <= len(o.Options) {
+							v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
+							normScale = float64(math.Float32frombits(v))
+							off += 4
+						} else {
+							off = len(o.Options)
+						}
+					case codestream.MCOOptPrecision:
+						if off < len(o.Options) {
+							d.mctReversible = (o.Options[off] & 0x1) != 0
+							off++
+						} else {
+							off = len(o.Options)
+						}
+					case codestream.MCOOptRecordOrder:
+						// already applied by MCC order and AssocType semantics in this branch
+						if off < len(o.Options) {
+							count := int(o.Options[off])
+							off++
+							off += count
+						}
+					default:
+						off = len(o.Options)
+					}
+				}
+			}
+			if normScale != 0 && d.mctInverse != nil {
+				rows := len(d.mctInverse)
+				cols := len(d.mctInverse[0])
+				for r := 0; r < rows; r++ {
+					for c := 0; c < cols; c++ {
+						d.mctInverse[r][c] /= normScale
+					}
+				}
+			}
+		}
+		if d.mctInverse != nil {
+			return
+		}
+	}
+	// Fallback to COM-based payload
+	if len(d.cs.COM) > 0 {
+		for _, com := range d.cs.COM {
+			if len(com.Data) < 7 {
+				continue
+			}
+			if string(com.Data[0:6]) != "JP2MCT" {
+				continue
+			}
+			version := com.Data[6]
+			if version != 1 {
+				continue
+			}
+			if len(com.Data) < 11 {
+				continue
+			}
+			rows := int(com.Data[7])<<8 | int(com.Data[8])
+			cols := int(com.Data[9])<<8 | int(com.Data[10])
+			offset := 11
+			if offset >= len(com.Data) {
+				continue
+			}
+			// reversible flag
+			offset++
+			need := rows * cols * 4
+			if offset+need > len(com.Data) {
+				continue
+			}
+			inv := make([][]float64, rows)
+			for r := 0; r < rows; r++ {
+				inv[r] = make([]float64, cols)
+				for c := 0; c < cols; c++ {
+					v := uint32(com.Data[offset])<<24 | uint32(com.Data[offset+1])<<16 | uint32(com.Data[offset+2])<<8 | uint32(com.Data[offset+3])
+					offset += 4
+					inv[r][c] = float64(math.Float32frombits(v))
+				}
+			}
+			d.mctInverse = inv
+			return
+		}
+	}
+}
+
+func (d *Decoder) extractBindings() {
+	if d.cs == nil {
+		return
+	}
+	for _, seg := range d.cs.MCC {
+		compIDs := make([]int, len(seg.ComponentIDs))
+		for i := range seg.ComponentIDs {
+			compIDs[i] = int(seg.ComponentIDs[i])
+		}
+		var order []uint8
+		order = append(order, seg.MCTIndices...)
+		var norm float64
+		var prec uint8
+		for _, o := range d.cs.MCO {
+			if o.Index != seg.Index || len(o.Options) == 0 {
+				continue
+			}
+			off := 0
+			for off < len(o.Options) {
+				t := o.Options[off]
+				off++
+				switch t {
+				case codestream.MCOOptNormScale:
+					if off+4 <= len(o.Options) {
+						v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
+						norm = float64(math.Float32frombits(v))
+						off += 4
+					} else {
+						off = len(o.Options)
+					}
+				case codestream.MCOOptPrecision:
+					if off < len(o.Options) {
+						prec = o.Options[off]
+						off++
+					} else {
+						off = len(o.Options)
+					}
+				case codestream.MCOOptRecordOrder:
+					if off < len(o.Options) {
+						cnt := int(o.Options[off])
+						off++
+						if off+cnt <= len(o.Options) {
+							order = make([]uint8, cnt)
+							copy(order, o.Options[off:off+cnt])
+							off += cnt
+						} else {
+							off = len(o.Options)
+						}
+					}
+				default:
+					off = len(o.Options)
+				}
+			}
+		}
+		if seg.AssocType == codestream.MCCAssocMatrixThenOffset || seg.AssocType == codestream.MCCAssocOffsetThenMatrix {
+			var mats, offs []uint8
+			for _, id := range order {
+				for _, m := range d.cs.MCT {
+					if m.Index == id {
+						if int(m.ArrayType) == 1 {
+							mats = append(mats, id)
+						} else if int(m.ArrayType) == 2 {
+							offs = append(offs, id)
+						}
+						break
+					}
+				}
+			}
+			if seg.AssocType == codestream.MCCAssocMatrixThenOffset {
+				order = append(mats, offs...)
+			} else {
+				order = append(offs, mats...)
+			}
+		}
+		var matF [][]float64
+		var matI [][]int32
+		var offsVals []int32
+		for _, id := range order {
+			for _, m := range d.cs.MCT {
+				if m.Index != id {
+					continue
+				}
+				if int(m.ArrayType) == 1 && m.Rows > 0 && m.Cols > 0 {
+					r := int(m.Rows)
+					c := int(m.Cols)
+					if int(m.ElementType) == 1 {
+						need := r * c * 4
+						if len(m.Data) >= need {
+							matF = make([][]float64, r)
+							off := 0
+							for i := 0; i < r; i++ {
+								matF[i] = make([]float64, c)
+								for j := 0; j < c; j++ {
+									v := uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3])
+									matF[i][j] = float64(math.Float32frombits(v))
+									off += 4
+								}
+							}
+						}
+					} else {
+						need := r * c * 4
+						if len(m.Data) >= need {
+							matI = make([][]int32, r)
+							off := 0
+							for i := 0; i < r; i++ {
+								matI[i] = make([]int32, c)
+								for j := 0; j < c; j++ {
+									v := int32(uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3]))
+									matI[i][j] = v
+									off += 4
+								}
+							}
+						}
+					}
+				} else if int(m.ElementType) == 0 && int(m.ArrayType) == 2 && m.Rows > 0 && m.Cols > 0 {
+					r := int(m.Rows)
+					c := int(m.Cols)
+					if c == 1 && r == len(compIDs) {
+						need := r * 4
+						if len(m.Data) >= need {
+							offsVals = make([]int32, r)
+							off := 0
+							for i := 0; i < r; i++ {
+								v := int32(uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3]))
+								offsVals[i] = v
+								off += 4
+							}
+						}
+					}
+				}
+			}
+		}
+		b := mctBinding{compIDs: compIDs, matrixF: matF, matrixI: matI, offsets: offsVals, normScale: norm, reversible: (prec & codestream.MCOPrecisionReversibleFlag) != 0, rounding: prec & codestream.MCOPrecisionRoundingMask}
+		d.bindings = append(d.bindings, b)
 	}
 }
 
@@ -273,7 +675,110 @@ func (d *Decoder) decodeTiles() error {
 	}
 
 	d.data = assembler.GetImageData()
-	if d.cs != nil && d.cs.COD != nil && d.components == 3 {
+	if len(d.bindings) > 0 {
+		width := d.width
+		height := d.height
+		n := width * height
+		for _, b := range d.bindings {
+			if len(b.compIDs) == 0 {
+				continue
+			}
+			m := b.matrixF
+			useInt := false
+			if b.reversible && b.normScale == 0 {
+				b.normScale = 1
+			}
+			if b.reversible && b.normScale == 1 && b.matrixI != nil && len(b.matrixI) == len(b.compIDs) {
+				useInt = true
+			}
+			if useInt {
+				r := len(b.matrixI)
+				c := len(b.matrixI[0])
+				for i := 0; i < n; i++ {
+					out := make([]int32, r)
+					for rr := 0; rr < r; rr++ {
+						var sum int64
+						for kk := 0; kk < c; kk++ {
+							sum += int64(b.matrixI[rr][kk]) * int64(d.data[b.compIDs[kk]][i])
+						}
+						out[rr] = int32(sum)
+					}
+					for rr := 0; rr < r; rr++ {
+						d.data[b.compIDs[rr]][i] = out[rr]
+					}
+				}
+			} else if m != nil && len(m) == len(b.compIDs) {
+				r := len(m)
+				c := len(m[0])
+				for i := 0; i < n; i++ {
+					out := make([]int32, r)
+					for rr := 0; rr < r; rr++ {
+						sum := 0.0
+						for kk := 0; kk < c; kk++ {
+							sum += m[rr][kk] * float64(d.data[b.compIDs[kk]][i])
+						}
+						switch b.rounding {
+						case codestream.MCOPrecisionRoundFloor:
+							out[rr] = int32(math.Floor(sum))
+						case codestream.MCOPrecisionRoundCeil:
+							out[rr] = int32(math.Ceil(sum))
+						case codestream.MCOPrecisionRoundTrunc:
+							if sum >= 0 {
+								out[rr] = int32(math.Floor(sum))
+							} else {
+								out[rr] = int32(math.Ceil(sum))
+							}
+						default:
+							out[rr] = int32(math.Round(sum))
+						}
+					}
+					for rr := 0; rr < r; rr++ {
+						d.data[b.compIDs[rr]][i] = out[rr]
+					}
+				}
+			}
+			if b.offsets != nil && len(b.offsets) == len(b.compIDs) {
+				for idx, cid := range b.compIDs {
+					off := b.offsets[idx]
+					if off != 0 {
+						for i := 0; i < n; i++ {
+							d.data[cid][i] += off
+						}
+					}
+				}
+			}
+		}
+	} else if d.mctInverse != nil && len(d.mctInverse) == d.components {
+		// Apply inverse custom MCT
+		width := d.width
+		height := d.height
+		n := width * height
+		comps := d.components
+		out := make([][]int32, comps)
+		for c := 0; c < comps; c++ {
+			out[c] = make([]int32, n)
+		}
+		for i := 0; i < n; i++ {
+			for r := 0; r < comps; r++ {
+				sum := 0.0
+				for k := 0; k < comps; k++ {
+					sum += d.mctInverse[r][k] * float64(d.data[k][i])
+				}
+				out[r][i] = int32(math.Round(sum))
+			}
+		}
+		d.data = out
+		if d.mctOffsets != nil && len(d.mctOffsets) == d.components {
+			for c := 0; c < comps; c++ {
+				off := d.mctOffsets[c]
+				if off != 0 {
+					for i := 0; i < n; i++ {
+						d.data[c][i] += off
+					}
+				}
+			}
+		}
+	} else if d.cs != nil && d.cs.COD != nil && d.components == 3 {
 		if d.cs.COD.MultipleComponentTransform == 1 {
 			if d.cs.COD.Transformation == 1 {
 				r, g, b := colorspace.ApplyInverseRCTToComponents(d.data[0], d.data[1], d.data[2])

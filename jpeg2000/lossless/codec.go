@@ -23,9 +23,14 @@ func NewCodec() *Codec {
 
 // NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
 func NewCodecWithTransferSyntax(ts *transfer.Syntax) *Codec {
-	return &Codec{
-		transferSyntax: ts,
-	}
+    return &Codec{
+        transferSyntax: ts,
+    }
+}
+
+// NewPart2MultiComponentLosslessCodec creates a JPEG 2000 Part 2 Multi-component Lossless codec (UID .92)
+func NewPart2MultiComponentLosslessCodec() *Codec {
+    return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponentLosslessOnly)
 }
 
 // Name returns the codec name
@@ -80,7 +85,36 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		int(src.BitsStored),
 		src.PixelRepresentation != 0,
 	)
-	encParams.NumLevels = losslessParams.NumLevels
+    encParams.NumLevels = losslessParams.NumLevels
+    if params != nil {
+        if v := params.GetParameter("mctMatrix"); v != nil {
+            if m, ok := v.([][]float64); ok { encParams.MCTMatrix = m }
+        }
+        if v := params.GetParameter("inverseMctMatrix"); v != nil {
+            if m, ok := v.([][]float64); ok { encParams.InverseMCTMatrix = m }
+        }
+        if v := params.GetParameter("mctOffsets"); v != nil {
+            if m, ok := v.([]int32); ok { encParams.MCTOffsets = m }
+        }
+        if v := params.GetParameter("mctNormScale"); v != nil {
+            switch x := v.(type) { case float64: encParams.MCTNormScale = x; case float32: encParams.MCTNormScale = float64(x) }
+        }
+        if v := params.GetParameter("mctAssocType"); v != nil {
+            if t, ok := v.(uint8); ok { encParams.MCTAssocType = t }
+        }
+        if v := params.GetParameter("mctMatrixElementType"); v != nil {
+            if t, ok := v.(uint8); ok { encParams.MCTMatrixElementType = t }
+        }
+        if v := params.GetParameter("mcoPrecision"); v != nil {
+            if t, ok := v.(uint8); ok { encParams.MCOPrecision = t }
+        }
+        if v := params.GetParameter("mcoRecordOrder"); v != nil {
+            if arr, ok := v.([]uint8); ok { encParams.MCORecordOrder = arr }
+        }
+        if v := params.GetParameter("mctBindings"); v != nil {
+            if arr, ok := v.([]jpeg2000.MCTBindingParams); ok { encParams.MCTBindings = arr }
+        }
+    }
 
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)
@@ -153,9 +187,9 @@ func RegisterJPEG2000LosslessCodec() {
 
 // RegisterJPEG2000MCLosslessCodec registers JPEG 2000 Part 2 Multi-component lossless codec.
 func RegisterJPEG2000MCLosslessCodec() {
-	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponentLosslessOnly)
-	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
+    registry := codec.GetGlobalRegistry()
+    j2kCodec := NewPart2MultiComponentLosslessCodec()
+    registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
 }
 
 func init() {

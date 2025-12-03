@@ -1,4 +1,4 @@
-﻿# JPEG 2000 Codec - Pure Go Implementation
+# JPEG 2000 Codec - Pure Go Implementation
 
 Pure Go implementation of JPEG 2000 Part 1 (ISO/IEC 15444-1) encoder and decoder for medical imaging (DICOM).
 
@@ -275,3 +275,85 @@ Same as parent project `go-dicom-codec`.
 
 
 
+## Part 2 多分量指南（Multi-component）
+
+### 能力概述
+- 支持在编码端写入并在解码端应用 Part 2 的多分量绑定：`MCT`（矩阵/偏移）、`MCC`（集合/顺序）、`MCO`（选项）
+- 集合语义：`AssocType=1` 顺序执行；`AssocType=2` 先矩阵后偏移；`AssocType=3` 先偏移后矩阵
+- 精度位域：`MCOPrecision` 支持可逆标志与舍入策略；解码端按策略进行 `Round/Floor/Ceil/Trunc`
+- 元素类型：矩阵元素 `float32` 或 `int32`，可配合 `NormScale` 实现可逆整数路径
+
+### 编码端完整流程
+- 构建绑定
+  - 使用 Builder：
+    ```go
+    b := j2k.NewMCTBinding().
+      Assoc(2).
+      Components([]uint16{0,1}).
+      Matrix([][]float64{{1,0},{0,1}}).
+      Inverse([][]float64{{1,0},{0,1}}).
+      Offsets([]int32{5,-5}).
+      ElementType(1).
+      MCOPrecision(1).
+      Build()
+    ```
+- 注入参数（两种 Codec）
+  - Lossless：
+    ```go
+    params := lossless.NewLosslessParameters().WithNumLevels(0).WithMCTBindings([]j2k.MCTBindingParams{b})
+    enc := lossless.NewPart2MultiComponentLosslessCodec()
+    err := enc.Encode(src, dst, params)
+    ```
+  - Lossy：
+    ```go
+    params := lossy.NewLossyParameters().WithQuality(90).WithMCTBindings([]j2k.MCTBindingParams{b})
+    enc := lossy.NewPart2MultiComponentCodec(90)
+    err := enc.Encode(src, dst, params)
+    ```
+
+### 解码端观测与验证
+- 解析码流并观测 `MCT/MCC/MCO`：
+  ```go
+  p := codestream.NewParser(encoded)
+  cs, _ := p.Parse()
+  // 观测标记
+  _ = len(cs.MCT) > 0
+  _ = len(cs.MCC) > 0
+  _ = len(cs.MCO) > 0
+  // 读取 MCC 集合与记录序
+  assoc := cs.MCC[0].AssocType
+  order := cs.MCC[0].MCTIndices
+  // 读取 MCO 选项（归一化/精度/记录序）
+  opts := cs.MCO[0].Options
+  ```
+- 解码器应用顺序与策略：
+  - 顺序来源：优先使用 `MCOOptRecordOrder`，无则使用 `MCC.MCTIndices`；再按 `AssocType` 二次重排
+  - 舍入策略：`MCOPrecisionRoundingMask` 指定 `RoundNearest/Floor/Ceil/Trunc`
+  - 可逆整数路径：当 `MCTMatrixElementType=int32` 且 `NormScale=1` 且 `MCOPrecisionReversibleFlag=1` 时采用纯整数乘加
+
+### 参数与位域说明
+- 编码参数（核心字段）
+  - `MCTBindings`：多个集合绑定（分量子集、矩阵/偏移、顺序、选项、元素类型）
+  - `MCTMatrix/MCTOffsets/InverseMCTMatrix`：全局单集合简化接口（可与 `AssocType`/`RecordOrder` 配合）
+  - `MCTAssocType`：集合语义（1/2/3）
+  - `MCTMatrixElementType`：矩阵元素类型（`0=int32`、`1=float32`）
+  - `MCTNormScale`：矩阵归一化因子（编码写入 `MCOOptNormScale`，解码对逆矩阵进行归一化）
+  - `MCOPrecision`：精度位域（见下）
+  - `MCORecordOrder`：显式记录顺序
+- `MCOPrecision` 位域
+  - `0x01` 可逆标志（`MCOPrecisionReversibleFlag`）
+  - `0x02` 整数偏好（`MCOPrecisionPreferInt`）
+  - `0x0C` 舍入掩码（`MCOPrecisionRoundingMask`）：
+    - `0x00` RoundNearest
+    - `0x04` Floor
+    - `0x08` Ceil
+    - `0x0C` Trunc
+
+### Part 2 外观构造函数
+- Lossless：`lossless.NewPart2MultiComponentLosslessCodec()`（UID `.92`）
+- Lossy：`lossy.NewPart2MultiComponentCodec(quality)`（UID `.93`）
+
+### 兼容性与默认行为
+- 不设置 `MCTBindings` 时完全走 Part 1 路径
+- 设置绑定时自动写 `MCT/MCC/MCO` 并在解码端应用集合语义与精度策略
+- 现有所有测试通过，默认行为不变

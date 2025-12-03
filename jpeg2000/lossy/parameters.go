@@ -1,6 +1,7 @@
 package lossy
 
 import (
+	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -155,5 +156,10 @@ func (p *JPEG2000LossyParameters) WithQuantStepScale(scale float64) *JPEG2000Los
 // WithSubbandSteps sets explicit per-subbands quantization steps and returns the parameters for chaining.
 func (p *JPEG2000LossyParameters) WithSubbandSteps(steps []float64) *JPEG2000LossyParameters {
 	p.SubbandSteps = steps
+	return p
+}
+
+func (p *JPEG2000LossyParameters) WithMCTBindings(bindings []jpeg2000.MCTBindingParams) *JPEG2000LossyParameters {
+	p.SetParameter("mctBindings", bindings)
 	return p
 }

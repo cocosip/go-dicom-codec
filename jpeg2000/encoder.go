@@ -66,6 +66,33 @@ type EncodeParams struct {
 	ROI *ROIParams // Optional single-rectangle ROI with MaxShift
 	// ROIConfig supports multiple ROI entries (MVP: multiple rectangles, MaxShift only)
 	ROIConfig *ROIConfig
+
+	// Custom multi-component transform (Part 2 style, experimental)
+	// If provided, overrides default RCT/ICT for multi-component images.
+	MCTMatrix        [][]float64
+	InverseMCTMatrix [][]float64
+	MCTReversible    bool
+
+	// Optional per-component offsets (Part 2 offset array)
+	MCTOffsets           []int32
+	MCTNormScale         float64
+	MCTAssocType         uint8
+	MCTMatrixElementType uint8 // 0=int32, 1=float32 (default)
+	MCOPrecision         uint8
+	MCORecordOrder       []uint8
+	MCTBindings          []MCTBindingParams
+}
+
+type MCTBindingParams struct {
+	AssocType      uint8
+	ComponentIDs   []uint16
+	MCTRecordOrder []uint8
+	MCOPrecision   uint8
+	MCONormScale   float64
+	Matrix         [][]float64
+	Inverse        [][]float64
+	Offsets        []int32
+	ElementType    uint8
 }
 
 // DefaultEncodeParams returns default encoding parameters for lossless encoding
@@ -125,7 +152,9 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert pixel data: %w", err)
 	}
 
-	if e.params.Components == 3 {
+	if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
+		e.applyCustomMCT()
+	} else if e.params.Components == 3 {
 		if e.params.Lossless {
 			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 			e.data[0], e.data[1], e.data[2] = y, cb, cr
@@ -171,7 +200,9 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 		copy(e.data[i], componentData[i])
 	}
 
-	if e.params.Components == 3 {
+	if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
+		e.applyCustomMCT()
+	} else if e.params.Components == 3 {
 		if e.params.Lossless {
 			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 			e.data[0], e.data[1], e.data[2] = y, cb, cr
@@ -325,6 +356,11 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 		return nil, fmt.Errorf("failed to write COM: %w", err)
 	}
 
+	// Write MCT/MCC (Part 2-style) if provided
+	if err := e.writeMCTAndMCC(buf); err != nil {
+		return nil, fmt.Errorf("failed to write MCT/MCC: %w", err)
+	}
+
 	// Write tiles
 	if err := e.writeTiles(buf); err != nil {
 		return nil, fmt.Errorf("failed to write tiles: %w", err)
@@ -336,6 +372,367 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// applyCustomMCT applies a custom multi-component transform from params.MCTMatrix
+func (e *Encoder) applyCustomMCT() {
+	p := e.params
+	if p.MCTMatrix == nil || len(p.MCTMatrix) != p.Components {
+		return
+	}
+	width := p.Width
+	height := p.Height
+	n := width * height
+	comps := p.Components
+	out := make([][]int32, comps)
+	for c := 0; c < comps; c++ {
+		out[c] = make([]int32, n)
+	}
+	if p.MCTMatrixElementType == 0 && p.MCTReversible && p.MCTNormScale == 1 {
+		im := make([][]int32, comps)
+		for r := 0; r < comps; r++ {
+			im[r] = make([]int32, comps)
+			for k := 0; k < comps; k++ {
+				im[r][k] = int32(math.Round(p.MCTMatrix[r][k]))
+			}
+		}
+		for i := 0; i < n; i++ {
+			for r := 0; r < comps; r++ {
+				var sum int64
+				for k := 0; k < comps; k++ {
+					sum += int64(im[r][k]) * int64(e.data[k][i])
+				}
+				out[r][i] = int32(sum)
+			}
+		}
+	} else {
+		scale := p.MCTNormScale
+		if scale == 0 {
+			scale = 1
+		}
+		for i := 0; i < n; i++ {
+			for r := 0; r < comps; r++ {
+				sum := 0.0
+				for k := 0; k < comps; k++ {
+					sum += (p.MCTMatrix[r][k] * scale) * float64(e.data[k][i])
+				}
+				out[r][i] = int32(math.Round(sum))
+			}
+		}
+	}
+	e.data = out
+}
+
+// writeMCTAndMCC writes Part 2 MCT/MCC markers carrying the custom inverse matrix (experimental)
+func (e *Encoder) writeMCTAndMCC(buf *bytes.Buffer) error {
+	p := e.params
+	if len(p.MCTBindings) > 0 {
+		nextID := uint8(0)
+		for idx, b := range p.MCTBindings {
+			rows := len(b.Matrix)
+			cols := len(b.Matrix[0])
+			mct := &bytes.Buffer{}
+			mct.WriteByte(nextID)
+			et := b.ElementType
+			if et == 0 {
+				et = 1
+			}
+			mct.WriteByte(et)
+			mct.WriteByte(1)
+			_ = binary.Write(mct, binary.BigEndian, uint16(rows))
+			_ = binary.Write(mct, binary.BigEndian, uint16(cols))
+			rev := byte(0)
+			mct.WriteByte(rev)
+			inv := b.Inverse
+			if inv == nil || len(inv) != rows {
+				inv = make([][]float64, rows)
+				for r := 0; r < rows; r++ {
+					inv[r] = make([]float64, cols)
+					for c := 0; c < cols; c++ {
+						if r == c {
+							inv[r][c] = 1
+						}
+					}
+				}
+			}
+			if et == 1 {
+				for r := 0; r < rows; r++ {
+					for c := 0; c < cols; c++ {
+						_ = binary.Write(mct, binary.BigEndian, math.Float32bits(float32(inv[r][c])))
+					}
+				}
+			} else {
+				scale := b.MCONormScale
+				if scale == 0 {
+					scale = 1
+				}
+				for r := 0; r < rows; r++ {
+					for c := 0; c < cols; c++ {
+						val := int32(math.Round(inv[r][c] * scale))
+						_ = binary.Write(mct, binary.BigEndian, uint32(val))
+					}
+				}
+			}
+			if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCT); err != nil {
+				return err
+			}
+			mctLen := uint16(2 + mct.Len())
+			if err := binary.Write(buf, binary.BigEndian, mctLen); err != nil {
+				return err
+			}
+			if _, err := buf.Write(mct.Bytes()); err != nil {
+				return err
+			}
+			mcc := &bytes.Buffer{}
+			mcc.WriteByte(uint8(idx))
+			assoc := b.AssocType
+			if assoc == 0 {
+				assoc = 1
+			}
+			mcc.WriteByte(assoc)
+			_ = binary.Write(mcc, binary.BigEndian, uint16(len(b.ComponentIDs)))
+			for _, cid := range b.ComponentIDs {
+				_ = binary.Write(mcc, binary.BigEndian, cid)
+			}
+			var order []uint8
+			if len(b.MCTRecordOrder) > 0 {
+				order = b.MCTRecordOrder
+			} else if b.Offsets != nil && len(b.Offsets) == len(b.ComponentIDs) {
+				order = []uint8{nextID, nextID + 1}
+			} else {
+				order = []uint8{nextID}
+			}
+			mcc.WriteByte(uint8(len(order)))
+			for _, id := range order {
+				mcc.WriteByte(id)
+			}
+			if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCC); err != nil {
+				return err
+			}
+			mccLen := uint16(2 + mcc.Len())
+			if err := binary.Write(buf, binary.BigEndian, mccLen); err != nil {
+				return err
+			}
+			if _, err := buf.Write(mcc.Bytes()); err != nil {
+				return err
+			}
+			if b.Offsets != nil && len(b.Offsets) == len(b.ComponentIDs) {
+				off := &bytes.Buffer{}
+				off.WriteByte(nextID + 1)
+				off.WriteByte(0)
+				off.WriteByte(2)
+				_ = binary.Write(off, binary.BigEndian, uint16(len(b.ComponentIDs)))
+				_ = binary.Write(off, binary.BigEndian, uint16(1))
+				off.WriteByte(0)
+				for i := 0; i < len(b.ComponentIDs); i++ {
+					_ = binary.Write(off, binary.BigEndian, uint32(b.Offsets[i]))
+				}
+				if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCT); err != nil {
+					return err
+				}
+				offLen := uint16(2 + off.Len())
+				if err := binary.Write(buf, binary.BigEndian, offLen); err != nil {
+					return err
+				}
+				if _, err := buf.Write(off.Bytes()); err != nil {
+					return err
+				}
+			}
+			if b.MCONormScale != 0 || b.MCOPrecision != 0 || len(b.MCTRecordOrder) > 0 {
+				mco := &bytes.Buffer{}
+				mco.WriteByte(uint8(idx))
+				if b.MCONormScale != 0 {
+					mco.WriteByte(codestream.MCOOptNormScale)
+					_ = binary.Write(mco, binary.BigEndian, math.Float32bits(float32(b.MCONormScale)))
+				}
+				if b.MCOPrecision != 0 {
+					mco.WriteByte(codestream.MCOOptPrecision)
+					mco.WriteByte(b.MCOPrecision)
+				}
+				if len(b.MCTRecordOrder) > 0 {
+					mco.WriteByte(codestream.MCOOptRecordOrder)
+					mco.WriteByte(uint8(len(b.MCTRecordOrder)))
+					for _, id := range b.MCTRecordOrder {
+						mco.WriteByte(id)
+					}
+				}
+				if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCO); err != nil {
+					return err
+				}
+				mcoLen := uint16(2 + mco.Len())
+				if err := binary.Write(buf, binary.BigEndian, mcoLen); err != nil {
+					return err
+				}
+				if _, err := buf.Write(mco.Bytes()); err != nil {
+					return err
+				}
+			}
+			nextID += 2
+		}
+		return nil
+	}
+	if p.MCTMatrix == nil || len(p.MCTMatrix) != p.Components {
+		return nil
+	}
+	rows := len(p.MCTMatrix)
+	cols := len(p.MCTMatrix[0])
+	for _, row := range p.MCTMatrix {
+		if len(row) != cols {
+			return nil
+		}
+	}
+	// Build MCT payload aligned to Part 2 (simplified header)
+	// Zmct(1) Ymct(1=FLOAT32) Xmct(1=DECORRELATION) rows(2) cols(2) rev(1) matrix
+	mct := &bytes.Buffer{}
+	mct.WriteByte(0) // Zmct index (decorrelation matrix)
+	et := p.MCTMatrixElementType
+	if et == 0 {
+		et = 1
+	}
+	mct.WriteByte(et) // Ymct element type
+	mct.WriteByte(1)  // Xmct array type: decorrelation matrix
+	_ = binary.Write(mct, binary.BigEndian, uint16(rows))
+	_ = binary.Write(mct, binary.BigEndian, uint16(cols))
+	rev := byte(0)
+	if p.MCTReversible {
+		rev = 1
+	}
+	mct.WriteByte(rev)
+	inv := p.InverseMCTMatrix
+	if inv == nil || len(inv) != rows {
+		inv = make([][]float64, rows)
+		for r := 0; r < rows; r++ {
+			inv[r] = make([]float64, cols)
+			for c := 0; c < cols; c++ {
+				if r == c {
+					inv[r][c] = 1
+				}
+			}
+		}
+	}
+	if et == 1 { // float32
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				_ = binary.Write(mct, binary.BigEndian, math.Float32bits(float32(inv[r][c])))
+			}
+		}
+	} else { // int32
+		scale := p.MCTNormScale
+		if scale == 0 {
+			scale = 1
+		}
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				val := int32(math.Round(inv[r][c] * scale))
+				_ = binary.Write(mct, binary.BigEndian, uint32(val))
+			}
+		}
+	}
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCT); err != nil {
+		return err
+	}
+	mctLen := uint16(2 + mct.Len())
+	if err := binary.Write(buf, binary.BigEndian, mctLen); err != nil {
+		return err
+	}
+	if _, err := buf.Write(mct.Bytes()); err != nil {
+		return err
+	}
+
+	// Build MCC payload aligned to Part 2 (simplified association)
+	// Zmcc(1) Ymcc(1=simple decorrelation) Ncomp(2) compIds(2*N) mctIndex(1)
+	mcc := &bytes.Buffer{}
+	mcc.WriteByte(0) // Zmcc index
+	assoc := p.MCTAssocType
+	if assoc == 0 {
+		assoc = 1
+	}
+	mcc.WriteByte(assoc) // Ymcc type
+	_ = binary.Write(mcc, binary.BigEndian, uint16(p.Components))
+	for i := 0; i < p.Components; i++ {
+		_ = binary.Write(mcc, binary.BigEndian, uint16(i))
+	}
+	// Write record indices
+	if len(p.MCORecordOrder) > 0 {
+		mcc.WriteByte(uint8(len(p.MCORecordOrder)))
+		for _, id := range p.MCORecordOrder {
+			mcc.WriteByte(id)
+		}
+	} else if p.MCTOffsets != nil && len(p.MCTOffsets) == p.Components {
+		// Default order [0,1]: matrix then offset
+		mcc.WriteByte(2)
+		mcc.WriteByte(0)
+		mcc.WriteByte(1)
+	} else {
+		mcc.WriteByte(1)
+		mcc.WriteByte(0)
+	}
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCC); err != nil {
+		return err
+	}
+	mccLen := uint16(2 + mcc.Len())
+	if err := binary.Write(buf, binary.BigEndian, mccLen); err != nil {
+		return err
+	}
+	if _, err := buf.Write(mcc.Bytes()); err != nil {
+		return err
+	}
+
+	// Optional offset record
+	if p.MCTOffsets != nil && len(p.MCTOffsets) == p.Components {
+		off := &bytes.Buffer{}
+		off.WriteByte(1) // Zmct index (offset array)
+		off.WriteByte(0) // Ymct element type: int32
+		off.WriteByte(2) // Xmct array type: offset
+		_ = binary.Write(off, binary.BigEndian, uint16(p.Components))
+		_ = binary.Write(off, binary.BigEndian, uint16(1))
+		off.WriteByte(0) // rev flag not used
+		for i := 0; i < p.Components; i++ {
+			_ = binary.Write(off, binary.BigEndian, uint32(p.MCTOffsets[i]))
+		}
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCT); err != nil {
+			return err
+		}
+		offLen := uint16(2 + off.Len())
+		if err := binary.Write(buf, binary.BigEndian, offLen); err != nil {
+			return err
+		}
+		if _, err := buf.Write(off.Bytes()); err != nil {
+			return err
+		}
+		// We skip writing MCC for offsets (decoder applies when present)
+	}
+
+	if p.MCTNormScale != 0 || p.MCOPrecision != 0 || len(p.MCORecordOrder) > 0 {
+		mco := &bytes.Buffer{}
+		mco.WriteByte(0) // Index
+		if p.MCTNormScale != 0 {
+			mco.WriteByte(codestream.MCOOptNormScale)
+			_ = binary.Write(mco, binary.BigEndian, math.Float32bits(float32(p.MCTNormScale)))
+		}
+		if p.MCOPrecision != 0 {
+			mco.WriteByte(codestream.MCOOptPrecision)
+			mco.WriteByte(p.MCOPrecision)
+		}
+		if len(p.MCORecordOrder) > 0 {
+			mco.WriteByte(codestream.MCOOptRecordOrder)
+			mco.WriteByte(uint8(len(p.MCORecordOrder)))
+			for _, id := range p.MCORecordOrder {
+				mco.WriteByte(id)
+			}
+		}
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerMCO); err != nil {
+			return err
+		}
+		mcoLen := uint16(2 + mco.Len())
+		if err := binary.Write(buf, binary.BigEndian, mcoLen); err != nil {
+			return err
+		}
+		if _, err := buf.Write(mco.Bytes()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal slices.
@@ -464,7 +861,7 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 
 	// MCT - Multiple component transformation (1 for RGB, 0 for grayscale)
 	mct := uint8(0)
-	if p.Components == 3 {
+	if p.Components >= 3 || (p.MCTMatrix != nil && len(p.MCTMatrix) == p.Components) {
 		mct = 1
 	}
 	_ = binary.Write(codData, binary.BigEndian, mct)
@@ -1054,7 +1451,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 
 		// Calculate quantization parameters based on quality
 		quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
-		if e.params.Components >= 3 {
+		if e.params.Components >= 3 && len(quantParams.StepSizes) > 0 {
 			if e.params.Quality >= 95 {
 				quantParams.StepSizes[0] = quantParams.StepSizes[0] * 0.6
 			} else if e.params.Quality >= 85 {

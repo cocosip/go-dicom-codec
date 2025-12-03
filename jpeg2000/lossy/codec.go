@@ -35,6 +35,12 @@ func NewCodecWithTransferSyntax(ts *transfer.Syntax, quality int) *Codec {
 	}
 }
 
+// NewPart2MultiComponentCodec creates a JPEG 2000 Part 2 Multi-component codec (UID .93)
+// quality: 1-100 (default 80 if out of range)
+func NewPart2MultiComponentCodec(quality int) *Codec {
+    return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, quality)
+}
+
 // Name returns the codec name
 func (c *Codec) Name() string {
 	return fmt.Sprintf("JPEG 2000 Lossy (Quality %d)", c.quality)
@@ -159,9 +165,9 @@ func RegisterJPEG2000LossyCodec() {
 
 // RegisterJPEG2000MultiComponentCodec registers JPEG 2000 Part 2 multi-component codec.
 func RegisterJPEG2000MultiComponentCodec() {
-	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, 80)
-	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponent, j2kCodec)
+    registry := codec.GetGlobalRegistry()
+    j2kCodec := NewPart2MultiComponentCodec(80)
+    registry.RegisterCodec(transfer.JPEG2000Part2MultiComponent, j2kCodec)
 }
 
 func init() {
@@ -178,29 +184,56 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 		int(src.BitsStored),
 		src.PixelRepresentation != 0,
 	)
-    encParams.Lossless = false
-    encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
-    encParams.NumLayers = p.NumLayers
-    encParams.Quality = effectiveQuality(p)
-    if int(src.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
-        bump := 10
-        q := encParams.Quality + bump
-        if q > 100 {
-            q = 100
-        }
-        encParams.Quality = q
-    }
+	encParams.Lossless = false
+	encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
+	encParams.NumLayers = p.NumLayers
+	encParams.Quality = effectiveQuality(p)
+	if int(src.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
+		bump := 10
+		q := encParams.Quality + bump
+		if q > 100 {
+			q = 100
+		}
+		encParams.Quality = q
+	}
 
-    if int(src.SamplesPerPixel) >= 3 && int(src.Width) <= 32 && int(src.Height) <= 32 {
-        encParams.Lossless = true
-        if encParams.NumLevels > 1 {
-            encParams.NumLevels = 1
-        }
-    }
+	minDim := int(src.Width)
+	if int(src.Height) < minDim {
+		minDim = int(src.Height)
+	}
+	if int(src.SamplesPerPixel) >= 3 && minDim <= 32 {
+		encParams.Lossless = true
+		if encParams.NumLevels > 1 {
+			encParams.NumLevels = 1
+		}
+	}
+	if encParams.Lossless == false && minDim <= 48 {
+		if encParams.NumLevels > 1 {
+			encParams.NumLevels = 1
+		}
+		if encParams.NumLayers > 2 {
+			encParams.NumLayers = 2
+		}
+		q := encParams.Quality
+		if q < 92 {
+			encParams.Quality = 92
+		}
+	}
 	encParams.TargetRatio = p.TargetRatio
 	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
 
-	encoder := jpeg2000.NewEncoder(encParams)
+    if p != nil {
+        if v := p.GetParameter("mctMatrix"); v != nil { if m, ok := v.([][]float64); ok { encParams.MCTMatrix = m } }
+        if v := p.GetParameter("inverseMctMatrix"); v != nil { if m, ok := v.([][]float64); ok { encParams.InverseMCTMatrix = m } }
+        if v := p.GetParameter("mctOffsets"); v != nil { if m, ok := v.([]int32); ok { encParams.MCTOffsets = m } }
+        if v := p.GetParameter("mctNormScale"); v != nil { switch x := v.(type) { case float64: encParams.MCTNormScale = x; case float32: encParams.MCTNormScale = float64(x) } }
+        if v := p.GetParameter("mctAssocType"); v != nil { if t, ok := v.(uint8); ok { encParams.MCTAssocType = t } }
+        if v := p.GetParameter("mctMatrixElementType"); v != nil { if t, ok := v.(uint8); ok { encParams.MCTMatrixElementType = t } }
+        if v := p.GetParameter("mcoPrecision"); v != nil { if t, ok := v.(uint8); ok { encParams.MCOPrecision = t } }
+        if v := p.GetParameter("mcoRecordOrder"); v != nil { if arr, ok := v.([]uint8); ok { encParams.MCORecordOrder = arr } }
+        if v := p.GetParameter("mctBindings"); v != nil { if arr, ok := v.([]jpeg2000.MCTBindingParams); ok { encParams.MCTBindings = arr } }
+    }
+    encoder := jpeg2000.NewEncoder(encParams)
 	encoded, err := encoder.Encode(src.Data)
 	if err != nil {
 		return nil, fmt.Errorf("JPEG 2000 encode failed: %w", err)

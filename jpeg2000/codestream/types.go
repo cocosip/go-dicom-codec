@@ -9,6 +9,11 @@ type Codestream struct {
 	RGN []RGNSegment // Region of Interest (main header only)
 	COM []COMSegment // Comments (optional)
 
+	// Part 2 Multi-component transform (optional)
+	MCT []MCTSegment
+	MCC []MCCSegment
+	MCO []MCOSegment
+
 	// Tiles
 	Tiles []*Tile
 
@@ -116,6 +121,66 @@ type COMSegment struct {
 	Data []byte // Comment data
 }
 
+type MCTArrayType uint8
+type MCTElementType uint8
+
+const (
+	MCTArrayDecorrelate MCTArrayType = 1
+	MCTArrayOffset      MCTArrayType = 2
+)
+
+const (
+	MCTElementInt32   MCTElementType = 0
+	MCTElementFloat32 MCTElementType = 1
+)
+
+type MCTSegment struct {
+	Index       uint8
+	ElementType MCTElementType
+	ArrayType   MCTArrayType
+	Rows        uint16
+	Cols        uint16
+	Reversible  bool
+	Data        []byte
+}
+
+type MCCSegment struct {
+    Index         uint8
+    AssocType     uint8
+    NumComponents uint16
+    ComponentIDs  []uint16
+    MCTIndices    []uint8
+}
+
+// MCC association semantics (experimental)
+const (
+    MCCAssocSimpleSequence     = 1 // Apply records in the given order
+    MCCAssocMatrixThenOffset   = 2 // Apply decorrelation matrix first, then offsets
+    MCCAssocOffsetThenMatrix   = 3 // Apply offsets first, then decorrelation matrix
+)
+
+// MCO option types (experimental)
+const (
+    MCOOptNormScale   = 1 // float32 normalization scale
+    MCOOptPrecision   = 2 // uint8 precision flags
+    MCOOptRecordOrder = 3 // explicit record order: [count][indices...]
+)
+
+const (
+    MCOPrecisionReversibleFlag = 0x1
+    MCOPrecisionPreferInt      = 0x2
+    MCOPrecisionRoundingMask   = 0xC
+    MCOPrecisionRoundNearest   = 0x0
+    MCOPrecisionRoundFloor     = 0x4
+    MCOPrecisionRoundCeil      = 0x8
+    MCOPrecisionRoundTrunc     = 0xC
+)
+
+type MCOSegment struct {
+	Index   uint8
+	Options []byte
+}
+
 // RGNSegment - Region of Interest marker segment (MaxShift)
 // ISO/IEC 15444-1 A.6.3
 type RGNSegment struct {
@@ -126,12 +191,12 @@ type RGNSegment struct {
 
 // Tile represents a single tile in the codestream
 type Tile struct {
-	Index int            // Tile index
-	SOT   *SOTSegment    // Start of tile
-	COD   *CODSegment    // Coding style (optional, overrides default)
-	QCD   *QCDSegment    // Quantization (optional, overrides default)
-	RGN   []*RGNSegment  // ROI (optional, tile-specific ROI)
-	Data  []byte         // Compressed tile data (after SOD marker)
+	Index int           // Tile index
+	SOT   *SOTSegment   // Start of tile
+	COD   *CODSegment   // Coding style (optional, overrides default)
+	QCD   *QCDSegment   // Quantization (optional, overrides default)
+	RGN   []*RGNSegment // ROI (optional, tile-specific ROI)
+	Data  []byte        // Compressed tile data (after SOD marker)
 
 	// Decoded components (filled during decode)
 	Components []*TileComponent

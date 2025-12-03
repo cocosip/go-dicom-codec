@@ -1,6 +1,7 @@
 package lossless
 
 import (
+	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -69,5 +70,10 @@ func (p *JPEG2000LosslessParameters) Validate() error {
 // WithNumLevels sets the number of decomposition levels and returns the parameters for chaining
 func (p *JPEG2000LosslessParameters) WithNumLevels(numLevels int) *JPEG2000LosslessParameters {
 	p.NumLevels = numLevels
+	return p
+}
+
+func (p *JPEG2000LosslessParameters) WithMCTBindings(bindings []jpeg2000.MCTBindingParams) *JPEG2000LosslessParameters {
+	p.SetParameter("mctBindings", bindings)
 	return p
 }

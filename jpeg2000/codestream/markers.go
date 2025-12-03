@@ -65,11 +65,16 @@ const (
 
 // Informational marker segments
 const (
-	// MarkerCRG - Component registration
-	MarkerCRG uint16 = 0xFF63
+    // MarkerCRG - Component registration
+    MarkerCRG uint16 = 0xFF63
 
-	// MarkerCOM - Comment
-	MarkerCOM uint16 = 0xFF64
+    // MarkerCOM - Comment
+    MarkerCOM uint16 = 0xFF64
+
+    // Part 2 Multi-component transform markers (ISO/IEC 15444-2)
+    MarkerMCT uint16 = 0xFF74 // Multi-component Transform
+    MarkerMCC uint16 = 0xFF75 // Multiple Component Collection
+    MarkerMCO uint16 = 0xFF77 // MCT options
 )
 
 // MarkerName returns the name of a marker code
@@ -115,15 +120,23 @@ func MarkerName(marker uint16) string {
 	case MarkerPPT:
 		return "PPT"
 
-	// Informational
-	case MarkerCRG:
-		return "CRG"
-	case MarkerCOM:
-		return "COM"
+    // Informational
+    case MarkerCRG:
+        return "CRG"
+    case MarkerCOM:
+        return "COM"
 
-	default:
-		return "UNKNOWN"
-	}
+    // Part 2 MCT/MCC
+    case MarkerMCT:
+        return "MCT"
+    case MarkerMCC:
+        return "MCC"
+    case MarkerMCO:
+        return "MCO"
+
+    default:
+        return "UNKNOWN"
+    }
 }
 
 // HasLength returns true if the marker has a length field

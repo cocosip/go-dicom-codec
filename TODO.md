@@ -360,11 +360,23 @@
 2. 中优先级: 全局 R-D 优化（质量提升）
 3. 低优先级: 高级预算策略（边际收益）
 
-### 4.4 JPEG 2000 Multi-component (1.2.840.10008.1.2.4.92/93) ⏳
-- [ ] **UIDs**: 1.2.840.10008.1.2.4.92 (Lossless), .93 (Lossy)
-- [ ] **功能**: JPEG 2000 Part 2 多分量支持
-- [ ] 支持多光谱图像
-- [ ] 创建 `Codec` 实现并注册
+### 4.4 JPEG 2000 Multi-component (1.2.840.10008.1.2.4.92/93) ✅ （基础能力已完成，2025-12-04）
+- [x] **UIDs**: 1.2.840.10008.1.2.4.92 (Lossless), .93 (Lossy)
+- [x] **基础能力**: Part 2 多分量（MCT/MCC/MCO）写入与解码应用
+  - [x] MCT：支持矩阵（float32/int32）与偏移记录，`NormScale` 归一化
+  - [x] MCC：集合/分量子集绑定，`AssocType` 顺序语义（矩阵→偏移/偏移→矩阵）
+  - [x] MCO：选项解析（`NormScale`、`Precision`、`RecordOrder`）与顺序覆写
+  - [x] 精度位域：`MCOPrecision` 可逆标志与舍入策略（Round/Floor/Ceil/Trunc）
+  - [x] 严格可逆整数路径：`int32` 元素 + `NormScale=1` + 可逆标志
+- [x] 编码器参数映射：`mctBindings`、`mctMatrix`、`inverseMctMatrix`、`mctOffsets`、`mctNormScale`、`mctAssocType`、`mctMatrixElementType`、`mcoPrecision`、`mcoRecordOrder`
+- [x] Builder API：`NewMCTBinding()` 链式构建器
+- [x] Codec 外观构造函数：
+  - [x] Lossless：`NewPart2MultiComponentLosslessCodec()`
+  - [x] Lossy：`NewPart2MultiComponentCodec(quality)`
+- [x] 文档：README 增加 Part 2 多分量指南与示例
+- [x] 示例：`examples/jpeg2000_part2_multicomponent_example.go`
+- [x] 测试：多分量绑定、精度位域/舍入策略、参数注入路径
+- [ ] 扩展：多集合复杂组合与更全面的互操作性测试
 
 ### 4.5 JPEG 2000 High-Throughput (HTJ2K) (1.2.840.10008.1.2.4.201/202/203) 🔬
 - [x] **UIDs**:
@@ -482,16 +494,17 @@
 
 ### 7.2 使用指南
 - [x] README.md 基础版本
+- [x] Part 2 多分量使用指南（README 完整流程与参数/位域说明）
 - [ ] 详细使用文档
 - [ ] 各编解码器的最佳实践
 - [ ] 性能调优指南
 
 ### 7.3 示例代码
-- [ ] 创建 `examples/` 目录
+- [x] 创建 `examples/` 目录
   - [ ] JPEG Baseline 示例
   - [ ] JPEG Lossless 示例
   - [ ] JPEG-LS 示例
-  - [ ] JPEG 2000 示例
+  - [x] JPEG 2000 示例（Part 2 多分量）
   - [ ] 与 DICOM 库集成示例
   - [ ] 批量处理示例
 
