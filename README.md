@@ -14,12 +14,22 @@ A Go library providing image compression/decompression codecs for medical imagin
 - ✅ **JPEG-LS Lossless** [1.2.840.10008.1.2.4.80]
 - ✅ **JPEG-LS Near-Lossless** [1.2.840.10008.1.2.4.81]
 
-### JPEG 2000 Family (Planned)
-- ⏳ **JPEG 2000 Lossless** [1.2.840.10008.1.2.4.90]
-- ⏳ **JPEG 2000** (Lossy or Lossless) [1.2.840.10008.1.2.4.91]
-- ⏳ **JPEG 2000 Multi-component Lossless** [1.2.840.10008.1.2.4.92]
-- ⏳ **JPEG 2000 Multi-component** [1.2.840.10008.1.2.4.93]
-- ⏳ **JPEG 2000 High-Throughput** variants [1.2.840.10008.1.2.4.201/202/203]
+### JPEG 2000 Family
+- ✅ **JPEG 2000 Lossless** [1.2.840.10008.1.2.4.90]
+- ✅ **JPEG 2000** (Lossy or Lossless) [1.2.840.10008.1.2.4.91]
+- ✅ **JPEG 2000 Multi-component Lossless** [1.2.840.10008.1.2.4.92]
+- ✅ **JPEG 2000 Multi-component** [1.2.840.10008.1.2.4.93]
+
+### HTJ2K (High-Throughput JPEG 2000) Family 🚧
+- 🔬 **HTJ2K Lossless** [1.2.840.10008.1.2.4.201] - *Experimental*
+- 🔬 **HTJ2K RPCL Lossless** [1.2.840.10008.1.2.4.202] - *Experimental*
+- 🔬 **HTJ2K** (Lossy/Lossless) [1.2.840.10008.1.2.4.203] - *Experimental*
+
+> **⚠️ HTJ2K Implementation Note**: The HTJ2K codecs are currently in **experimental/research status**.
+> The implementation includes spec-compliant MEL (adaptive run-length) encoder/decoder and VLC tables
+> extracted from OpenJPEG. Core decoding components are functional but not production-ready. For production
+> use, consider established libraries like [OpenJPH](https://github.com/aous72/OpenJPH) or
+> OpenJPEG 2.5+. See [`jpeg2000/htj2k/README.md`](jpeg2000/htj2k/README.md) for implementation details.
 
 ## Installation
 

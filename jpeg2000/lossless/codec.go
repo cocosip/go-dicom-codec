@@ -5,7 +5,6 @@ import (
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
-	"github.com/cocosip/go-dicom/pkg/dicom/uid"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -43,10 +42,6 @@ func (c *Codec) TransferSyntax() *transfer.Syntax {
 func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
 	if src == nil || dst == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
-	}
-
-	if isHTJ2K(c.transferSyntax) {
-		return fmt.Errorf("HTJ2K lossless encode not implemented for transfer syntax %s", c.transferSyntax.UID().UID())
 	}
 
 	// Validate input data
@@ -119,10 +114,6 @@ func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	if isHTJ2K(c.transferSyntax) {
-		return fmt.Errorf("HTJ2K lossless decode not implemented for transfer syntax %s", c.transferSyntax.UID().UID())
-	}
-
 	// Validate input data
 	if len(src.Data) == 0 {
 		return fmt.Errorf("source pixel data is empty")
@@ -167,33 +158,7 @@ func RegisterJPEG2000MCLosslessCodec() {
 	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
 }
 
-// RegisterHTJ2KLosslessCodec registers HTJ2K lossless codec placeholder.
-func RegisterHTJ2KLosslessCodec() {
-	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodecWithTransferSyntax(transfer.HTJ2KLossless)
-	registry.RegisterCodec(transfer.HTJ2KLossless, j2kCodec)
-}
-
-// RegisterHTJ2KLosslessRPCLCodec registers HTJ2K RPCL lossless codec placeholder.
-func RegisterHTJ2KLosslessRPCLCodec() {
-	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodecWithTransferSyntax(transfer.HTJ2KLosslessRPCL)
-	registry.RegisterCodec(transfer.HTJ2KLosslessRPCL, j2kCodec)
-}
-
 func init() {
 	RegisterJPEG2000LosslessCodec()
 	RegisterJPEG2000MCLosslessCodec()
-	RegisterHTJ2KLosslessCodec()
-	RegisterHTJ2KLosslessRPCLCodec()
-}
-
-func isHTJ2K(ts *transfer.Syntax) bool {
-	if ts == nil {
-		return false
-	}
-	u := ts.UID().UID()
-	return u == uid.HTJ2KLossless.UID() ||
-		u == uid.HTJ2KLosslessRPCL.UID() ||
-		u == uid.HTJ2K.UID()
 }
