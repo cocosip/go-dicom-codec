@@ -31,6 +31,10 @@ type EncodeParams struct {
 	CodeBlockWidth  int  // Code-block width (power of 2, typically 64)
 	CodeBlockHeight int  // Code-block height (power of 2, typically 64)
 
+	// Precinct parameters (0 = use default size of 2^15 = 32768)
+	PrecinctWidth  int // Precinct width (power of 2, e.g., 128, 256, 512)
+	PrecinctHeight int // Precinct height (power of 2, e.g., 128, 256, 512)
+
 	// Lossy compression quality (1-100, only used when Lossless=false)
 	// Higher values = better quality, lower compression
 	// 100 = minimal quantization (near-lossless)
@@ -65,6 +69,8 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		Quality:          80, // Default quality for lossy mode
 		CodeBlockWidth:   64,
 		CodeBlockHeight:  64,
+		PrecinctWidth:    0, // Default (2^15)
+		PrecinctHeight:   0, // Default (2^15)
 		ProgressionOrder: 0, // LRCP
 		NumLayers:        1,
 		ROI:              nil,
@@ -411,7 +417,11 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	codData := &bytes.Buffer{}
 
 	// Scod - Coding style parameters
+	// Bit 0: Precinct defined (1 if custom precinct sizes are used)
 	scod := uint8(0)
+	if p.PrecinctWidth > 0 || p.PrecinctHeight > 0 {
+		scod |= 0x01 // Enable precinct sizes
+	}
 	_ = binary.Write(codData, binary.BigEndian, scod)
 
 	// SGcod - Progression order and layers
@@ -451,12 +461,211 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	}
 	_ = binary.Write(codData, binary.BigEndian, transform)
 
+	// Write precinct sizes if enabled (Scod bit 0 = 1)
+	if scod&0x01 != 0 {
+		// One precinct size per resolution level (numLevels + 1)
+		numResolutions := p.NumLevels + 1
+		for r := 0; r < numResolutions; r++ {
+			// Calculate precinct size for this resolution level
+			// Default precinct size is 2^15 (32768) if not specified
+			ppx, ppy := e.getPrecinctSizeExponents(r)
+
+			// Pack PPx and PPy into single byte: PPy (high 4 bits) | PPx (low 4 bits)
+			ppxppy := (ppy << 4) | ppx
+			_ = binary.Write(codData, binary.BigEndian, ppxppy)
+		}
+	}
+
 	// Write marker and length
 	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerCOD))
 	_ = binary.Write(buf, binary.BigEndian, uint16(codData.Len()+2))
 	buf.Write(codData.Bytes())
 
 	return nil
+}
+
+// getPrecinctSize returns the actual precinct dimensions (in pixels) for a given resolution level
+func (e *Encoder) getPrecinctSize(resolutionLevel int) (width, height int) {
+	ppx, ppy := e.getPrecinctSizeExponents(resolutionLevel)
+	return 1 << ppx, 1 << ppy
+}
+
+// calculatePrecinctIndex calculates the precinct index for a code-block
+// based on its position within the resolution level
+// In JPEG 2000, precincts are defined at the resolution level, and all subbands
+// at the same resolution share the same precinct partitioning
+// cbX0, cbY0 are in the **resolution reference grid** (not global wavelet space)
+func (e *Encoder) calculatePrecinctIndex(cbX0, cbY0, resolutionLevel int) int {
+	// Get precinct dimensions for this resolution
+	precinctWidth, precinctHeight := e.getPrecinctSize(resolutionLevel)
+
+	// Get resolution dimensions
+	resWidth, _ := e.getResolutionDimensions(resolutionLevel)
+
+	// Calculate precinct grid position
+	px := cbX0 / precinctWidth
+	py := cbY0 / precinctHeight
+
+	// Calculate number of precincts in X direction based on resolution dimensions
+	numPrecinctX := (resWidth + precinctWidth - 1) / precinctWidth
+
+	// Linear precinct index
+	return py*numPrecinctX + px
+}
+
+// toResolutionCoordinates converts global wavelet coordinates to resolution reference grid coordinates
+// For resolution 0 (LL subband), the coordinates are already in the correct space
+// For resolution > 0, we need to map based on the subband type:
+//   HL (band=1): coordinates are at offset (subbandWidth, 0)
+//   LH (band=2): coordinates are at offset (0, subbandHeight)
+//   HH (band=3): coordinates are at offset (subbandWidth, subbandHeight)
+func (e *Encoder) toResolutionCoordinates(globalX, globalY, resolutionLevel, band int) (int, int) {
+	if resolutionLevel == 0 {
+		// LL subband - coordinates are already correct
+		return globalX, globalY
+	}
+
+	// For resolution > 0, get subband dimensions
+	subbandWidth, subbandHeight := e.getSubbandDimensions(resolutionLevel)
+
+	// Map coordinates based on subband type
+	// In the wavelet transform, subbands are laid out as:
+	// +----+----+
+	// | LL | HL |
+	// +----+----+
+	// | LH | HH |
+	// +----+----+
+	// So we need to subtract the subband offset to get resolution-local coordinates
+	resX := globalX
+	resY := globalY
+
+	switch band {
+	case 0: // LL (shouldn't happen for res > 0)
+		// Already correct
+	case 1: // HL (high-low) - right of LL
+		resX = globalX - subbandWidth
+	case 2: // LH (low-high) - below LL
+		resY = globalY - subbandHeight
+	case 3: // HH (high-high) - diagonal from LL
+		resX = globalX - subbandWidth
+		resY = globalY - subbandHeight
+	}
+
+	return resX, resY
+}
+
+// getSubbandDimensions returns the dimensions of a subband at a resolution level
+func (e *Encoder) getSubbandDimensions(resolutionLevel int) (width, height int) {
+	// For resolution level r:
+	// - r=0: LL subband dimensions = image / (2^numLevels)
+	// - r>0: HL/LH/HH subband dimensions = image / (2^(numLevels - r + 1))
+	//
+	// Simplified: All subbands at any resolution have the same calculation
+	// subbandWidth = imageWidth >> (numLevels - resolutionLevel + 1) for res > 0
+	// subbandWidth = imageWidth >> numLevels for res == 0
+
+	if resolutionLevel == 0 {
+		// LL subband
+		width = e.params.Width >> e.params.NumLevels
+		height = e.params.Height >> e.params.NumLevels
+	} else {
+		// HL/LH/HH subbands
+		// These come from decomposition level (numLevels - resolutionLevel + 1)
+		level := e.params.NumLevels - resolutionLevel + 1
+		if level < 0 {
+			level = 0
+		}
+		width = e.params.Width >> level
+		height = e.params.Height >> level
+	}
+
+	// Ensure minimum size of 1
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	return width, height
+}
+
+// getResolutionDimensions returns the dimensions of a resolution level
+func (e *Encoder) getResolutionDimensions(resolutionLevel int) (width, height int) {
+	// For resolution level r:
+	// - r=0: LL subband (lowest resolution) = image / (2^numLevels)
+	// - r=1: includes HL/LH/HH at decomposition level (numLevels-1) = image / (2^(numLevels-1))
+	// - r=numLevels: highest resolution = full image
+	//
+	// Formula: width = imageWidth / (2^(numLevels - resolutionLevel))
+
+	divisor := e.params.NumLevels - resolutionLevel
+	if divisor < 0 {
+		divisor = 0
+	}
+
+	width = e.params.Width >> divisor
+	height = e.params.Height >> divisor
+
+	// Ensure minimum size of 1
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	return width, height
+}
+
+// getPrecinctSizeExponents returns the precinct size exponents (PPx, PPy) for a given resolution level
+// PPx and PPy are stored as log2 values (e.g., PPx=7 means width=2^7=128)
+// ISO/IEC 15444-1 specifies that precinct sizes should be adjusted per resolution level
+func (e *Encoder) getPrecinctSizeExponents(resolutionLevel int) (ppx, ppy uint8) {
+	p := e.params
+
+	// Default precinct size is 2^15 (32768) if not specified
+	precinctWidth := p.PrecinctWidth
+	precinctHeight := p.PrecinctHeight
+
+	if precinctWidth == 0 {
+		precinctWidth = 1 << 15 // 32768
+	}
+	if precinctHeight == 0 {
+		precinctHeight = 1 << 15 // 32768
+	}
+
+	// Calculate exponents (log2)
+	ppx = uint8(log2(precinctWidth))
+	ppy = uint8(log2(precinctHeight))
+
+	// For lower resolution levels, precincts should be smaller
+	// Clamp to resolution size to avoid precincts larger than the resolution
+	// At resolution level r, the image dimensions are divided by 2^(numLevels - r)
+	if resolutionLevel < p.NumLevels {
+		// Lower resolution levels - reduce precinct size
+		maxPPx := uint8(15) // Max allowed by standard
+		maxPPy := uint8(15)
+
+		// Clamp to reasonable values
+		if ppx > maxPPx {
+			ppx = maxPPx
+		}
+		if ppy > maxPPy {
+			ppy = maxPPy
+		}
+	}
+
+	// PPx and PPy must be at least 0 (meaning 2^0 = 1 pixel minimum)
+	// and at most 15 (meaning 2^15 = 32768 pixels maximum)
+	if ppx > 15 {
+		ppx = 15
+	}
+	if ppy > 15 {
+		ppy = 15
+	}
+
+	return ppx, ppy
 }
 
 // writeQCD writes the QCD (Quantization Default) segment
@@ -938,8 +1147,13 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 					// Set the code-block index correctly
 					encodedCB.Index = globalCBIdx
 
+					// Calculate precinct index based on code-block position
+					// Convert from global wavelet space to resolution reference grid
+					resX0, resY0 := e.toResolutionCoordinates(encodedCB.X0, encodedCB.Y0, res, subband.band)
+					precinctIdx := e.calculatePrecinctIndex(resX0, resY0, res)
+
 					// Add to T2 packet encoder
-					packetEnc.AddCodeBlock(comp, res, 0, encodedCB) // precinctIdx=0 (single precinct)
+					packetEnc.AddCodeBlock(comp, res, precinctIdx, encodedCB)
 					globalCBIdx++
 				}
 			}

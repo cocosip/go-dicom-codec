@@ -78,8 +78,16 @@ Production-ready encoder/decoder (lossless & lossy) with multi-quality-layer sup
   - Mask downsampling with caching optimization
   - Full encode/decode support with 63 passing tests
 
+### Precincts
+- ✅ COD marker precinct size parameters (PPx, PPy for each resolution level)
+- ✅ Precinct size encoding/decoding with parser support
+- ✅ **Full multi-precinct support for all resolutions** - perfect lossless reconstruction
+  - Resolution 0 (LL subband): Full multi-precinct partitioning
+  - Resolution > 0 (HL/LH/HH subbands): Full multi-precinct partitioning with proper coordinate mapping
+  - Coordinate transformation from wavelet space to resolution reference grid
+  - All subbands at same resolution share unified precinct partitioning
+
 ### Not Yet Implemented
-- Precincts
 - Other progression orders (RPCL, PCRL, CPRL supported in spec but not yet tested)
 - HTJ2K encode/decode (1.2.840.10008.1.2.4.201/.202/.203) pending implementation
 

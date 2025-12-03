@@ -284,6 +284,17 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	cbWidth, cbHeight := td.cod.CodeBlockSize()
 	packetDec.SetImageDimensions(int(td.siz.Xsiz), int(td.siz.Ysiz), cbWidth, cbHeight)
 
+	// Set precinct size if defined in COD segment
+	if len(td.cod.PrecinctSizes) > 0 {
+		// Use precinct size from first resolution level (simplified)
+		// In full implementation, should handle per-resolution precinct sizes
+		ppx := td.cod.PrecinctSizes[0].PPx
+		ppy := td.cod.PrecinctSizes[0].PPy
+		precinctWidth := 1 << ppx
+		precinctHeight := 1 << ppy
+		packetDec.SetPrecinctSize(precinctWidth, precinctHeight)
+	}
+
 	packets, err := packetDec.DecodePackets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)

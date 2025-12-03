@@ -24,6 +24,10 @@ type PacketDecoder struct {
 	numLevels      int
 	codeBlockStyle uint8 // Code-block style (for TERMALL detection)
 
+	// Precinct parameters
+	precinctWidth  int // Precinct width (0 = default size of 2^15)
+	precinctHeight int // Precinct height (0 = default size of 2^15)
+
 	// Parsed packets
 	packets []Packet
 
@@ -58,6 +62,56 @@ func (pd *PacketDecoder) SetImageDimensions(width, height, cbWidth, cbHeight int
 	pd.imageHeight = height
 	pd.cbWidth = cbWidth
 	pd.cbHeight = cbHeight
+}
+
+// SetPrecinctSize sets the precinct dimensions
+func (pd *PacketDecoder) SetPrecinctSize(width, height int) {
+	pd.precinctWidth = width
+	pd.precinctHeight = height
+}
+
+// calculateNumPrecincts calculates the number of precincts for a given resolution
+func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
+	// Get resolution dimensions
+	// Formula: size = imageSize / (2^(numLevels - resolution))
+	divisor := pd.numLevels - resolution
+	if divisor < 0 {
+		divisor = 0
+	}
+
+	resWidth := pd.imageWidth >> divisor
+	resHeight := pd.imageHeight >> divisor
+
+	// Ensure minimum size
+	if resWidth < 1 {
+		resWidth = 1
+	}
+	if resHeight < 1 {
+		resHeight = 1
+	}
+
+	// Default precinct size is entire resolution (single precinct)
+	precinctWidth := pd.precinctWidth
+	precinctHeight := pd.precinctHeight
+	if precinctWidth == 0 {
+		precinctWidth = 1 << 15 // Default 32768
+	}
+	if precinctHeight == 0 {
+		precinctHeight = 1 << 15 // Default 32768
+	}
+
+	// Calculate number of precincts based on resolution dimensions
+	numPrecinctX := (resWidth + precinctWidth - 1) / precinctWidth
+	numPrecinctY := (resHeight + precinctHeight - 1) / precinctHeight
+
+	if numPrecinctX == 0 {
+		numPrecinctX = 1
+	}
+	if numPrecinctY == 0 {
+		numPrecinctY = 1
+	}
+
+	return numPrecinctX * numPrecinctY
 }
 
 // calculateNumCodeBlocks calculates the number of code-blocks for a given resolution
@@ -103,13 +157,16 @@ func (pd *PacketDecoder) decodeLRCP() ([]Packet, error) {
 	for layer := 0; layer < pd.numLayers; layer++ {
 		for res := 0; res < pd.numResolutions; res++ {
 			for comp := 0; comp < pd.numComponents; comp++ {
-				// For each precinct (simplified: single precinct per resolution)
-				packet, err := pd.decodePacket(layer, res, comp, 0)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decode packet (L=%d,R=%d,C=%d): %w",
-						layer, res, comp, err)
+				// For each precinct in this resolution
+				numPrecincts := pd.calculateNumPrecincts(res)
+				for precinctIdx := 0; precinctIdx < numPrecincts; precinctIdx++ {
+					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode packet (L=%d,R=%d,C=%d,P=%d): %w",
+							layer, res, comp, precinctIdx, err)
+					}
+					pd.packets = append(pd.packets, packet)
 				}
-				pd.packets = append(pd.packets, packet)
 			}
 		}
 	}
@@ -122,13 +179,16 @@ func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 	for res := 0; res < pd.numResolutions; res++ {
 		for layer := 0; layer < pd.numLayers; layer++ {
 			for comp := 0; comp < pd.numComponents; comp++ {
-				// For each precinct (simplified: single precinct per resolution)
-				packet, err := pd.decodePacket(layer, res, comp, 0)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decode packet (R=%d,L=%d,C=%d): %w",
-						res, layer, comp, err)
+				// For each precinct in this resolution
+				numPrecincts := pd.calculateNumPrecincts(res)
+				for precinctIdx := 0; precinctIdx < numPrecincts; precinctIdx++ {
+					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode packet (R=%d,L=%d,C=%d,P=%d): %w",
+							res, layer, comp, precinctIdx, err)
+					}
+					pd.packets = append(pd.packets, packet)
 				}
-				pd.packets = append(pd.packets, packet)
 			}
 		}
 	}
