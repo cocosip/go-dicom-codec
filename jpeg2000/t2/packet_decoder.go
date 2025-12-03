@@ -147,6 +147,12 @@ func (pd *PacketDecoder) DecodePackets() ([]Packet, error) {
 		return pd.decodeLRCP()
 	case ProgressionRLCP:
 		return pd.decodeRLCP()
+	case ProgressionRPCL:
+		return pd.decodeRPCL()
+	case ProgressionPCRL:
+		return pd.decodePCRL()
+	case ProgressionCPRL:
+		return pd.decodeCPRL()
 	default:
 		return nil, fmt.Errorf("unsupported progression order: %v", pd.progression)
 	}
@@ -193,6 +199,83 @@ func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 		}
 	}
 
+	return pd.packets, nil
+}
+
+// decodeRPCL decodes packets in Resolution-Position-Component-Layer order
+func (pd *PacketDecoder) decodeRPCL() ([]Packet, error) {
+	for res := 0; res < pd.numResolutions; res++ {
+		numPrecincts := pd.calculateNumPrecincts(res)
+		for precinctIdx := 0; precinctIdx < numPrecincts; precinctIdx++ {
+			for comp := 0; comp < pd.numComponents; comp++ {
+				for layer := 0; layer < pd.numLayers; layer++ {
+					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode packet (R=%d,P=%d,C=%d,L=%d): %w",
+							res, precinctIdx, comp, layer, err)
+					}
+					pd.packets = append(pd.packets, packet)
+				}
+			}
+		}
+	}
+	return pd.packets, nil
+}
+
+// decodePCRL decodes packets in Position-Component-Resolution-Layer order
+func (pd *PacketDecoder) decodePCRL() ([]Packet, error) {
+	maxPrecincts := 0
+	for res := 0; res < pd.numResolutions; res++ {
+		if n := pd.calculateNumPrecincts(res); n > maxPrecincts {
+			maxPrecincts = n
+		}
+	}
+
+	for precinctIdx := 0; precinctIdx < maxPrecincts; precinctIdx++ {
+		for comp := 0; comp < pd.numComponents; comp++ {
+			for res := 0; res < pd.numResolutions; res++ {
+				if precinctIdx >= pd.calculateNumPrecincts(res) {
+					continue
+				}
+				for layer := 0; layer < pd.numLayers; layer++ {
+					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode packet (P=%d,C=%d,R=%d,L=%d): %w",
+							precinctIdx, comp, res, layer, err)
+					}
+					pd.packets = append(pd.packets, packet)
+				}
+			}
+		}
+	}
+	return pd.packets, nil
+}
+
+// decodeCPRL decodes packets in Component-Position-Resolution-Layer order
+func (pd *PacketDecoder) decodeCPRL() ([]Packet, error) {
+	for comp := 0; comp < pd.numComponents; comp++ {
+		maxPrecincts := 0
+		for res := 0; res < pd.numResolutions; res++ {
+			if n := pd.calculateNumPrecincts(res); n > maxPrecincts {
+				maxPrecincts = n
+			}
+		}
+		for precinctIdx := 0; precinctIdx < maxPrecincts; precinctIdx++ {
+			for res := 0; res < pd.numResolutions; res++ {
+				if precinctIdx >= pd.calculateNumPrecincts(res) {
+					continue
+				}
+				for layer := 0; layer < pd.numLayers; layer++ {
+					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode packet (C=%d,P=%d,R=%d,L=%d): %w",
+							comp, precinctIdx, res, layer, err)
+					}
+					pd.packets = append(pd.packets, packet)
+				}
+			}
+		}
+	}
 	return pd.packets, nil
 }
 

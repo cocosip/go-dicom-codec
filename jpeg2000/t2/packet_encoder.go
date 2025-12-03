@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sort"
 )
 
 // PacketEncoder encodes JPEG 2000 packets
@@ -63,6 +64,12 @@ func (pe *PacketEncoder) EncodePackets() ([]Packet, error) {
 		return pe.encodeLRCP()
 	case ProgressionRLCP:
 		return pe.encodeRLCP()
+	case ProgressionRPCL:
+		return pe.encodeRPCL()
+	case ProgressionPCRL:
+		return pe.encodePCRL()
+	case ProgressionCPRL:
+		return pe.encodeCPRL()
 	default:
 		return nil, fmt.Errorf("unsupported progression order: %v", pe.progression)
 	}
@@ -78,7 +85,8 @@ func (pe *PacketEncoder) encodeLRCP() ([]Packet, error) {
 					continue
 				}
 
-				for precinctIdx, precincts := range pe.precincts[comp][res] {
+				for _, precinctIdx := range pe.sortedPrecincts(comp, res) {
+					precincts := pe.precincts[comp][res][precinctIdx]
 					for _, precinct := range precincts {
 						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
 						if err != nil {
@@ -105,7 +113,8 @@ func (pe *PacketEncoder) encodeRLCP() ([]Packet, error) {
 					continue
 				}
 
-				for precinctIdx, precincts := range pe.precincts[comp][res] {
+				for _, precinctIdx := range pe.sortedPrecincts(comp, res) {
+					precincts := pe.precincts[comp][res][precinctIdx]
 					for _, precinct := range precincts {
 						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
 						if err != nil {
@@ -120,6 +129,138 @@ func (pe *PacketEncoder) encodeRLCP() ([]Packet, error) {
 	}
 
 	return pe.packets, nil
+}
+
+// encodeRPCL encodes packets in Resolution-Position-Component-Layer order
+func (pe *PacketEncoder) encodeRPCL() ([]Packet, error) {
+	for res := 0; res < pe.numResolutions; res++ {
+		for _, precinctIdx := range pe.sortedPrecinctsAllComponents(res) {
+			for comp := 0; comp < pe.numComponents; comp++ {
+				precincts := pe.getPrecincts(comp, res, precinctIdx)
+				if precincts == nil {
+					continue
+				}
+				for layer := 0; layer < pe.numLayers; layer++ {
+					for _, precinct := range precincts {
+						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
+						if err != nil {
+							return nil, fmt.Errorf("failed to encode packet (R=%d,P=%d,C=%d,L=%d): %w",
+								res, precinctIdx, comp, layer, err)
+						}
+						pe.packets = append(pe.packets, packet)
+					}
+				}
+			}
+		}
+	}
+	return pe.packets, nil
+}
+
+// encodePCRL encodes packets in Position-Component-Resolution-Layer order
+func (pe *PacketEncoder) encodePCRL() ([]Packet, error) {
+	for _, precinctIdx := range pe.sortedPrecinctsAll() {
+		for comp := 0; comp < pe.numComponents; comp++ {
+			for res := 0; res < pe.numResolutions; res++ {
+				precincts := pe.getPrecincts(comp, res, precinctIdx)
+				if precincts == nil {
+					continue
+				}
+				for layer := 0; layer < pe.numLayers; layer++ {
+					for _, precinct := range precincts {
+						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
+						if err != nil {
+							return nil, fmt.Errorf("failed to encode packet (P=%d,C=%d,R=%d,L=%d): %w",
+								precinctIdx, comp, res, layer, err)
+						}
+						pe.packets = append(pe.packets, packet)
+					}
+				}
+			}
+		}
+	}
+	return pe.packets, nil
+}
+
+// encodeCPRL encodes packets in Component-Position-Resolution-Layer order
+func (pe *PacketEncoder) encodeCPRL() ([]Packet, error) {
+	for comp := 0; comp < pe.numComponents; comp++ {
+		for _, precinctIdx := range pe.sortedPrecinctsAll() {
+			for res := 0; res < pe.numResolutions; res++ {
+				precincts := pe.getPrecincts(comp, res, precinctIdx)
+				if precincts == nil {
+					continue
+				}
+				for layer := 0; layer < pe.numLayers; layer++ {
+					for _, precinct := range precincts {
+						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
+						if err != nil {
+							return nil, fmt.Errorf("failed to encode packet (C=%d,P=%d,R=%d,L=%d): %w",
+								comp, precinctIdx, res, layer, err)
+						}
+						pe.packets = append(pe.packets, packet)
+					}
+				}
+			}
+		}
+	}
+	return pe.packets, nil
+}
+
+// Helpers to keep precinct traversal deterministic (sorted keys)
+func (pe *PacketEncoder) sortedPrecincts(comp, res int) []int {
+	keys := make([]int, 0)
+	if pe.precincts[comp] == nil || pe.precincts[comp][res] == nil {
+		return keys
+	}
+	for k := range pe.precincts[comp][res] {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
+}
+
+func (pe *PacketEncoder) sortedPrecinctsAllComponents(res int) []int {
+	set := make(map[int]struct{})
+	for comp := 0; comp < pe.numComponents; comp++ {
+		if pe.precincts[comp] == nil || pe.precincts[comp][res] == nil {
+			continue
+		}
+		for k := range pe.precincts[comp][res] {
+			set[k] = struct{}{}
+		}
+	}
+	return sortKeys(set)
+}
+
+func (pe *PacketEncoder) sortedPrecinctsAll() []int {
+	set := make(map[int]struct{})
+	for comp := 0; comp < pe.numComponents; comp++ {
+		if pe.precincts[comp] == nil {
+			continue
+		}
+		for _, resMap := range pe.precincts[comp] {
+			for k := range resMap {
+				set[k] = struct{}{}
+			}
+		}
+	}
+	return sortKeys(set)
+}
+
+func (pe *PacketEncoder) getPrecincts(comp, res, precinctIdx int) []*Precinct {
+	if pe.precincts[comp] == nil || pe.precincts[comp][res] == nil {
+		return nil
+	}
+	return pe.precincts[comp][res][precinctIdx]
+}
+
+func sortKeys(m map[int]struct{}) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
 }
 
 // encodePacket encodes a single packet
