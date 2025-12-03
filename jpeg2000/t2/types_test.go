@@ -322,3 +322,323 @@ func TestPrecinctStructure(t *testing.T) {
 		t.Errorf("Precinct area mismatch: %d vs %d", actualArea, expectedArea)
 	}
 }
+
+// TestPacketIteratorRPCL tests RPCL (Resolution-Position-Component-Layer) progression order
+func TestPacketIteratorRPCL(t *testing.T) {
+	// Test configuration: 2 components, 2 layers, 2 resolutions, 2x2 precincts
+	pi := NewPacketIterator(
+		2,    // numComponents
+		2,    // numLayers
+		2,    // numResolutions
+		64,   // tileWidth
+		64,   // tileHeight
+		32,   // precinctWidth
+		32,   // precinctHeight
+		ProgressionRPCL,
+	)
+
+	packets := []struct {
+		layer, resolution, component, px, py int
+	}{}
+
+	for {
+		l, r, c, px, py, ok := pi.Next()
+		if !ok {
+			break
+		}
+		packets = append(packets, struct {
+			layer, resolution, component, px, py int
+		}{l, r, c, px, py})
+	}
+
+	// Total packets: 2 resolutions * 4 precincts * 2 components * 2 layers = 32
+	expectedCount := 32
+	if len(packets) != expectedCount {
+		t.Errorf("Got %d packets, want %d", len(packets), expectedCount)
+	}
+
+	// Verify RPCL order: Layer should change fastest, then Component, then Position, then Resolution
+	if len(packets) >= 2 {
+		// First two packets should differ in layer only
+		p0, p1 := packets[0], packets[1]
+		if p0.layer == p1.layer {
+			t.Errorf("First two packets have same layer: %d", p0.layer)
+		}
+		if p0.resolution != p1.resolution || p0.component != p1.component ||
+		   p0.px != p1.px || p0.py != p1.py {
+			t.Error("RPCL order: first two packets should only differ in layer")
+		}
+	}
+
+	// Verify first packet starts at (0,0,0,0,0)
+	if len(packets) > 0 {
+		first := packets[0]
+		if first.layer != 0 || first.resolution != 0 || first.component != 0 ||
+			first.px != 0 || first.py != 0 {
+			t.Errorf("First packet = (%d,%d,%d,%d,%d), want (0,0,0,0,0)",
+				first.layer, first.resolution, first.component, first.px, first.py)
+		}
+	}
+
+	// Verify last packet
+	if len(packets) > 0 {
+		last := packets[len(packets)-1]
+		if last.resolution != 1 { // Last resolution
+			t.Errorf("Last packet resolution = %d, want 1", last.resolution)
+		}
+	}
+}
+
+// TestPacketIteratorPCRL tests PCRL (Position-Component-Resolution-Layer) progression order
+func TestPacketIteratorPCRL(t *testing.T) {
+	// Test configuration: 2 components, 2 layers, 2 resolutions, 2x2 precincts
+	pi := NewPacketIterator(
+		2,    // numComponents
+		2,    // numLayers
+		2,    // numResolutions
+		64,   // tileWidth
+		64,   // tileHeight
+		32,   // precinctWidth
+		32,   // precinctHeight
+		ProgressionPCRL,
+	)
+
+	packets := []struct {
+		layer, resolution, component, px, py int
+	}{}
+
+	for {
+		l, r, c, px, py, ok := pi.Next()
+		if !ok {
+			break
+		}
+		packets = append(packets, struct {
+			layer, resolution, component, px, py int
+		}{l, r, c, px, py})
+	}
+
+	// Total packets: 4 precincts * 2 components * 2 resolutions * 2 layers = 32
+	expectedCount := 32
+	if len(packets) != expectedCount {
+		t.Errorf("Got %d packets, want %d", len(packets), expectedCount)
+	}
+
+	// Verify PCRL order: Layer should change fastest, then Resolution, then Component, then Position
+	if len(packets) >= 2 {
+		// First two packets should differ in layer only
+		p0, p1 := packets[0], packets[1]
+		if p0.layer == p1.layer {
+			t.Errorf("First two packets have same layer: %d", p0.layer)
+		}
+		if p0.resolution != p1.resolution || p0.component != p1.component ||
+		   p0.px != p1.px || p0.py != p1.py {
+			t.Error("PCRL order: first two packets should only differ in layer")
+		}
+	}
+
+	// Verify first packet starts at (0,0,0,0,0)
+	if len(packets) > 0 {
+		first := packets[0]
+		if first.layer != 0 || first.resolution != 0 || first.component != 0 ||
+			first.px != 0 || first.py != 0 {
+			t.Errorf("First packet = (%d,%d,%d,%d,%d), want (0,0,0,0,0)",
+				first.layer, first.resolution, first.component, first.px, first.py)
+		}
+	}
+}
+
+// TestPacketIteratorCPRL tests CPRL (Component-Position-Resolution-Layer) progression order
+func TestPacketIteratorCPRL(t *testing.T) {
+	// Test configuration: 3 components (RGB), 2 layers, 2 resolutions, 2x2 precincts
+	pi := NewPacketIterator(
+		3,    // numComponents (RGB)
+		2,    // numLayers
+		2,    // numResolutions
+		64,   // tileWidth
+		64,   // tileHeight
+		32,   // precinctWidth
+		32,   // precinctHeight
+		ProgressionCPRL,
+	)
+
+	packets := []struct {
+		layer, resolution, component, px, py int
+	}{}
+
+	for {
+		l, r, c, px, py, ok := pi.Next()
+		if !ok {
+			break
+		}
+		packets = append(packets, struct {
+			layer, resolution, component, px, py int
+		}{l, r, c, px, py})
+	}
+
+	// Total packets: 3 components * 4 precincts * 2 resolutions * 2 layers = 48
+	expectedCount := 48
+	if len(packets) != expectedCount {
+		t.Errorf("Got %d packets, want %d", len(packets), expectedCount)
+	}
+
+	// Verify CPRL order: Layer should change fastest, then Resolution, then Position, then Component
+	if len(packets) >= 2 {
+		// First two packets should differ in layer only
+		p0, p1 := packets[0], packets[1]
+		if p0.layer == p1.layer {
+			t.Errorf("First two packets have same layer: %d", p0.layer)
+		}
+		if p0.resolution != p1.resolution || p0.component != p1.component ||
+		   p0.px != p1.px || p0.py != p1.py {
+			t.Error("CPRL order: first two packets should only differ in layer")
+		}
+	}
+
+	// Verify first packet starts at (0,0,0,0,0)
+	if len(packets) > 0 {
+		first := packets[0]
+		if first.layer != 0 || first.resolution != 0 || first.component != 0 ||
+			first.px != 0 || first.py != 0 {
+			t.Errorf("First packet = (%d,%d,%d,%d,%d), want (0,0,0,0,0)",
+				first.layer, first.resolution, first.component, first.px, first.py)
+		}
+	}
+
+	// Verify last packet
+	if len(packets) > 0 {
+		last := packets[len(packets)-1]
+		if last.component != 2 { // Last component (RGB = 0,1,2)
+			t.Errorf("Last packet component = %d, want 2", last.component)
+		}
+	}
+}
+
+// TestAllProgressionOrdersPacketCount tests that all progression orders generate the same number of packets
+func TestAllProgressionOrdersPacketCount(t *testing.T) {
+	orders := []ProgressionOrder{
+		ProgressionLRCP,
+		ProgressionRLCP,
+		ProgressionRPCL,
+		ProgressionPCRL,
+		ProgressionCPRL,
+	}
+
+	// Test configuration
+	numComponents := 3
+	numLayers := 2
+	numResolutions := 3
+	tileWidth := 128
+	tileHeight := 128
+	precinctWidth := 32
+	precinctHeight := 32
+
+	// Expected total: 3 components * 2 layers * 3 resolutions * 4x4 precincts = 288
+	numPrecinctX := (tileWidth + precinctWidth - 1) / precinctWidth
+	numPrecinctY := (tileHeight + precinctHeight - 1) / precinctHeight
+	expectedCount := numComponents * numLayers * numResolutions * numPrecinctX * numPrecinctY
+
+	for _, order := range orders {
+		t.Run(order.String(), func(t *testing.T) {
+			pi := NewPacketIterator(
+				numComponents, numLayers, numResolutions,
+				tileWidth, tileHeight,
+				precinctWidth, precinctHeight,
+				order,
+			)
+
+			count := 0
+			for {
+				_, _, _, _, _, ok := pi.Next()
+				if !ok {
+					break
+				}
+				count++
+			}
+
+			if count != expectedCount {
+				t.Errorf("%s: Got %d packets, want %d", order, count, expectedCount)
+			}
+		})
+	}
+}
+
+// TestProgressionOrderSequence tests the packet sequence for each progression order
+func TestProgressionOrderSequence(t *testing.T) {
+	// Simple configuration: 2 components, 2 layers, 2 resolutions, 1 precinct
+	tests := []struct {
+		order         ProgressionOrder
+		expectedFirst [5]int // [layer, resolution, component, px, py]
+		expectedLast  [5]int
+	}{
+		{
+			order:         ProgressionLRCP,
+			expectedFirst: [5]int{0, 0, 0, 0, 0},
+			expectedLast:  [5]int{1, 1, 1, 0, 0}, // Last: layer=1, resolution=1, component=1
+		},
+		{
+			order:         ProgressionRLCP,
+			expectedFirst: [5]int{0, 0, 0, 0, 0},
+			expectedLast:  [5]int{1, 1, 1, 0, 0}, // Last: resolution=1, layer=1, component=1
+		},
+		{
+			order:         ProgressionRPCL,
+			expectedFirst: [5]int{0, 0, 0, 0, 0},
+			expectedLast:  [5]int{1, 1, 1, 0, 0}, // Last: resolution=1, component=1, layer=1
+		},
+		{
+			order:         ProgressionPCRL,
+			expectedFirst: [5]int{0, 0, 0, 0, 0},
+			expectedLast:  [5]int{1, 1, 1, 0, 0}, // Last: component=1, resolution=1, layer=1
+		},
+		{
+			order:         ProgressionCPRL,
+			expectedFirst: [5]int{0, 0, 0, 0, 0},
+			expectedLast:  [5]int{1, 1, 1, 0, 0}, // Last: component=1, resolution=1, layer=1
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.order.String(), func(t *testing.T) {
+			pi := NewPacketIterator(
+				2,   // numComponents
+				2,   // numLayers
+				2,   // numResolutions
+				32,  // tileWidth
+				32,  // tileHeight
+				32,  // precinctWidth (1 precinct)
+				32,  // precinctHeight
+				tt.order,
+			)
+
+			var first, last [5]int
+			count := 0
+			for {
+				l, r, c, px, py, ok := pi.Next()
+				if !ok {
+					break
+				}
+				if count == 0 {
+					first = [5]int{l, r, c, px, py}
+				}
+				last = [5]int{l, r, c, px, py}
+				count++
+			}
+
+			// Verify first packet
+			if first != tt.expectedFirst {
+				t.Errorf("%s: First packet = %v, want %v", tt.order, first, tt.expectedFirst)
+			}
+
+			// Verify last packet
+			if last != tt.expectedLast {
+				t.Errorf("%s: Last packet = %v, want %v", tt.order, last, tt.expectedLast)
+			}
+
+			// Total: 2 layers * 2 resolutions * 2 components * 1 precinct = 8
+			expectedCount := 8
+			if count != expectedCount {
+				t.Errorf("%s: Got %d packets, want %d", tt.order, count, expectedCount)
+			}
+		})
+	}
+}
