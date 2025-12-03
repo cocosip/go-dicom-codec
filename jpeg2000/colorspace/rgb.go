@@ -157,3 +157,25 @@ func DeinterleaveComponents(data []int32, numComponents int) [][]int32 {
 
 	return components
 }
+
+func ConvertComponentsRGBToYCbCr(r, g, b []int32) (y, cb, cr []int32) {
+    n := len(r)
+    y = make([]int32, n)
+    cb = make([]int32, n)
+    cr = make([]int32, n)
+    for i := 0; i < n; i++ {
+        y[i], cb[i], cr[i] = RGBToYCbCr(r[i], g[i], b[i])
+    }
+    return
+}
+
+func ConvertComponentsYCbCrToRGB(y, cb, cr []int32) (r, g, b []int32) {
+    n := len(y)
+    r = make([]int32, n)
+    g = make([]int32, n)
+    b = make([]int32, n)
+    for i := 0; i < n; i++ {
+        r[i], g[i], b[i] = YCbCrToRGB(y[i], cb[i], cr[i])
+    }
+    return
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
 )
 
@@ -271,11 +272,18 @@ func (d *Decoder) decodeTiles() error {
 		}
 	}
 
-	// Get assembled image data
 	d.data = assembler.GetImageData()
-
-	// Note: Inverse DC level shift is already applied in tile decoder
-	// Do not apply it again here to avoid double shifting
+	if d.cs != nil && d.cs.COD != nil && d.components == 3 {
+		if d.cs.COD.MultipleComponentTransform == 1 {
+			if d.cs.COD.Transformation == 1 {
+				r, g, b := colorspace.ApplyInverseRCTToComponents(d.data[0], d.data[1], d.data[2])
+				d.data[0], d.data[1], d.data[2] = r, g, b
+			} else {
+				r, g, b := colorspace.ConvertComponentsYCbCrToRGB(d.data[0], d.data[1], d.data[2])
+				d.data[0], d.data[1], d.data[2] = r, g, b
+			}
+		}
+	}
 
 	return nil
 }

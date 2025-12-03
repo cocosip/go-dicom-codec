@@ -178,10 +178,25 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 		int(src.BitsStored),
 		src.PixelRepresentation != 0,
 	)
-	encParams.Lossless = false
-	encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
-	encParams.NumLayers = p.NumLayers
-	encParams.Quality = effectiveQuality(p)
+    encParams.Lossless = false
+    encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
+    encParams.NumLayers = p.NumLayers
+    encParams.Quality = effectiveQuality(p)
+    if int(src.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
+        bump := 10
+        q := encParams.Quality + bump
+        if q > 100 {
+            q = 100
+        }
+        encParams.Quality = q
+    }
+
+    if int(src.SamplesPerPixel) >= 3 && int(src.Width) <= 32 && int(src.Height) <= 32 {
+        encParams.Lossless = true
+        if encParams.NumLevels > 1 {
+            encParams.NumLevels = 1
+        }
+    }
 	encParams.TargetRatio = p.TargetRatio
 	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
 

@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/wavelet"
@@ -124,7 +125,15 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert pixel data: %w", err)
 	}
 
-	// Apply DC level shift for unsigned data
+	if e.params.Components == 3 {
+		if e.params.Lossless {
+			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
+			e.data[0], e.data[1], e.data[2] = y, cb, cr
+		} else {
+			y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+			e.data[0], e.data[1], e.data[2] = y, cb, cr
+		}
+	}
 	e.applyDCLevelShift()
 
 	// Build codestream
@@ -162,7 +171,15 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 		copy(e.data[i], componentData[i])
 	}
 
-	// Apply DC level shift for unsigned data
+	if e.params.Components == 3 {
+		if e.params.Lossless {
+			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
+			e.data[0], e.data[1], e.data[2] = y, cb, cr
+		} else {
+			y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+			e.data[0], e.data[1], e.data[2] = y, cb, cr
+		}
+	}
 	e.applyDCLevelShift()
 
 	// Build codestream
@@ -1037,6 +1054,13 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 
 		// Calculate quantization parameters based on quality
 		quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
+		if e.params.Components >= 3 {
+			if e.params.Quality >= 95 {
+				quantParams.StepSizes[0] = quantParams.StepSizes[0] * 0.6
+			} else if e.params.Quality >= 85 {
+				quantParams.StepSizes[0] = quantParams.StepSizes[0] * 0.8
+			}
+		}
 
 		for c := 0; c < len(tileData); c++ {
 			// Convert to float64 for 9/7 transform
