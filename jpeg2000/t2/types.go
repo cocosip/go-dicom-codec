@@ -1,5 +1,7 @@
 package t2
 
+import "github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+
 // Tier-2 Package Data Structures
 // Reference: ISO/IEC 15444-1:2019 Annex B
 
@@ -15,11 +17,11 @@ type Packet struct {
 	Body []byte // Compressed code-block contributions
 
 	// Decoded header information
-	LayerIndex       int            // Layer index
-	ResolutionLevel  int            // Resolution level
-	ComponentIndex   int            // Component index
-	PrecinctIndex    int            // Precinct index
-	CodeBlockIncls   []CodeBlockIncl // Code-block inclusion information
+	LayerIndex      int             // Layer index
+	ResolutionLevel int             // Resolution level
+	ComponentIndex  int             // Component index
+	PrecinctIndex   int             // Precinct index
+	CodeBlockIncls  []CodeBlockIncl // Code-block inclusion information
 }
 
 // CodeBlockIncl represents code-block inclusion and contribution information
@@ -37,32 +39,36 @@ type CodeBlockIncl struct {
 // Precinct represents a precinct in the codestream
 // A precinct is a spatial partition of a resolution level
 type Precinct struct {
-	Index       int    // Precinct index
-	X0, Y0      int    // Top-left coordinates
-	X1, Y1      int    // Bottom-right coordinates
-	Width       int    // Precinct width
-	Height      int    // Precinct height
-	SubbandIdx  int    // Subband index (0=LL, 1=HL, 2=LH, 3=HH)
-	CodeBlocks  []*PrecinctCodeBlock // Code-blocks in this precinct
+	Index      int                  // Precinct index
+	X0, Y0     int                  // Top-left coordinates
+	X1, Y1     int                  // Bottom-right coordinates
+	Width      int                  // Precinct width
+	Height     int                  // Precinct height
+	SubbandIdx int                  // Subband index (0=LL, 1=HL, 2=LH, 3=HH)
+	CodeBlocks []*PrecinctCodeBlock // Code-blocks in this precinct
 }
 
 // PrecinctCodeBlock represents a code-block within a precinct
 type PrecinctCodeBlock struct {
-	Index           int    // Code-block index within precinct
-	X0, Y0          int    // Top-left coordinates
-	X1, Y1          int    // Bottom-right coordinates
-	Included        bool   // Has been included in at least one packet
-	NumPassesTotal  int    // Total number of passes decoded so far
-	ZeroBitPlanes   int    // Number of missing MSB bit-planes
-	Data            []byte // Accumulated compressed data
+	Index          int    // Code-block index within precinct
+	X0, Y0         int    // Top-left coordinates
+	X1, Y1         int    // Bottom-right coordinates
+	Included       bool   // Has been included in at least one packet
+	NumPassesTotal int    // Total number of passes decoded so far
+	ZeroBitPlanes  int    // Number of missing MSB bit-planes
+	Data           []byte // Accumulated compressed data
 
 	// Multi-layer support
-	LayerPasses     []int    // Number of passes included in each layer (cumulative)
-	LayerData       [][]byte // Encoded data for each layer's passes
-	PassLengths     []int    // Cumulative byte length of each pass (used in TERMALL mode)
+	LayerPasses []int    // Number of passes included in each layer (cumulative)
+	LayerData   [][]byte // Encoded data for each layer's passes
+	PassLengths []int    // Cumulative byte length of each pass (used in TERMALL mode)
 
 	// Coding style
-	UseTERMALL      bool     // If true, each pass is terminated (TERMALL mode)
+	UseTERMALL bool // If true, each pass is terminated (TERMALL mode)
+
+	// Rate-distortion support
+	Passes       []t1.PassData // Detailed per-pass data (rate/distortion)
+	CompleteData []byte        // Full MQ bitstream for all passes
 }
 
 // Layer represents a quality layer
@@ -120,21 +126,21 @@ func (p ProgressionOrder) String() string {
 // PacketIterator iterates through packets in a specific progression order
 type PacketIterator struct {
 	// Codestream parameters
-	NumComponents   int
-	NumLayers       int
-	NumResolutions  int
-	TileWidth       int
-	TileHeight      int
-	PrecinctWidth   int
-	PrecinctHeight  int
+	NumComponents    int
+	NumLayers        int
+	NumResolutions   int
+	TileWidth        int
+	TileHeight       int
+	PrecinctWidth    int
+	PrecinctHeight   int
 	ProgressionOrder ProgressionOrder
 
 	// Current position
-	Layer       int
-	Resolution  int
-	Component   int
-	PrecinctX   int
-	PrecinctY   int
+	Layer      int
+	Resolution int
+	Component  int
+	PrecinctX  int
+	PrecinctY  int
 
 	// State
 	Done bool

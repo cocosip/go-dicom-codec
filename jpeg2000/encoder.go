@@ -46,6 +46,10 @@ type EncodeParams struct {
 	// Length must be 3*NumLevels+1 when provided. Values are floating quant steps.
 	CustomQuantSteps []float64
 
+	// TargetRatio optionally requests a target compression ratio (orig_size / compressed_size).
+	// Used by rate-distortion truncation when >0.
+	TargetRatio float64
+
 	// Progression order
 	ProgressionOrder uint8 // 0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL
 
@@ -75,6 +79,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		CodeBlockHeight:  64,
 		PrecinctWidth:    0, // Default (2^15)
 		PrecinctHeight:   0, // Default (2^15)
+		TargetRatio:      0,
 		ProgressionOrder: 0, // LRCP
 		NumLayers:        1,
 		ROI:              nil,
@@ -520,9 +525,10 @@ func (e *Encoder) calculatePrecinctIndex(cbX0, cbY0, resolutionLevel int) int {
 // toResolutionCoordinates converts global wavelet coordinates to resolution reference grid coordinates
 // For resolution 0 (LL subband), the coordinates are already in the correct space
 // For resolution > 0, we need to map based on the subband type:
-//   HL (band=1): coordinates are at offset (subbandWidth, 0)
-//   LH (band=2): coordinates are at offset (0, subbandHeight)
-//   HH (band=3): coordinates are at offset (subbandWidth, subbandHeight)
+//
+//	HL (band=1): coordinates are at offset (subbandWidth, 0)
+//	LH (band=2): coordinates are at offset (0, subbandHeight)
+//	HH (band=3): coordinates are at offset (subbandWidth, subbandHeight)
 func (e *Encoder) toResolutionCoordinates(globalX, globalY, resolutionLevel, band int) (int, int) {
 	if resolutionLevel == 0 {
 		// LL subband - coordinates are already correct
@@ -1135,6 +1141,7 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		e.params.NumLevels+1,                           // numResolutions = numLevels + 1
 		t2.ProgressionOrder(e.params.ProgressionOrder), // Cast uint8 to ProgressionOrder
 	)
+	allBlocks := make([]*t2.PrecinctCodeBlock, 0)
 
 	// Process each component
 	for comp := 0; comp < e.params.Components; comp++ {
@@ -1167,10 +1174,17 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 					// Add to T2 packet encoder
 					packetEnc.AddCodeBlock(comp, res, precinctIdx, encodedCB)
+					allBlocks = append(allBlocks, encodedCB)
 					globalCBIdx++
 				}
 			}
 		}
+	}
+
+	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
+	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
+		origBytes := e.params.Width * e.params.Height * e.params.Components * ((e.params.BitDepth + 7) / 8)
+		e.applyRateDistortion(allBlocks, origBytes)
 	}
 
 	// Generate packets
@@ -1190,6 +1204,144 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	}
 
 	return buf.Bytes()
+}
+
+// applyRateDistortion truncates/allocates passes across layers using PCRD-style allocation.
+func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes int) {
+	numLayers := e.params.NumLayers
+	if numLayers <= 0 {
+		numLayers = 1
+	}
+	fmt.Printf("applyRD layers=%d target=%.2f blocks=%d\n", numLayers, e.params.TargetRatio, len(blocks))
+	if len(blocks) == 0 {
+		return
+	}
+
+	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
+	totalRate := 0.0
+	passBytes := func(passes []t1.PassData, count int) int {
+		if count <= 0 {
+			return 0
+		}
+		if count > len(passes) {
+			count = len(passes)
+		}
+		b := passes[count-1].ActualBytes
+		if b == 0 {
+			b = passes[count-1].Rate
+		}
+		return b
+	}
+
+	for _, cb := range blocks {
+		passesPerBlock = append(passesPerBlock, cb.Passes)
+		if len(cb.Passes) > 0 {
+			last := cb.Passes[len(cb.Passes)-1]
+			bytes := last.ActualBytes
+			if bytes == 0 {
+				bytes = last.Rate
+			}
+			totalRate += float64(bytes)
+		}
+	}
+
+	budget := totalRate
+	if e.params.TargetRatio > 0 && origBytes > 0 {
+		target := float64(origBytes) / e.params.TargetRatio
+		if target < budget {
+			budget = target
+		}
+	}
+
+	if e.params.TargetRatio > 0 {
+		fmt.Printf("PCRD budget=%.2f totalRate=%.2f blocks=%d\n", budget, totalRate, len(blocks))
+	}
+
+	alloc := AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+
+	// Enforce global budget proportionally if requested.
+	if budget > 0 && budget < totalRate {
+		for idx, passes := range passesPerBlock {
+			fullBytes := passBytes(passes, len(passes))
+			if fullBytes == 0 {
+				continue
+			}
+			allowed := int(math.Floor(budget * float64(fullBytes) / totalRate))
+			if allowed <= 0 && len(passes) > 0 {
+				allowed = passBytes(passes, 1)
+			}
+			passCount := 0
+			for i := 0; i < len(passes); i++ {
+				if passBytes(passes, i+1) <= allowed {
+					passCount = i + 1
+				} else {
+					break
+				}
+			}
+			if passCount == 0 && len(passes) > 0 {
+				passCount = 1
+			}
+			for layer := 0; layer < numLayers; layer++ {
+				frac := float64(layer+1) / float64(numLayers)
+				layerPass := int(math.Ceil(frac * float64(passCount)))
+				if layerPass > passCount {
+					layerPass = passCount
+				}
+				if layer > 0 && layerPass < alloc.CodeBlockPasses[idx][layer-1] {
+					layerPass = alloc.CodeBlockPasses[idx][layer-1]
+				}
+				alloc.CodeBlockPasses[idx][layer] = layerPass
+			}
+		}
+	}
+
+	for idx, cb := range blocks {
+		if len(cb.Passes) == 0 || cb.CompleteData == nil {
+			// Fallback: keep existing data
+			continue
+		}
+
+		if len(cb.PassLengths) == 0 {
+			cb.PassLengths = make([]int, len(cb.Passes))
+			for i, p := range cb.Passes {
+				cb.PassLengths[i] = p.ActualBytes
+			}
+		}
+
+		cb.LayerPasses = make([]int, numLayers)
+		cb.LayerData = make([][]byte, numLayers)
+
+		prevEnd := 0
+		for layer := 0; layer < numLayers; layer++ {
+			passCount := alloc.GetPassesForLayer(idx, layer)
+			if passCount > len(cb.Passes) {
+				passCount = len(cb.Passes)
+			}
+			cb.LayerPasses[layer] = passCount
+
+			end := prevEnd
+			if passCount > 0 {
+				end = cb.Passes[passCount-1].ActualBytes
+				if end == 0 {
+					end = cb.Passes[passCount-1].Rate
+				}
+			}
+
+			if end < prevEnd {
+				end = prevEnd
+			}
+			if end > len(cb.CompleteData) {
+				end = len(cb.CompleteData)
+			}
+
+			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
+			prevEnd = end
+		}
+
+		// Keep full data for compatibility
+		cb.Data = cb.CompleteData
+		cb.UseTERMALL = true
+	}
 }
 
 // writeWithByteStuffing writes data with JPEG 2000 byte-stuffing
@@ -1467,23 +1619,24 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		ZeroBitPlanes:  zeroBitPlanes,
 	}
 
-	// Check if we need multi-layer encoding
-	if e.params.NumLayers > 1 {
-		// Allocate passes to layers using simple algorithm
-		layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
+	useLayered := e.params.NumLayers > 1 || e.params.TargetRatio > 0
 
-		// Compute layer boundaries (pass indices that end each layer)
-		layerBoundaries := make([]int, e.params.NumLayers)
-		for layer := 0; layer < e.params.NumLayers; layer++ {
-			layerBoundaries[layer] = layerAlloc.GetPassesForLayer(0, layer)
+	if useLayered {
+		// Force TERMALL style termination so each pass boundary is byte-aligned for PCRD.
+		layerBoundaries := []int{numPasses}
+		if e.params.NumLayers > 1 {
+			layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
+			layerBoundaries = make([]int, e.params.NumLayers)
+			for layer := 0; layer < e.params.NumLayers; layer++ {
+				layerBoundaries[layer] = layerAlloc.GetPassesForLayer(0, layer)
+			}
+		} else {
+			// Two boundaries are enough to force termination for all passes.
+			layerBoundaries = []int{1, numPasses}
 		}
 
-		// Multi-layer encoding: use layered encoder with layer boundaries
-		// Pass actual lossless parameter to control context resets
-		// TERMALL mode (bit 0x04 in COD) controls pass termination separately
 		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, e.params.Lossless)
 		if err != nil || len(passes) == 0 {
-			// Fallback to single layer on error
 			encodedData := []byte{0x00}
 			pcb.Data = encodedData
 			pcb.LayerData = [][]byte{encodedData}
@@ -1491,52 +1644,17 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			return pcb
 		}
 
-		// Build layer metadata using pass Rate information
-		// Following OpenJPEG: layers share complete data, metadata specifies byte ranges
-		pcb.LayerData = make([][]byte, e.params.NumLayers)
-		pcb.LayerPasses = make([]int, e.params.NumLayers)
-
-		// Build per-pass length information (for TERMALL mode decoding)
+		// Store per-pass metadata for later PCRD allocation.
 		pcb.PassLengths = make([]int, len(passes))
 		for i, pass := range passes {
 			pcb.PassLengths[i] = pass.ActualBytes
 		}
-
-		prevByteEnd := 0
-		for layer := 0; layer < e.params.NumLayers; layer++ {
-			// Get cumulative passes for this layer
-			totalPassesForLayer := layerAlloc.GetPassesForLayer(0, layer)
-			pcb.LayerPasses[layer] = totalPassesForLayer
-
-			// Use ActualBytes from passes to determine byte end
-			// ActualBytes is the actual position in the buffer (not including rate_extra_bytes estimate)
-			var currentByteEnd int
-			if totalPassesForLayer > 0 && totalPassesForLayer <= len(passes) {
-				currentByteEnd = passes[totalPassesForLayer-1].ActualBytes
-			} else {
-				currentByteEnd = len(completeData)
-			}
-
-			// Clamp
-			if currentByteEnd > len(completeData) {
-				currentByteEnd = len(completeData)
-			}
-			if currentByteEnd < prevByteEnd {
-				currentByteEnd = prevByteEnd
-			}
-
-			// Store incremental data for this layer (from prevByteEnd to currentByteEnd)
-			pcb.LayerData[layer] = completeData[prevByteEnd:currentByteEnd]
-
-			prevByteEnd = currentByteEnd
-		}
-
-		// For backward compatibility, set Data to all passes
+		pcb.Passes = passes
+		pcb.CompleteData = completeData
 		pcb.Data = completeData
+		pcb.UseTERMALL = true
 
-		// Set TERMALL flag for all multi-layer encoding
-		pcb.UseTERMALL = e.params.NumLayers > 1
-
+		return pcb
 	} else {
 		// Single layer: use original encoder
 		encodedData, err := t1Enc.Encode(cbData, numPasses, roishift)

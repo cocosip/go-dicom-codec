@@ -182,6 +182,7 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 	encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
 	encParams.NumLayers = p.NumLayers
 	encParams.Quality = effectiveQuality(p)
+	encParams.TargetRatio = p.TargetRatio
 	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
 
 	encoder := jpeg2000.NewEncoder(encParams)
@@ -192,62 +193,17 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 	return encoded, nil
 }
 
-// encodeWithTargetRatio performs a binary-search style rate control on quality to reach target ratio.
+// encodeWithTargetRatio performs rate control on quality to reach target ratio.
+// 使用单次编码 + PCRD 截断，避免多次重复编码。
 func (c *Codec) encodeWithTargetRatio(src *codec.PixelData, base *JPEG2000LossyParameters) ([]byte, error) {
 	target := base.TargetRatio
 	if target <= 0 {
 		return c.encodeOnce(src, base)
 	}
 
-	bestData, err := c.encodeOnce(src, base)
-	if err != nil {
-		return nil, err
-	}
-	bestRatio := float64(len(src.Data)) / float64(len(bestData))
-	bestDiff := math.Abs(bestRatio - target)
-
-	low, high := 1, 100
-	// Start search around heuristic quality from ratio.
-	initialQ := qualityFromRatio(target)
-	if initialQ < low {
-		initialQ = low
-	}
-	if initialQ > high {
-		initialQ = high
-	}
-	q := initialQ
-
-	for i := 0; i < 6; i++ { // limited iterations for speed
-		pcopy := *base
-		pcopy.TargetRatio = 0 // avoid recursive adjustment
-		pcopy.Quality = q
-		data, err := c.encodeOnce(src, &pcopy)
-		if err != nil {
-			return nil, err
-		}
-		ratio := float64(len(src.Data)) / float64(len(data))
-		diff := math.Abs(ratio - target)
-		if diff < bestDiff {
-			bestDiff = diff
-			bestRatio = ratio
-			bestData = data
-		}
-		// Adjust search range
-		if ratio < target {
-			// compression不足，降低质量
-			high = q - 1
-		} else {
-			// compression过高，提升质量
-			low = q + 1
-		}
-		if low > high {
-			break
-		}
-		q = (low + high) / 2
-	}
-
-	_ = bestRatio // kept for potential logging
-	return bestData, nil
+	pcopy := *base
+	pcopy.TargetRatio = target
+	return c.encodeOnce(src, &pcopy)
 }
 
 // clampNumLevels limits decomposition levels so the LL band remains at least 2x2.

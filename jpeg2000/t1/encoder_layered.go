@@ -2,6 +2,7 @@ package t1
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
@@ -9,13 +10,13 @@ import (
 // PassData represents encoded data for a single coding pass
 // Following OpenJPEG's design: rate is cumulative bytes, len is incremental
 type PassData struct {
-	PassIndex    int     // Index of this pass (0-based)
-	Bitplane     int     // Bit-plane this pass belongs to
-	PassType     int     // 0=SPP, 1=MRP, 2=CP
-	Rate         int     // Cumulative bytes for R-D optimization (includes rate_extra_bytes)
-	ActualBytes  int     // Actual cumulative bytes in buffer (for slicing data)
-	Len          int     // Length of this pass in bytes (Rate[i] - Rate[i-1])
-	Distortion   float64 // Cumulative distortion (for rate-distortion optimization)
+	PassIndex   int     // Index of this pass (0-based)
+	Bitplane    int     // Bit-plane this pass belongs to
+	PassType    int     // 0=SPP, 1=MRP, 2=CP
+	Rate        int     // Cumulative bytes for R-D optimization (includes rate_extra_bytes)
+	ActualBytes int     // Actual cumulative bytes in buffer (for slicing data)
+	Len         int     // Length of this pass in bytes (Rate[i] - Rate[i-1])
+	Distortion  float64 // Cumulative distortion (for rate-distortion optimization)
 }
 
 // isLayerBoundary checks if a pass index is a layer boundary
@@ -96,6 +97,7 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Result array
 	passes := make([]PassData, 0, numPasses)
+	cumDist := 0.0
 
 	// Encode bit-planes from MSB to LSB
 	passIdx := 0
@@ -134,13 +136,15 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				rate += 3 // rate_extra_bytes for non-terminated passes
 			}
 
+			cumDist += rdDistortionDelta(t1.bitplane, 0)
+
 			passData := PassData{
-				PassIndex:    passIdx,
-				Bitplane:     t1.bitplane,
-				PassType:     0, // SPP
-				Rate:         rate,
-				ActualBytes:  actualBytes,
-				Distortion:   0, // TODO: calculate distortion
+				PassIndex:   passIdx,
+				Bitplane:    t1.bitplane,
+				PassType:    0, // SPP
+				Rate:        rate,
+				ActualBytes: actualBytes,
+				Distortion:  cumDist,
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -166,13 +170,15 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				rate += 3
 			}
 
+			cumDist += rdDistortionDelta(t1.bitplane, 1)
+
 			passData := PassData{
-				PassIndex:    passIdx,
-				Bitplane:     t1.bitplane,
-				PassType:     1, // MRP
-				Rate:         rate,
-				ActualBytes:  actualBytes,
-				Distortion:   0, // TODO: calculate distortion
+				PassIndex:   passIdx,
+				Bitplane:    t1.bitplane,
+				PassType:    1, // MRP
+				Rate:        rate,
+				ActualBytes: actualBytes,
+				Distortion:  cumDist,
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -198,13 +204,15 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				rate += 3
 			}
 
+			cumDist += rdDistortionDelta(t1.bitplane, 2)
+
 			passData := PassData{
-				PassIndex:    passIdx,
-				Bitplane:     t1.bitplane,
-				PassType:     2, // CP
-				Rate:         rate,
-				ActualBytes:  actualBytes,
-				Distortion:   0, // TODO: calculate distortion
+				PassIndex:   passIdx,
+				Bitplane:    t1.bitplane,
+				PassType:    2, // CP
+				Rate:        rate,
+				ActualBytes: actualBytes,
+				Distortion:  cumDist,
 			}
 			passes = append(passes, passData)
 			passIdx++
@@ -245,4 +253,18 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Return passes with rate/distortion info and the complete MQ data
 	return passes, fullMQData, nil
+}
+
+// rdDistortionDelta approximates distortion reduction contributed by a pass.
+// Higher bitplanes contribute more; weights follow the pass type.
+func rdDistortionDelta(bitplane int, passType int) float64 {
+	base := math.Pow(2.0, float64(2*(bitplane+1)))
+	switch passType {
+	case 0: // SPP
+		return base
+	case 1: // MRP
+		return base * 0.5
+	default: // CP
+		return base * 0.75
+	}
 }

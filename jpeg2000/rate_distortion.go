@@ -3,6 +3,8 @@ package jpeg2000
 import (
 	"math"
 	"sort"
+
+	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
 )
 
 // LayerAllocation represents pass allocation for quality layers
@@ -196,6 +198,150 @@ func AllocateLayersRateDistortion(
 	}
 
 	return alloc
+}
+
+// AllocateLayersRateDistortionPasses performs PCRD-like allocation using per-pass rate/distortion.
+// passesPerBlock: [codeblock][pass] PassData with cumulative rate/distortion.
+// targetBudget: total byte budget for the final layer (cumulative). If <=0, uses full rate.
+func AllocateLayersRateDistortionPasses(
+	passesPerBlock [][]t1.PassData,
+	numLayers int,
+	targetBudget float64,
+) *LayerAllocation {
+	numBlocks := len(passesPerBlock)
+	if numBlocks == 0 {
+		if numLayers <= 0 {
+			numLayers = 1
+		}
+		return &LayerAllocation{NumLayers: numLayers}
+	}
+	if numLayers <= 0 {
+		numLayers = 1
+	}
+	alloc := &LayerAllocation{
+		NumLayers:       numLayers,
+		CodeBlockPasses: make([][]int, numBlocks),
+	}
+	for i := 0; i < numBlocks; i++ {
+		alloc.CodeBlockPasses[i] = make([]int, numLayers)
+	}
+
+	if numLayers == 1 {
+		for cb := 0; cb < numBlocks; cb++ {
+			alloc.CodeBlockPasses[cb][0] = len(passesPerBlock[cb])
+		}
+		return alloc
+	}
+
+	type contrib struct {
+		CodeBlockIndex int
+		PassIndex      int
+		Rate           int
+		Distortion     float64
+		Slope          float64
+	}
+
+	contribs := make([]contrib, 0)
+	totalRate := 0.0
+	for cbIdx, passes := range passesPerBlock {
+		prevRate := 0
+		prevDist := 0.0
+		for pi, p := range passes {
+			cumRate := p.ActualBytes
+			if cumRate == 0 {
+				cumRate = p.Rate
+			}
+			incRate := cumRate - prevRate
+			if incRate <= 0 {
+				incRate = 1
+			}
+			incDist := p.Distortion - prevDist
+			if incDist < 0 {
+				incDist = 0
+			}
+			slope := 0.0
+			if incRate > 0 {
+				slope = incDist / float64(incRate)
+			}
+			contribs = append(contribs, contrib{
+				CodeBlockIndex: cbIdx,
+				PassIndex:      pi,
+				Rate:           incRate,
+				Distortion:     incDist,
+				Slope:          slope,
+			})
+			prevRate = cumRate
+			prevDist = p.Distortion
+		}
+		totalRate += float64(getPassBytes(passes, len(passes)))
+	}
+
+	// Clamp budget
+	if targetBudget <= 0 || targetBudget > totalRate {
+		targetBudget = totalRate
+	}
+
+	sort.Slice(contribs, func(i, j int) bool {
+		return contribs[i].Slope > contribs[j].Slope
+	})
+
+	// Build cumulative targets per layer (progressive fraction of final budget)
+	targetRates := make([]float64, numLayers)
+	for layer := 0; layer < numLayers; layer++ {
+		frac := math.Pow(float64(layer+1)/float64(numLayers), 1.1)
+		targetRates[layer] = targetBudget * frac
+	}
+
+	selected := make([]int, numBlocks) // passes selected (cumulative) for current layer
+	for layer := 0; layer < numLayers; layer++ {
+		currentRate := 0.0
+		// rate contributed by already selected passes (previous layers)
+		for cb := 0; cb < numBlocks; cb++ {
+			currentRate += float64(getPassBytes(passesPerBlock[cb], selected[cb]))
+		}
+
+		budget := targetRates[layer]
+		for _, c := range contribs {
+			if currentRate >= budget {
+				break
+			}
+			if c.PassIndex+1 <= selected[c.CodeBlockIndex] {
+				continue
+			}
+			newCount := c.PassIndex + 1
+			delta := getPassBytes(passesPerBlock[c.CodeBlockIndex], newCount) - getPassBytes(passesPerBlock[c.CodeBlockIndex], selected[c.CodeBlockIndex])
+			if delta <= 0 {
+				continue
+			}
+			selected[c.CodeBlockIndex] = newCount
+			currentRate += float64(delta)
+		}
+
+		// Record allocation for this layer
+		for cb := 0; cb < numBlocks; cb++ {
+			alloc.CodeBlockPasses[cb][layer] = selected[cb]
+			// Ensure monotonic
+			if layer > 0 && alloc.CodeBlockPasses[cb][layer] < alloc.CodeBlockPasses[cb][layer-1] {
+				alloc.CodeBlockPasses[cb][layer] = alloc.CodeBlockPasses[cb][layer-1]
+			}
+		}
+	}
+
+	return alloc
+}
+
+func getPassBytes(passes []t1.PassData, count int) int {
+	if count <= 0 {
+		return 0
+	}
+	if count > len(passes) {
+		count = len(passes)
+	}
+	b := passes[count-1].ActualBytes
+	if b == 0 {
+		b = passes[count-1].Rate
+	}
+	return b
 }
 
 // GetPassesForLayer returns the number of passes to include for a code-block in a specific layer
