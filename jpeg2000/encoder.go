@@ -1192,7 +1192,59 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
 	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
 		origBytes := e.params.Width * e.params.Height * e.params.Components * ((e.params.BitDepth + 7) / 8)
-		e.applyRateDistortion(allBlocks, origBytes)
+		if e.params.UsePCRDOpt && e.params.TargetRatio > 0 {
+			midRefine := e.params.TargetRatio >= 7.5 && e.params.TargetRatio <= 8.5
+			if !midRefine && e.params.TargetRatio <= 8.0 {
+				e.applyRateDistortion(allBlocks, origBytes)
+			} else {
+				targetTotal := float64(origBytes) / e.params.TargetRatio
+				// Estimate fixed codestream overhead (main header + per tile markers)
+				fixed := float64(e.estimateFixedOverhead())
+				if targetTotal > fixed {
+					targetData := targetTotal - fixed
+					// Iteratively refine allocation based on actual packet bytes
+					budget := targetData
+					maxIter := 6
+					minScale := 0.5
+					maxScale := 1.5
+					if midRefine {
+						maxIter = 12
+						minScale = 0.8
+						maxScale = 1.2
+					}
+					for iter := 0; iter < maxIter; iter++ {
+						e.applyRateDistortionWithBudget(allBlocks, budget)
+						packets, err := packetEnc.EncodePackets()
+						if err != nil {
+							break
+						}
+						pktBytes := 0
+						for _, p := range packets {
+							pktBytes += stuffedLen(p.Header) + stuffedLen(p.Body)
+						}
+						if pktBytes == 0 {
+							break
+						}
+						errPct := math.Abs(float64(pktBytes)-targetData) / targetData
+						if errPct <= 0.05 {
+							break
+						}
+						scale := targetData / float64(pktBytes)
+						if scale < minScale {
+							scale = minScale
+						}
+						if scale > maxScale {
+							scale = maxScale
+						}
+						budget = budget * scale
+					}
+				} else {
+					e.applyRateDistortion(allBlocks, origBytes)
+				}
+			}
+		} else {
+			e.applyRateDistortion(allBlocks, origBytes)
+		}
 	}
 
 	// Generate packets
@@ -1212,6 +1264,106 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	}
 
 	return buf.Bytes()
+}
+
+// estimateFixedOverhead builds main header segments to estimate constant bytes (excluding tile packet data).
+func (e *Encoder) estimateFixedOverhead() int {
+	buf := &bytes.Buffer{}
+	// SOC
+	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOC))
+	// SIZ, COD, QCD, RGN, COM
+	_ = e.writeSIZ(buf)
+	_ = e.writeCOD(buf)
+	_ = e.writeQCD(buf)
+	_ = e.writeRGN(buf)
+	_ = e.writeCOM(buf)
+	// Assume single tile overhead: SOT(12) + SOD(2) without data
+	// We still include tile-part RGN if ROI present
+	tile := &bytes.Buffer{}
+	_ = binary.Write(tile, binary.BigEndian, uint16(codestream.MarkerSOT))
+	_ = binary.Write(tile, binary.BigEndian, uint16(10))
+	_ = binary.Write(tile, binary.BigEndian, uint16(0))
+	_ = binary.Write(tile, binary.BigEndian, uint32(14))
+	_ = binary.Write(tile, binary.BigEndian, uint8(0))
+	_ = binary.Write(tile, binary.BigEndian, uint8(1))
+	_ = e.writeTileRGN(tile)
+	_ = binary.Write(tile, binary.BigEndian, uint16(codestream.MarkerSOD))
+	// Append tile overhead
+	buf.Write(tile.Bytes())
+	// EOC
+	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC))
+	// Byte-stuffing applies to packet data; headers here are marker-coded, do not stuff
+	return buf.Len()
+}
+
+// applyRateDistortionWithBudget performs allocation using a target total packet-data budget in bytes.
+func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, targetBudget float64) {
+	numLayers := e.params.NumLayers
+	if numLayers <= 0 {
+		numLayers = 1
+	}
+	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
+	totalRate := 0.0
+	for _, cb := range blocks {
+		passesPerBlock = append(passesPerBlock, cb.Passes)
+		if len(cb.Passes) > 0 {
+			last := cb.Passes[len(cb.Passes)-1]
+			bytes := last.ActualBytes
+			if bytes == 0 {
+				bytes = last.Rate
+			}
+			totalRate += float64(bytes)
+		}
+	}
+	budget := targetBudget
+	if budget <= 0 || budget > totalRate {
+		budget = totalRate
+	}
+	var alloc *LayerAllocation
+	if e.params.UsePCRDOpt && e.params.TargetRatio > 8.0 {
+		layerBudgets := ComputeLayerBudgets(budget, numLayers, e.params.LayerBudgetStrategy)
+		alloc = AllocateLayersWithLambda(passesPerBlock, numLayers, layerBudgets, e.params.LambdaTolerance)
+	} else {
+		alloc = AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+	}
+	for idx, cb := range blocks {
+		if len(cb.Passes) == 0 || cb.CompleteData == nil {
+			continue
+		}
+		if len(cb.PassLengths) == 0 {
+			cb.PassLengths = make([]int, len(cb.Passes))
+			for i, p := range cb.Passes {
+				cb.PassLengths[i] = p.ActualBytes
+			}
+		}
+		cb.LayerPasses = make([]int, numLayers)
+		cb.LayerData = make([][]byte, numLayers)
+		prevEnd := 0
+		for layer := 0; layer < numLayers; layer++ {
+			passCount := alloc.GetPassesForLayer(idx, layer)
+			if passCount > len(cb.Passes) {
+				passCount = len(cb.Passes)
+			}
+			cb.LayerPasses[layer] = passCount
+			end := prevEnd
+			if passCount > 0 {
+				end = cb.Passes[passCount-1].ActualBytes
+				if end == 0 {
+					end = cb.Passes[passCount-1].Rate
+				}
+			}
+			if end < prevEnd {
+				end = prevEnd
+			}
+			if end > len(cb.CompleteData) {
+				end = len(cb.CompleteData)
+			}
+			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
+			prevEnd = end
+		}
+		cb.Data = cb.CompleteData
+		cb.UseTERMALL = true
+	}
 }
 
 // applyRateDistortion truncates/allocates passes across layers using PCRD-style allocation.
@@ -1273,7 +1425,7 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 		alloc = AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
 	}
 
-	// Enforce global budget proportionally to fill budget when needed.
+	// Enforce global budget proportionally when budget is less than full rate.
 	if budget > 0 && budget < totalRate {
 		for idx, passes := range passesPerBlock {
 			fullBytes := passBytes(passes, len(passes))
@@ -1367,6 +1519,19 @@ func writeWithByteStuffing(buf *bytes.Buffer, data []byte) {
 			buf.WriteByte(0x00) // Stuff byte
 		}
 	}
+}
+
+func stuffedLen(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	n := len(data)
+	for _, b := range data {
+		if b == 0xFF {
+			n++
+		}
+	}
+	return n
 }
 
 // subbandInfo represents a wavelet subband
