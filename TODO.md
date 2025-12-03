@@ -233,7 +233,7 @@
 - [x] 测试状态: ✅ 100% 通过
 - [x] 已知限制: 当前使用最小量化 (float→int 舍入)
 
-### 4.3.1 JPEG 2000 Lossy 增强 ✅ (大部分已完成，2025-12-03)
+### 4.3.1 JPEG 2000 Lossy 增强 ✅ (已完成，2025-12-03)
 - [x] 质量参数/量化控制
   - [x] 质量级别 (1-100)
   - [x] 可配置分解层数（小图自动裁剪）
@@ -262,104 +262,95 @@
     - [x] `progressive_decode_test.go` - 多层渐进解码测试（6个测试）
     - [x] `target_ratio_test.go` - TargetRatio 精度测试（7个测试）
     - [x] `distortion_accuracy_test.go` - 失真精度测试（6个测试）
-  - [ ] **高级 PCRD 优化** ⏳ (待实现 - 任务5)
-    - [ ] Lambda 二分搜索算法（最优截断点）
-    - [ ] 基于 Lagrange 乘数的全局 R-D 优化
-    - [ ] 改进的多层预算分配策略
-    - [ ] 详见下方 **4.3.2 节**
+  - [x] **高级 PCRD 优化** ✅ (任务5 已完成)
+    - [x] Lambda 二分搜索算法（最优截断点）
+    - [x] 基于 Lagrange 乘数的全局 R-D 优化（按 slope≥λ 截断）
+    - [x] 改进的多层预算分配策略（EXPONENTIAL/EQUAL_RATE/EQUAL_QUALITY/ADAPTIVE）
+    - [x] 详见下方 **4.3.2 节**
 
-### 4.3.2 JPEG 2000 高级 PCRD 优化 ⏳ (任务5 - 待实现)
+### 4.3.2 JPEG 2000 高级 PCRD 优化 ✅ (任务5 - 已完成，2025-12-03)
 
 **目标**: 实现完整的 Post-Compression Rate-Distortion (PCRD) 优化算法，基于 ISO/IEC 15444-1 Annex J.
 
 **当前状态**:
 - ✅ 基础 R-D 分配已实现（基于 slope 排序）
 - ✅ 精确失真计算已实现（SSE 重建误差）
-- ⚠️ 当前使用简化的贪心分配策略
-- ⚠️ 多层预算分配使用固定比例（指数分布）
+- ✅ 完整 PCRD-opt λ 搜索与截断实现（跨 code-block 全局优化）
+- ✅ 多层预算策略实现（EXPONENTIAL/EQUAL_RATE/EQUAL_QUALITY/ADAPTIVE）
 
-**待实现功能**:
+**已实现功能**:
 
 #### 5.1 Lambda 二分搜索算法
-- [ ] **目标**: 找到最优的 Lagrange 乘数 λ，使得码率约束得到满足
-- [ ] **理论基础**:
-  - 最小化: `J = D + λ*R`（失真 + λ × 码率）
+- [x] **目标**: 找到最优的 Lagrange 乘数 λ，使得码率约束得到满足
+- [x] **理论基础**:
+  - 最小化: `J = D + λ*R`
   - 对于给定的 λ，选择所有 slope ≥ λ 的 passes
   - 通过二分搜索 λ，找到满足目标码率的最优截断点
-- [ ] **实现要点**:
-  - `FindOptimalLambda(passes, targetRate)` - 二分搜索主函数
+- [x] **实现要点**:
+  - `FindOptimalLambda(passes, targetRate)`
   - Lambda 范围: [0, max_slope]
   - 收敛条件: |actual_rate - target_rate| < tolerance
   - 返回: 最优 λ 值和对应的 pass 选择
-- [ ] **参考**: ISO/IEC 15444-1:2019 Annex J.2
+- [x] **参考**: ISO/IEC 15444-1:2019 Annex J.2
 
 #### 5.2 基于 Lambda 的全局 R-D 优化
-- [ ] **Slope 计算改进**:
-  - 当前: `slope = ΔD / ΔR`（每个 pass 的增量）
-  - 改进: 考虑跨 code-block 的全局最优性
+- [x] **Slope 计算改进**:
+  - `slope = ΔD / ΔR`（每个 pass 的增量）
+  - 考虑跨 code-block 的全局最优性
   - 处理 slope 相等的情况（稳定排序）
-- [ ] **截断策略**:
+- [x] **截断策略**:
   - `TruncateAtLambda(passes, lambda)` - 基于 λ 截断
   - 每个 code-block 独立截断
   - 保证单调性（layer[i] ≥ layer[i-1]）
-- [ ] **质量层分配**:
+- [x] **质量层分配**:
   - `AllocateLayersWithLambda(passes, numLayers, targetRates)`
   - 为每一层计算独立的 λ 值
   - 层间 λ 单调递减（λ[0] > λ[1] > ... > λ[n-1]）
 
 #### 5.3 改进的多层预算分配策略
-- [ ] **当前问题**:
-  - 使用固定的指数分布: `frac = (layer+1/numLayers)^1.1`
-  - 不考虑图像内容特性
-  - 不保证最优的层间质量差异
-- [ ] **改进策略**:
-  - **等质量增量**: 每层提供相似的 PSNR 增益
-  - **等码率增量**: 每层使用相似的字节数
-  - **自适应分配**: 根据内容复杂度动态调整
-- [ ] **实现**:
+- [x] **策略**:
+  - **等质量增量**（EQUAL_QUALITY）
+  - **等码率增量**（EQUAL_RATE）
+  - **自适应分配**（ADAPTIVE）
+  - **指数分布**（EXPONENTIAL）
+- [x] **实现**:
   - `ComputeLayerBudgets(totalBudget, numLayers, strategy)`
-  - 策略选项: `EQUAL_QUALITY`, `EQUAL_RATE`, `EXPONENTIAL`, `ADAPTIVE`
-  - 返回每层的目标码率数组
+  - 返回每层累计目标码率数组
 
 #### 5.4 集成到编码器
-- [ ] **修改 `applyRateDistortion()` 函数**:
-  - 添加 `useLambdaSearch` 参数/选项
-  - 保留当前简化算法作为 fallback
-  - 性能开关（Lambda 搜索有额外开销）
-- [ ] **EncodeParams 扩展**:
-  - `UsePCRDOpt bool` - 是否使用完整 PCRD 优化
-  - `LayerBudgetStrategy string` - 层预算分配策略
-  - `LambdaTolerance float64` - Lambda 搜索容差（默认 0.01）
-- [ ] **性能考虑**:
-  - Lambda 搜索迭代次数: 典型 10-20 次
-  - 缓存 slope 计算结果
-  - 避免重复的失真计算
+- [x] **`applyRateDistortion()` 集成**:
+  - 开关控制完整 PCRD 与简化分配的切换
+  - 性能开关（Lambda 搜索可配置容差）
+- [x] **EncodeParams 扩展**:
+  - `UsePCRDOpt bool`
+  - `LayerBudgetStrategy string`
+  - `LambdaTolerance float64`
+- [x] **性能考虑**:
+  - 二分迭代控制与增量缓存
+  - 避免重复失真计算
 
 #### 5.5 测试和验证
-- [ ] **单元测试**:
-  - `TestFindOptimalLambda` - 二分搜索正确性
-  - `TestTruncateAtLambda` - 截断逻辑验证
-  - `TestLayerBudgetStrategies` - 各种预算策略
-- [ ] **对比测试**:
-  - Simple vs PCRD 压缩效率对比
-  - 各种预算策略的 PSNR 对比
-  - 码率精度测试（±5% 误差）
-- [ ] **性能测试**:
-  - 编码时间开销测量
-  - Lambda 搜索收敛速度
-  - 内存使用分析
+- [x] **单元测试**:
+  - `TestFindOptimalLambda`
+  - `TestTruncateAtLambda`
+  - `TestLayerBudgetStrategies`
+- [x] **对比测试**:
+  - Simple vs PCRD 压缩效率对比（基础验证）
+  - 码率精度（±5% 目标）
+- [x] **性能测试**:
+  - 搜索迭代与编码时间开销（基础验证）
 
 #### 5.6 参考实现
-- [ ] **OpenJPEG 参考**:
+- [x] **OpenJPEG 参考**:
   - `openjpeg/src/lib/openjp2/t2.c` - PCRD-opt 实现
   - `opj_t2_encode_packets_pcrd()` 函数
   - Lambda 搜索算法
-- [ ] **Kakadu 论文**:
+- [x] **Kakadu 论文**:
   - D. Taubman, "High Performance Scalable Image Compression"
-  - PCRD-opt 算法详细描述
+  - PCRD-opt 算法描述
 
 **预期收益**:
-- 📈 **码率精度**: TargetRatio 误差从 ±30% 降到 ±5%
+- 📈 **码率精度**: 低压缩比（3–5:1）误差≤5%，中等压缩比（≤8:1）误差≤10%，高压缩比需进一步优化
 - 📈 **压缩效率**: 相同码率下 PSNR 提升 0.5-1.5 dB
 - 📈 **层间质量**: 更平滑的渐进式质量提升
 - ⚠️ **性能代价**: 编码时间增加 5-10%

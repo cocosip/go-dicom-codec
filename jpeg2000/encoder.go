@@ -56,6 +56,11 @@ type EncodeParams struct {
 	// Layer parameters
 	NumLayers int // Number of quality layers (default 1)
 
+	// PCRD options
+	UsePCRDOpt          bool
+	LayerBudgetStrategy string
+	LambdaTolerance     float64
+
 	// Region of Interest (ROI)
 	ROI *ROIParams // Optional single-rectangle ROI with MaxShift
 	// ROIConfig supports multiple ROI entries (MVP: multiple rectangles, MaxShift only)
@@ -65,24 +70,27 @@ type EncodeParams struct {
 // DefaultEncodeParams returns default encoding parameters for lossless encoding
 func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool) *EncodeParams {
 	return &EncodeParams{
-		Width:            width,
-		Height:           height,
-		Components:       components,
-		BitDepth:         bitDepth,
-		IsSigned:         isSigned,
-		TileWidth:        0, // Single tile
-		TileHeight:       0, // Single tile
-		NumLevels:        5, // 5 DWT levels
-		Lossless:         true,
-		Quality:          80, // Default quality for lossy mode
-		CodeBlockWidth:   64,
-		CodeBlockHeight:  64,
-		PrecinctWidth:    0, // Default (2^15)
-		PrecinctHeight:   0, // Default (2^15)
-		TargetRatio:      0,
-		ProgressionOrder: 0, // LRCP
-		NumLayers:        1,
-		ROI:              nil,
+		Width:               width,
+		Height:              height,
+		Components:          components,
+		BitDepth:            bitDepth,
+		IsSigned:            isSigned,
+		TileWidth:           0, // Single tile
+		TileHeight:          0, // Single tile
+		NumLevels:           5, // 5 DWT levels
+		Lossless:            true,
+		Quality:             80, // Default quality for lossy mode
+		CodeBlockWidth:      64,
+		CodeBlockHeight:     64,
+		PrecinctWidth:       0, // Default (2^15)
+		PrecinctHeight:      0, // Default (2^15)
+		TargetRatio:         0,
+		ProgressionOrder:    0, // LRCP
+		NumLayers:           1,
+		UsePCRDOpt:          false,
+		LayerBudgetStrategy: "EXPONENTIAL",
+		LambdaTolerance:     0.01,
+		ROI:                 nil,
 	}
 }
 
@@ -1257,9 +1265,15 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 		fmt.Printf("PCRD budget=%.2f totalRate=%.2f blocks=%d\n", budget, totalRate, len(blocks))
 	}
 
-	alloc := AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+	var alloc *LayerAllocation
+	if e.params.UsePCRDOpt {
+		layerBudgets := ComputeLayerBudgets(budget, numLayers, e.params.LayerBudgetStrategy)
+		alloc = AllocateLayersWithLambda(passesPerBlock, numLayers, layerBudgets, e.params.LambdaTolerance)
+	} else {
+		alloc = AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+	}
 
-	// Enforce global budget proportionally if requested.
+	// Enforce global budget proportionally to fill budget when needed.
 	if budget > 0 && budget < totalRate {
 		for idx, passes := range passesPerBlock {
 			fullBytes := passBytes(passes, len(passes))

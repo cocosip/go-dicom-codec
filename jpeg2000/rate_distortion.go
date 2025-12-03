@@ -344,6 +344,295 @@ func getPassBytes(passes []t1.PassData, count int) int {
 	return b
 }
 
+func computeIncrementals(passesPerBlock [][]t1.PassData) ([][]float64, [][]int, [][]int, float64) {
+	numBlocks := len(passesPerBlock)
+	slopes := make([][]float64, numBlocks)
+	incRates := make([][]int, numBlocks)
+	cumRates := make([][]int, numBlocks)
+	maxSlope := 0.0
+	for i := 0; i < numBlocks; i++ {
+		p := passesPerBlock[i]
+		slopes[i] = make([]float64, len(p))
+		incRates[i] = make([]int, len(p))
+		cumRates[i] = make([]int, len(p))
+		prevRate := 0
+		prevDist := 0.0
+		for j := 0; j < len(p); j++ {
+			r := p[j].ActualBytes
+			if r == 0 {
+				r = p[j].Rate
+			}
+			inc := r - prevRate
+			if inc <= 0 {
+				inc = 1
+			}
+			d := p[j].Distortion - prevDist
+			if d < 0 {
+				d = 0
+			}
+			s := d / float64(inc)
+			slopes[i][j] = s
+			if s > maxSlope {
+				maxSlope = s
+			}
+			incRates[i][j] = inc
+			cumRates[i][j] = r
+			prevRate = r
+			prevDist = p[j].Distortion
+		}
+	}
+	return slopes, incRates, cumRates, maxSlope
+}
+
+func truncateAtLambda(passesPerBlock [][]t1.PassData, slopes [][]float64, cumRates [][]int, lambda float64, minPasses []int) ([]int, float64) {
+	numBlocks := len(passesPerBlock)
+	selected := make([]int, numBlocks)
+	total := 0.0
+	for i := 0; i < numBlocks; i++ {
+		count := 0
+		for j := 0; j < len(passesPerBlock[i]); j++ {
+			if slopes[i][j] >= lambda {
+				count = j + 1
+			} else {
+				break
+			}
+		}
+		if minPasses != nil && i < len(minPasses) && count < minPasses[i] {
+			count = minPasses[i]
+		}
+		selected[i] = count
+		total += float64(getPassBytes(passesPerBlock[i], count))
+	}
+	return selected, total
+}
+
+func FindOptimalLambda(passesPerBlock [][]t1.PassData, targetRate float64, tolerance float64, minPasses []int) (float64, []int, float64) {
+	if tolerance <= 0 {
+		tolerance = 0.01
+	}
+	slopes, _, cumRates, maxSlope := computeIncrementals(passesPerBlock)
+	low := 0.0
+	high := maxSlope
+	var sel []int
+	var rate float64
+	for iter := 0; iter < 32; iter++ {
+		mid := (low + high) * 0.5
+		s, r := truncateAtLambda(passesPerBlock, slopes, cumRates, mid, minPasses)
+		sel = s
+		rate = r
+		if targetRate <= 0 {
+			break
+		}
+		if math.Abs(rate-targetRate) <= targetRate*tolerance {
+			return mid, sel, rate
+		}
+		if rate > targetRate {
+			low = mid
+		} else {
+			high = mid
+		}
+	}
+	return high, sel, rate
+}
+
+func ComputeLayerBudgets(totalBudget float64, numLayers int, strategy string) []float64 {
+	if numLayers <= 0 {
+		numLayers = 1
+	}
+	budgets := make([]float64, numLayers)
+	switch strategy {
+	case "EQUAL_RATE":
+		for i := 0; i < numLayers; i++ {
+			frac := float64(i+1) / float64(numLayers)
+			budgets[i] = totalBudget * frac
+		}
+	case "EQUAL_QUALITY":
+		for i := 0; i < numLayers; i++ {
+			frac := math.Pow(float64(i+1)/float64(numLayers), 0.9)
+			budgets[i] = totalBudget * frac
+		}
+	case "ADAPTIVE":
+		for i := 0; i < numLayers; i++ {
+			frac := math.Pow(float64(i+1)/float64(numLayers), 1.05)
+			budgets[i] = totalBudget * frac
+		}
+	default:
+		for i := 0; i < numLayers; i++ {
+			frac := math.Pow(float64(i+1)/float64(numLayers), 1.1)
+			budgets[i] = totalBudget * frac
+		}
+	}
+	return budgets
+}
+
+func AllocateLayersWithLambda(passesPerBlock [][]t1.PassData, numLayers int, layerBudgets []float64, tolerance float64) *LayerAllocation {
+	numBlocks := len(passesPerBlock)
+	if numBlocks == 0 {
+		if numLayers <= 0 {
+			numLayers = 1
+		}
+		return &LayerAllocation{NumLayers: numLayers}
+	}
+	if numLayers <= 0 {
+		numLayers = 1
+	}
+	alloc := &LayerAllocation{
+		NumLayers:       numLayers,
+		CodeBlockPasses: make([][]int, numBlocks),
+	}
+	for i := 0; i < numBlocks; i++ {
+		alloc.CodeBlockPasses[i] = make([]int, numLayers)
+	}
+	selected := make([]int, numBlocks)
+	totalRate := 0.0
+	for cb := 0; cb < numBlocks; cb++ {
+		totalRate += float64(getPassBytes(passesPerBlock[cb], len(passesPerBlock[cb])))
+	}
+	for layer := 0; layer < numLayers; layer++ {
+		budgetCum := totalRate
+		if layer < len(layerBudgets) && layerBudgets[layer] > 0 && layerBudgets[layer] < totalRate {
+			budgetCum = layerBudgets[layer]
+		}
+		// Base rate already selected in previous layers
+		baseRate := 0.0
+		for cb := 0; cb < numBlocks; cb++ {
+			baseRate += float64(getPassBytes(passesPerBlock[cb], selected[cb]))
+		}
+		remBudget := budgetCum - baseRate
+		if remBudget < 0 {
+			remBudget = 0
+		}
+		minPasses := make([]int, numBlocks)
+		for i := 0; i < numBlocks; i++ {
+			if remBudget > 0 && len(passesPerBlock[i]) > 0 {
+				minPasses[i] = 1
+			}
+			if selected[i] > minPasses[i] {
+				minPasses[i] = selected[i]
+			}
+		}
+		_, sel, _ := FindOptimalLambda(passesPerBlock, remBudget, tolerance, minPasses)
+		sel = adjustSelectionToBudget(passesPerBlock, selected, sel, remBudget)
+		for cb := 0; cb < numBlocks; cb++ {
+			if sel[cb] < selected[cb] {
+				sel[cb] = selected[cb]
+			}
+			alloc.CodeBlockPasses[cb][layer] = sel[cb]
+		}
+		copy(selected, sel)
+	}
+	return alloc
+}
+
+func adjustSelectionToBudget(passesPerBlock [][]t1.PassData, prev []int, selected []int, targetBudget float64) []int {
+	if targetBudget <= 0 {
+		return selected
+	}
+	numBlocks := len(passesPerBlock)
+	current := 0.0
+	for i := 0; i < numBlocks; i++ {
+		base := getPassBytes(passesPerBlock[i], selected[i]) - getPassBytes(passesPerBlock[i], prev[i])
+		newPasses := selected[i] - prev[i]
+		meta := 0
+		if newPasses > 0 {
+			meta = 1 + 2*newPasses
+		}
+		current += float64(base + meta)
+	}
+	if current < targetBudget {
+		type inc struct {
+			idx, next int
+			delta     int
+			slope     float64
+		}
+		incs := make([]inc, 0)
+		for i := 0; i < numBlocks; i++ {
+			p := passesPerBlock[i]
+			if selected[i] < len(p) {
+				next := selected[i] + 1
+				delta := getPassBytes(p, next) - getPassBytes(p, selected[i])
+				newPasses := selected[i] - prev[i]
+				if newPasses == 0 {
+					delta += 3
+				} else {
+					delta += 2
+				}
+				if delta > 0 {
+					prevRate := 0
+					if selected[i] > 0 {
+						prevRate = p[selected[i]-1].ActualBytes
+						if prevRate == 0 {
+							prevRate = p[selected[i]-1].Rate
+						}
+					}
+					incRate := delta
+					incDist := p[next-1].Distortion
+					if selected[i] > 0 {
+						incDist -= p[selected[i]-1].Distortion
+					}
+					s := 0.0
+					if incRate > 0 {
+						s = incDist / float64(incRate)
+					}
+					incs = append(incs, inc{idx: i, next: next, delta: delta, slope: s})
+				}
+			}
+		}
+		sort.Slice(incs, func(a, b int) bool { return incs[a].slope > incs[b].slope })
+		for _, c := range incs {
+			if current >= targetBudget {
+				break
+			}
+			selected[c.idx] = c.next
+			current += float64(c.delta)
+		}
+		return selected
+	}
+	if current > targetBudget {
+		type dec struct {
+			idx, prev int
+			delta     int
+			slope     float64
+		}
+		decs := make([]dec, 0)
+		for i := 0; i < numBlocks; i++ {
+			p := passesPerBlock[i]
+			if selected[i] > 0 {
+				prevPassIdx := selected[i] - 1
+				delta := getPassBytes(p, selected[i]) - getPassBytes(p, prevPassIdx)
+				newPasses := selected[i] - prev[i]
+				if newPasses == 1 {
+					delta += 3
+				} else if newPasses > 1 {
+					delta += 2
+				}
+				if delta > 0 {
+					incRate := delta
+					incDist := p[selected[i]-1].Distortion
+					if prevPassIdx >= 0 {
+						incDist -= p[prevPassIdx].Distortion
+					}
+					s := 0.0
+					if incRate > 0 {
+						s = incDist / float64(incRate)
+					}
+					decs = append(decs, dec{idx: i, prev: prevPassIdx, delta: delta, slope: s})
+				}
+			}
+		}
+		sort.Slice(decs, func(a, b int) bool { return decs[a].slope < decs[b].slope })
+		for _, c := range decs {
+			if current <= targetBudget {
+				break
+			}
+			selected[c.idx] = c.prev
+			current -= float64(c.delta)
+		}
+		return selected
+	}
+	return selected
+}
+
 // GetPassesForLayer returns the number of passes to include for a code-block in a specific layer
 func (la *LayerAllocation) GetPassesForLayer(codeBlockIndex, layer int) int {
 	if codeBlockIndex >= len(la.CodeBlockPasses) {
