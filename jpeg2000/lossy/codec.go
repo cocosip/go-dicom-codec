@@ -95,7 +95,8 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 
 	// Configure for lossy compression (9/7 wavelet)
 	encParams.Lossless = false
-	encParams.NumLevels = lossyParams.NumLevels
+	// Clamp decomposition levels based on image size to avoid over-decomposition on tiny images.
+	encParams.NumLevels = clampNumLevels(lossyParams.NumLevels, int(src.Width), int(src.Height))
 	encParams.Quality = lossyParams.Quality
 
 	// Create encoder
@@ -122,6 +123,28 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
 
 	return nil
+}
+
+// clampNumLevels limits decomposition levels so the LL band remains at least 2x2.
+// This avoids excessive quantization on very small images (e.g., 16x16).
+func clampNumLevels(requested, width, height int) int {
+	minDim := width
+	if height < minDim {
+		minDim = height
+	}
+
+	maxLevels := 0
+	// Each level halves dimensions; keep LL >= 2 pixels on the shortest side.
+	for maxLevels < 6 && (minDim>>(maxLevels+1)) >= 1 {
+		maxLevels++
+	}
+	if maxLevels < 0 {
+		maxLevels = 0
+	}
+	if requested > maxLevels {
+		return maxLevels
+	}
+	return requested
 }
 
 // Decode decodes JPEG 2000 Lossy data to uncompressed pixel data
