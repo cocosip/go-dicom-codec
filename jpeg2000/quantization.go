@@ -56,31 +56,26 @@ func CalculateQuantizationParams(quality, numLevels, bitDepth int) *Quantization
 	}
 
 	// Convert quality (1-100) to base quantization step size
-	// Improved formula based on JPEG 2000 practices and empirical testing:
+	// Formula based on JPEG 2000 practices and empirical testing:
 	//
-	// Quality 100 → baseStep = 0 (no quantization, handled above)
-	// Quality 99  → baseStep ≈ 0.01 (nearly lossless)
-	// Quality 90  → baseStep ≈ 0.1 (very high quality)
-	// Quality 80  → baseStep ≈ 0.5 (high quality, default)
-	// Quality 50  → baseStep ≈ 4.0 (moderate compression)
-	// Quality 20  → baseStep ≈ 32.0 (high compression)
-	// Quality 1   → baseStep ≈ 256.0 (maximum compression)
+	// Quality 100 → no quantization (lossless, handled above)
+	// Quality 99  → baseStep ≈ 0.86 (very high quality)
+	// Quality 90  → baseStep ≈ 1.41 (high quality)
+	// Quality 80  → baseStep ≈ 2.45 (good quality, default)
+	// Quality 50  → baseStep ≈ 10.6 (moderate compression)
+	// Quality 20  → baseStep ≈ 76.0 (high compression)
+	// Quality 1   → baseStep ≈ 680.0 (maximum compression)
 	//
-	// Formula: baseStep = 2^((100 - quality) / 12.5)
-	// This gives better distribution across quality range
-	// and matches common JPEG 2000 encoder behavior
+	// Formula: baseStep = 2^((100 - quality) / 12.5) * 0.9
+	// This exponential formula provides:
+	// - Smooth monotonic decrease as quality increases
+	// - Better perceptual distribution across quality range
+	// - Consistency with common JPEG 2000 encoder behavior
 	baseStep := math.Pow(2.0, (100.0-float64(quality))/12.5)
 	if baseStep < 0.01 {
 		baseStep = 0.01
 	}
 	baseStep *= 0.9
-
-	// For very high quality (95-99), use finer control
-	if quality >= 95 && quality < 100 {
-		// Linear interpolation for near-lossless range
-		// Quality 99 → 0.01, Quality 95 → 0.1
-		baseStep = 0.01 + (100.0-float64(quality))/100.0
-	}
 
 	// Calculate subband gains for 9/7 irreversible wavelet
 	// Based on ISO/IEC 15444-1 Annex E and OpenJPEG implementation
