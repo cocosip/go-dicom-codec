@@ -1,6 +1,7 @@
 package lossy
 
 import (
+	"math"
 	"testing"
 
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
@@ -220,9 +221,9 @@ func TestRGBImage(t *testing.T) {
 	// Create RGB data (interleaved)
 	pixelData := make([]byte, numPixels*3)
 	for i := 0; i < numPixels; i++ {
-		pixelData[i*3+0] = byte((i * 2) % 256)      // R
-		pixelData[i*3+1] = byte((i * 3) % 256)      // G
-		pixelData[i*3+2] = byte((i * 5) % 256)      // B
+		pixelData[i*3+0] = byte((i * 2) % 256) // R
+		pixelData[i*3+1] = byte((i * 3) % 256) // G
+		pixelData[i*3+2] = byte((i * 5) % 256) // B
 	}
 
 	src := &codec.PixelData{
@@ -279,5 +280,79 @@ func TestRGBImage(t *testing.T) {
 
 	if maxError > 5 {
 		t.Errorf("RGB max error too large: %d", maxError)
+	}
+}
+
+// TestRateControlAndLayers verifies TargetRatio、多层、显式量化步长的组合可正常工作。
+func TestRateControlAndLayers(t *testing.T) {
+	width := uint16(64)
+	height := uint16(64)
+	numPixels := int(width) * int(height)
+
+	// 构造简单梯度
+	pixelData := make([]byte, numPixels)
+	for i := 0; i < numPixels; i++ {
+		pixelData[i] = byte((i * 7) % 256)
+	}
+
+	src := &codec.PixelData{
+		Data:                      pixelData,
+		Width:                     width,
+		Height:                    height,
+		NumberOfFrames:            1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+
+	// 自定义参数：目标压缩比 5:1，多层，量化倍率 1.2，并提供显式子带步长（长度需匹配 3*numLevels+1）。
+	params := NewLossyParameters().
+		WithNumLayers(3).
+		WithTargetRatio(5.0).
+		WithQuantStepScale(1.2)
+	// 默认 NumLevels=5，但小图会被 clamp；按 clamp 后的层数构造步长表。
+	clampedLevels := 0
+	minDim := int(width)
+	if int(height) < minDim {
+		minDim = int(height)
+	}
+	for clampedLevels < 6 && (minDim>>(clampedLevels+1)) >= 1 {
+		clampedLevels++
+	}
+	expectedSubbands := 3*clampedLevels + 1
+	steps := make([]float64, expectedSubbands)
+	for i := range steps {
+		steps[i] = 2.0 + float64(i) // 简单递增的步长
+	}
+	params.WithSubbandSteps(steps)
+
+	c := NewCodec(80)
+	encoded := &codec.PixelData{}
+	if err := c.Encode(src, encoded, params); err != nil {
+		t.Fatalf("Encode with rate control/layers failed: %v", err)
+	}
+
+	if len(encoded.Data) == 0 {
+		t.Fatalf("Encoded data is empty")
+	}
+
+	ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+	t.Logf("Target ratio: %.2f, actual: %.2f", params.TargetRatio, ratio)
+	// 验证压缩比接近目标（容差 50% 内）
+	if math.Abs(ratio-params.TargetRatio) > params.TargetRatio*0.5 {
+		t.Fatalf("Ratio too far from target: got %.2f, want ~%.2f", ratio, params.TargetRatio)
+	}
+
+	decoded := &codec.PixelData{}
+	if err := c.Decode(encoded, decoded, nil); err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+	if decoded.Width != src.Width || decoded.Height != src.Height {
+		t.Fatalf("Dim mismatch after decode: got %dx%d, want %dx%d",
+			decoded.Width, decoded.Height, src.Width, src.Height)
 	}
 }

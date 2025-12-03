@@ -42,6 +42,10 @@ type EncodeParams struct {
 	// 1 = maximum compression, lower quality
 	Quality int // Default: 80
 
+	// CustomQuantSteps allows caller to override quantization step sizes per subband (lossy only).
+	// Length must be 3*NumLevels+1 when provided. Values are floating quant steps.
+	CustomQuantSteps []float64
+
 	// Progression order
 	ProgressionOrder uint8 // 0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL
 
@@ -690,16 +694,25 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 		}
 	} else {
 		// Lossy mode: scalar expounded quantization (style 2)
-		// Calculate quantization parameters based on quality
-		quantParams := CalculateQuantizationParams(p.Quality, p.NumLevels, p.BitDepth)
+		encodedSteps := make([]uint16, 0)
+		guardBits := uint8(2)
+
+		if len(p.CustomQuantSteps) > 0 {
+			encodedSteps = encodeQuantStepsFromFloats(p.CustomQuantSteps, p.BitDepth)
+		} else {
+			// Calculate quantization parameters based on quality
+			quantParams := CalculateQuantizationParams(p.Quality, p.NumLevels, p.BitDepth)
+			guardBits = uint8(quantParams.GuardBits)
+			encodedSteps = quantParams.EncodedSteps
+		}
 
 		// Sqcd - bits 0-4: guard bits, bits 5-7: quantization type (2 = scalar expounded)
-		sqcd := uint8(2<<5 | quantParams.GuardBits)
+		sqcd := uint8(2<<5 | (guardBits & 0x1F))
 		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
 		// SPqcd - Quantization step sizes for each subband
 		// For scalar expounded: 16-bit value per subband (5-bit exponent, 11-bit mantissa)
-		for _, encodedStep := range quantParams.EncodedSteps {
+		for _, encodedStep := range encodedSteps {
 			_ = binary.Write(qcdData, binary.BigEndian, encodedStep)
 		}
 	}
@@ -1720,6 +1733,37 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// encodeQuantStepsFromFloats converts floating quantization steps to encoded form (5-bit exponent, 11-bit mantissa).
+func encodeQuantStepsFromFloats(steps []float64, bitDepth int) []uint16 {
+	if len(steps) == 0 {
+		return nil
+	}
+	encoded := make([]uint16, len(steps))
+	bias := bitDepth - 1
+	for i, stepSize := range steps {
+		if stepSize <= 0 {
+			stepSize = 0.0001
+		}
+		exp := int(math.Floor(math.Log2(stepSize))) + bias
+		mantissa := stepSize / math.Pow(2.0, float64(exp-bias))
+		if exp < 0 {
+			exp = 0
+		}
+		if exp > 31 {
+			exp = 31
+		}
+		mantissaInt := int((mantissa - 1.0) * 2048.0)
+		if mantissaInt < 0 {
+			mantissaInt = 0
+		}
+		if mantissaInt > 2047 {
+			mantissaInt = 2047
+		}
+		encoded[i] = uint16((exp << 11) | mantissaInt)
+	}
+	return encoded
 }
 
 // applyDCLevelShift applies DC level shift for unsigned data
