@@ -162,6 +162,7 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 
 	// Track first quad's ULF for second-quad decisions
 	var ulf1 int
+	var useSimplified bool
 
 	// Decode first quad if significant
 	if melBit1 == 1 {
@@ -174,14 +175,17 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 		} else {
 			ulf1 = 0
 		}
+		// Enable simplified U-VLC for second quad when first quad's u > 2
+		if uDec == 3 && ulf1 == 1 {
+			useSimplified = true
+		}
 		// Update context with quad significance
 		h.context.UpdateQuadSignificance(q1, qy, rho1)
 	}
 
 	// Decode second quad if significant
 	if hasQ2 && melBit2 == 1 {
-		// Disable simplified U-VLC for stability
-		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, false, ulf1)
+		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, ulf1)
 		if err != nil {
 			return err
 		}
@@ -223,7 +227,9 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 	u := uint32(0)
 	if uOff == 1 {
 		var err error
-		if isInitialLinePair && firstQuadU > 0 {
+		if useSimplifiedUVLC {
+			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
+		} else if isInitialLinePair && firstQuadU > 0 {
 			// Initial pair formula: only for second quad when both quads in initial line have ulf=1
 			// firstQuadU > 0 means first quad had ulf=1 (and this is second quad with ulf=1)
 			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()

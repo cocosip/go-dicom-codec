@@ -203,13 +203,18 @@ func (h *HTEncoder) encodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 	if hasQ2 {
 		info2 := h.getQuadInfo(q2, qy)
 
+		// Enable simplified U-VLC for second quad only when first quad's u value is small and non-zero
+		u1 := info1.Uq - info1.Kq
+		if u1 < 0 {
+			u1 = 0
+		}
+		useSimplified := info1.ULF == 1 && u1 == 3
+
 		// Encode MEL bit for quad2
 		h.mel.EncodeBit(info2.MelBit)
 
 		// Encode quad2 VLC/UVLC/MagSgn if significant
 		if info2.MelBit == 1 {
-			// Disable simplified U-VLC for stability
-			useSimplified := false
 			// Pass first quad's ULF for initial pair formula decision
 			if err := h.encodeQuadData(info2, isInitialLinePair, useSimplified, int(info1.ULF)); err != nil {
 				return err
@@ -353,11 +358,28 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 			u = 0
 		}
 
-		// Use initial pair formula only for second quad when both have ulf=1
-		useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
-		if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
-			return fmt.Errorf("encode U-VLC: %w", err)
+		if useSimplifiedUVLC {
+			// Simplified coding only supports values 1 or 2
+			if u < 1 {
+				u = 1
+			} else if u > 2 {
+				u = 2
+			}
+			if err := h.uvlc.EncodeUVLCSimplified(u); err != nil {
+				return fmt.Errorf("encode simplified U-VLC: %w", err)
+			}
+		} else {
+			// Use initial pair formula only for second quad when both have ulf=1
+			useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
+			if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
+				return fmt.Errorf("encode U-VLC: %w", err)
+			}
 		}
+
+		// Use the transmitted exponent bound for predictor and MagSgn
+		effectiveUq := info.Kq + u
+		info.Uq = effectiveUq
+		h.expPredictor.SetQuadExponents(info.Qx, info.Qy, info.Uq, bits.OnesCount8(info.Rho))
 
 	}
 
