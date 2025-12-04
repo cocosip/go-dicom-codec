@@ -70,50 +70,37 @@ func (e *ExponentPredictorComputer) SetQuadExponents(qx, qy int, maxExponent int
 // Returns:
 //   - Kq: The exponent predictor value
 func (e *ExponentPredictorComputer) ComputePredictor(qx, qy int) int {
-	// First row: Kq = 1 (all quads in first row)
+	// First row: Kq = 1
 	if qy == 0 {
 		return 1
 	}
 
-	// Non-first row: Kq = max(E'qL, E'qT) - γq
-
-	// Get left neighbor's max exponent (E'qL)
 	var E_left int
 	if qx > 0 {
 		E_left = e.exponents[qy][qx-1]
 	} else {
-		// No left neighbor (leftmost column) - use 0
 		E_left = 0
 	}
 
-	// Get top neighbor's max exponent (E'qT)
 	var E_top int
 	if qy > 0 {
 		E_top = e.exponents[qy-1][qx]
 	} else {
-		// No top neighbor (should not happen since qy > 0 here)
 		E_top = 0
 	}
 
-	// Kq = max(E'qL, E'qT) - γq
 	maxE := E_left
 	if E_top > maxE {
 		maxE = E_top
 	}
 
-	// Subtract gamma if current quad has more than one significant sample
-	// NOTE: gamma[qy][qx] is for neighboring quads, not the current quad
-	// (it's from previous rows/columns that have already been processed)
 	Kq := maxE
 	if e.gamma[qy][qx] {
 		Kq = Kq - 1
 	}
-
-	// Ensure Kq is at least 0
 	if Kq < 0 {
 		Kq = 0
 	}
-
 	return Kq
 }
 

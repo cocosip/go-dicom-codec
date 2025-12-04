@@ -166,41 +166,97 @@ func (v *VLCEncoder) EncodeCxtVLC(context, rho, uOff, ek, e1 uint8, isFirstRow b
 	}
 
 	if !found {
-		// Entry not found with exact ek/e1 - search for ANY entry with matching (context, rho, uOff)
-		// This handles cases where ek/e1 don't match table entries
-		if isFirstRow {
-			for _, tblEntry := range VLC_tbl0 {
-				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-					entry = VLCEncodeEntry{
-						Codeword: tblEntry.Cwd,
-						Length:   tblEntry.CwdLen,
-						Valid:    true,
-					}
-					found = true
-					break
-				}
-			}
-		} else {
-			for _, tblEntry := range VLC_tbl1 {
-				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-					entry = VLCEncodeEntry{
-						Codeword: tblEntry.Cwd,
-						Length:   tblEntry.CwdLen,
-						Valid:    true,
-					}
-					found = true
-					break
-				}
-			}
-		}
-
+		// Fallback: search any entry with matching (context, rho, uOff)
+        if isFirstRow {
+            maxLen := uint8(0)
+            var best VLCEncodeEntry
+            for _, tblEntry := range VLC_tbl0 {
+                if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+                    if tblEntry.CwdLen > maxLen {
+                        maxLen = tblEntry.CwdLen
+                        best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+                    }
+                }
+            }
+            if maxLen != 0 {
+                entry = best
+                found = true
+            }
+        } else {
+            maxLen := uint8(0)
+            var best VLCEncodeEntry
+            for _, tblEntry := range VLC_tbl1 {
+                if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+                    if tblEntry.CwdLen > maxLen {
+                        maxLen = tblEntry.CwdLen
+                        best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+                    }
+                }
+            }
+            if maxLen != 0 {
+                entry = best
+                found = true
+            }
+        }
 		if !found {
-			return fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d", context, rho, uOff)
+			return fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d, ek=0x%X, e1=0x%X", context, rho, uOff, ek, e1)
 		}
 	}
 
 	// Emit the codeword
 	return v.emitVLCBits(uint32(entry.Codeword), int(entry.Length))
+}
+
+func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFirstRow bool) (int, error) {
+	// Create lookup key
+	key := encodeKey{cq: context, rho: rho, uOff: uOff, ek: ek, e1: e1}
+	var entry VLCEncodeEntry
+	var found bool
+	if isFirstRow {
+		entry, found = v.encodeMap0[key]
+	} else {
+		entry, found = v.encodeMap1[key]
+	}
+	if !found {
+		if isFirstRow {
+			minLen := uint8(255)
+			var best VLCEncodeEntry
+			for _, tblEntry := range VLC_tbl0 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					if tblEntry.CwdLen < minLen {
+						minLen = tblEntry.CwdLen
+						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+					}
+				}
+			}
+			if minLen != 255 {
+				entry = best
+				found = true
+			}
+		} else {
+			minLen := uint8(255)
+			var best VLCEncodeEntry
+			for _, tblEntry := range VLC_tbl1 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					if tblEntry.CwdLen < minLen {
+						minLen = tblEntry.CwdLen
+						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+					}
+				}
+			}
+			if minLen != 255 {
+				entry = best
+				found = true
+			}
+		}
+		if !found {
+			return 0, fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d, ek=0x%X, e1=0x%X", context, rho, uOff, ek, e1)
+		}
+	}
+	if err := v.emitVLCBits(uint32(entry.Codeword), int(entry.Length)); err != nil {
+		return 0, err
+	}
+	return int(entry.Length), nil
 }
 
 // Flush flushes any pending bits and returns the VLC byte-stream

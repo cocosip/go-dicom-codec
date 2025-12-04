@@ -137,11 +137,6 @@ func (h *HTEncoder) buildSignificanceMap() {
 		for x := 0; x < h.width; x++ {
 			idx := y*h.width + x
 			h.sigMap[y][x] = (h.data[idx] != 0)
-
-			// Update context computer
-			if h.sigMap[y][x] {
-				h.context.SetSignificant(x, y, true)
-			}
 		}
 	}
 }
@@ -213,8 +208,8 @@ func (h *HTEncoder) encodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 
 		// Encode quad2 VLC/UVLC/MagSgn if significant
 		if info2.MelBit == 1 {
-			// Check if we can use simplified U-VLC for second quad
-			useSimplified := (info1.Uq > 2)
+			// Disable simplified U-VLC for stability
+			useSimplified := false
 			// Pass first quad's ULF for initial pair formula decision
 			if err := h.encodeQuadData(info2, isInitialLinePair, useSimplified, int(info1.ULF)); err != nil {
 				return err
@@ -315,16 +310,29 @@ func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
 	// Update exponent predictor with Uq and significance count
 	h.expPredictor.SetQuadExponents(qx, qy, info.Uq, sigCount)
 
-	// EMB parameters - compute based on magnitude bit patterns
-	// For cleanup pass, ek and e1 track which samples have specific bit patterns
-	//
-	// ek (E_k): samples where magnitude bit k is set (bit at position Uq-1)
-	// e1 (E_1): samples where magnitude bit 1 is set (bit at position 0)
-	//
-	// For cleanup pass: set ek and e1 to match rho pattern (all significant samples)
-	// This is correct for cleanup pass as all bits are being coded
-	info.EK = info.Rho
-	info.E1 = info.Rho
+	// Compute ek/e1 from magnitude bit patterns for significant samples
+	var ek uint8 = 0
+	var e1 uint8 = 0
+	if info.Uq > 0 {
+		msbPos := info.Uq - 1
+		for i := 0; i < 4; i++ {
+			if info.Significant[i] {
+				val := info.Samples[i]
+				if val < 0 {
+					val = -val
+				}
+				mag := uint32(val)
+				if ((mag >> uint(msbPos)) & 1) == 1 {
+					ek |= (1 << i)
+				}
+				if (mag & 1) == 1 {
+					e1 |= (1 << i)
+				}
+			}
+		}
+	}
+	info.EK = ek
+	info.E1 = e1
 
 	return info
 }
@@ -345,18 +353,12 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 			u = 0
 		}
 
-		if useSimplifiedUVLC {
-			// Simplified: just encode u with 1 bit
-			if err := h.uvlc.EncodeUVLCSimplified(u); err != nil {
-				return fmt.Errorf("encode U-VLC simplified: %w", err)
-			}
-		} else {
-			// Use initial pair formula only for second quad when both have ulf=1
-			useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
-			if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
-				return fmt.Errorf("encode U-VLC: %w", err)
-			}
+		// Use initial pair formula only for second quad when both have ulf=1
+		useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
+		if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
+			return fmt.Errorf("encode U-VLC: %w", err)
 		}
+
 	}
 
 	// Encode MagSgn for each significant sample
@@ -420,4 +422,3 @@ func (h *HTEncoder) assembleCodel() []byte {
 
 	return result
 }
-

@@ -160,25 +160,28 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 		}
 	}
 
-	// Track first quad's Uq for simplified U-VLC
-	var uq1 int
+	// Track first quad's ULF for second-quad decisions
+	var ulf1 int
 
 	// Decode first quad if significant
 	if melBit1 == 1 {
-		rho1, maxExp, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0)
+		rho1, _, uDec, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0)
 		if err != nil {
 			return err
 		}
-		uq1 = maxExp
+		if uDec > 0 {
+			ulf1 = 1
+		} else {
+			ulf1 = 0
+		}
 		// Update context with quad significance
 		h.context.UpdateQuadSignificance(q1, qy, rho1)
 	}
 
 	// Decode second quad if significant
 	if hasQ2 && melBit2 == 1 {
-		// Use simplified U-VLC if first quad has uq > 2
-		useSimplified := (uq1 > 2)
-		rho2, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, uq1)
+		// Disable simplified U-VLC for stability
+		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, false, ulf1)
 		if err != nil {
 			return err
 		}
@@ -190,8 +193,8 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 }
 
 // decodeQuad decodes a single quad using complete VLC decoding
-// Returns the rho pattern and maxExponent for context updates
-func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadUq int) (uint8, int, error) {
+// Returns the rho pattern, maxExponent for context updates, and decoded u (unsigned residual)
+func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadU int) (uint8, int, int, error) {
 	// Calculate positions
 	x0 := qx * 2
 	y0 := qy * 2
@@ -210,7 +213,7 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 	}
 
 	if !found {
-		return 0, 0, fmt.Errorf("VLC decode failed for quad (%d,%d) with context=%d, isInitial=%v", qx, qy, ctx, isInitialLinePair)
+		return 0, 0, 0, fmt.Errorf("VLC decode failed for quad (%d,%d) with context=%d, isInitial=%v", qx, qy, ctx, isInitialLinePair)
 	}
 
 	// Calculate exponent predictor
@@ -220,19 +223,16 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 	u := uint32(0)
 	if uOff == 1 {
 		var err error
-		if useSimplifiedUVLC {
-			// Simplified mode: second quad in pair when first has uq > 2
-			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
-		} else if isInitialLinePair && firstQuadUq > 0 {
+		if isInitialLinePair && firstQuadU > 0 {
 			// Initial pair formula: only for second quad when both quads in initial line have ulf=1
-			// firstQuadUq > 0 means first quad had ulf=1 (and this is second quad with ulf=1)
+			// firstQuadU > 0 means first quad had ulf=1 (and this is second quad with ulf=1)
 			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()
 		} else {
 			// Regular U-VLC decoding
 			u, err = h.uvlc.DecodeUnsignedResidual()
 		}
 		if err != nil {
-			return 0, 0, fmt.Errorf("decode U-VLC: %w", err)
+			return 0, 0, 0, fmt.Errorf("decode U-VLC: %w", err)
 		}
 	}
 
@@ -278,7 +278,7 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 		}
 	}
 
-	return rho, maxExponent, nil
+	return rho, maxExponent, int(u), nil
 }
 
 // GetData returns decoded data
