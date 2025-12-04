@@ -13,6 +13,10 @@ import (
 type Decoder struct {
 	// Codestream
 	cs *codestream.Codestream
+
+	// Custom block decoder factory (for HTJ2K support)
+	blockDecoderFactory t2.BlockDecoderFactory
+
 	// ROI
 	roi       *ROIParams
 	roiConfig *ROIConfig
@@ -63,6 +67,11 @@ func (d *Decoder) SetROI(roi *ROIParams) {
 // SetROIConfig sets ROI configuration (MVP: multiple rectangles, MaxShift).
 func (d *Decoder) SetROIConfig(cfg *ROIConfig) {
 	d.roiConfig = cfg
+}
+
+// SetBlockDecoderFactory sets a custom block decoder factory (e.g., for HTJ2K support)
+func (d *Decoder) SetBlockDecoderFactory(factory t2.BlockDecoderFactory) {
+	d.blockDecoderFactory = factory
 }
 
 // Decode decodes a JPEG 2000 codestream
@@ -659,7 +668,9 @@ func (d *Decoder) decodeTiles() error {
 	// Decode all tiles
 	for tileIdx, tile := range d.cs.Tiles {
 		// Create tile decoder
-		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo)
+		// Use injected blockDecoderFactory if set (e.g., for HTJ2K), otherwise defaults to EBCOT T1
+		isHTJ2K := d.blockDecoderFactory != nil
+		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo, isHTJ2K, d.blockDecoderFactory)
 
 		// Decode tile
 		tileData, err := tileDecoder.Decode()

@@ -170,6 +170,24 @@ func (h *HTDecoder) GetData() []int32 {
 	return h.data
 }
 
+// DecodeWithBitplane decodes a code-block with known max bitplane
+// Implements t2.BlockDecoder interface
+func (h *HTDecoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
+	_, err := h.Decode(data, numPasses)
+	return err
+}
+
+// DecodeLayered decodes a code-block with TERMALL mode
+// Implements t2.BlockDecoder interface
+func (h *HTDecoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
+	numPasses := len(passLengths)
+	if numPasses == 0 {
+		numPasses = 1
+	}
+	_, err := h.Decode(data, numPasses)
+	return err
+}
+
 // Reset resets the decoder for reuse
 func (h *HTDecoder) Reset() {
 	for i := range h.data {

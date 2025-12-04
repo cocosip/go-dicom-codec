@@ -9,6 +9,19 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/wavelet"
 )
 
+// BlockDecoder is an interface for T1 block decoders (EBCOT or HTJ2K)
+type BlockDecoder interface {
+	// DecodeWithBitplane decodes a code-block with known max bitplane
+	DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error
+	// DecodeLayered decodes a code-block with TERMALL mode
+	DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error
+	// GetData returns the decoded coefficients
+	GetData() []int32
+}
+
+// BlockDecoderFactory creates block decoders for a specific code-block size
+type BlockDecoderFactory func(width, height int, cblkstyle int) BlockDecoder
+
 // TileDecoder decodes a single JPEG 2000 tile
 type TileDecoder struct {
 	// Tile information
@@ -28,6 +41,10 @@ type TileDecoder struct {
 
 	// ROI
 	roi *ROIInfo
+
+	// HTJ2K support
+	isHTJ2K             bool
+	blockDecoderFactory BlockDecoderFactory
 }
 
 // ComponentDecoder decodes a single component within a tile
@@ -240,13 +257,17 @@ func NewTileDecoder(
 	cod *codestream.CODSegment,
 	qcd *codestream.QCDSegment,
 	roi *ROIInfo,
+	isHTJ2K bool,
+	blockDecoderFactory BlockDecoderFactory,
 ) *TileDecoder {
 	td := &TileDecoder{
-		tile: tile,
-		siz:  siz,
-		cod:  cod,
-		qcd:  qcd,
-		roi:  roi,
+		tile:                tile,
+		siz:                 siz,
+		cod:                 cod,
+		qcd:                 qcd,
+		roi:                 roi,
+		isHTJ2K:             isHTJ2K,
+		blockDecoderFactory: blockDecoderFactory,
 	}
 
 	return td

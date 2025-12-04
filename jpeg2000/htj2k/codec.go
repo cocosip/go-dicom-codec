@@ -3,6 +3,8 @@ package htj2k
 import (
 	"fmt"
 
+	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
@@ -120,30 +122,43 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Validate parameters
 	htj2kParams.Validate()
 
-	// Use actual image dimensions for block size if not specified
-	// (simplified approach for small images)
-	blockWidth := htj2kParams.BlockWidth
-	blockHeight := htj2kParams.BlockHeight
-	if int(src.Width) < blockWidth {
-		blockWidth = int(src.Width)
-	}
-	if int(src.Height) < blockHeight {
-		blockHeight = int(src.Height)
-	}
+	// Create JPEG 2000 encoding parameters with HTJ2K enabled
+	encParams := jpeg2000.DefaultEncodeParams(
+		int(src.Width),
+		int(src.Height),
+		int(src.SamplesPerPixel),
+		int(src.BitsStored),
+		src.PixelRepresentation != 0,
+	)
 
-	// Create HTJ2K block encoder
-	encoder := NewHTEncoder(blockWidth, blockHeight)
+	// Configure HTJ2K-specific settings
+	encParams.NumLevels = htj2kParams.NumLevels
+	encParams.CodeBlockWidth = htj2kParams.BlockWidth
+	encParams.CodeBlockHeight = htj2kParams.BlockHeight
 
-	// Convert pixel data to wavelet coefficients
-	// For now, treat pixel data directly as coefficients (simplified)
-	// In a full implementation, this would perform DWT first
-	coeffs := make([]int32, len(src.Data))
-	for i, b := range src.Data {
-		coeffs[i] = int32(int8(b)) // Simplified conversion
+	// Set HTJ2K block encoder factory
+	encParams.BlockEncoderFactory = func(width, height int) jpeg2000.BlockEncoder {
+		return NewHTEncoder(width, height)
 	}
 
-	// Encode the block
-	encoded, err := encoder.Encode(coeffs, 1, 0)
+	// Configure lossless vs lossy mode
+	if c.lossless {
+		encParams.Lossless = true
+	} else {
+		encParams.Lossless = false
+		encParams.Quality = htj2kParams.Quality
+	}
+
+	// Set progression order based on transfer syntax
+	if c.transferSyntax == transfer.HTJ2KLosslessRPCL {
+		encParams.ProgressionOrder = 2 // RPCL
+	}
+
+	// Create encoder with HTJ2K enabled
+	encoder := jpeg2000.NewEncoder(encParams)
+
+	// Encode using full JPEG 2000 pipeline (DWT + HTJ2K block coding + T2)
+	encoded, err := encoder.Encode(src.Data)
 	if err != nil {
 		return fmt.Errorf("HTJ2K encode failed: %w", err)
 	}
@@ -204,38 +219,22 @@ func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Validate parameters
 	htj2kParams.Validate()
 
-	// Use actual image dimensions for block size
-	blockWidth := htj2kParams.BlockWidth
-	blockHeight := htj2kParams.BlockHeight
-	if int(src.Width) < blockWidth {
-		blockWidth = int(src.Width)
-	}
-	if int(src.Height) < blockHeight {
-		blockHeight = int(src.Height)
-	}
+	// Create JPEG 2000 decoder
+	decoder := jpeg2000.NewDecoder()
 
-	// Create HTJ2K block decoder
-	decoder := NewHTDecoder(blockWidth, blockHeight)
+	// Set HTJ2K block decoder factory
+	// The decoder will use this factory to create HTJ2K block decoders instead of EBCOT T1 decoders
+	decoder.SetBlockDecoderFactory(func(width, height int, cblkstyle int) t2.BlockDecoder {
+		return NewHTDecoder(width, height)
+	})
 
-	// Decode the block
-	coeffs, err := decoder.Decode(src.Data, 1)
-	if err != nil {
+	// Decode using full JPEG 2000 pipeline (T2 + HTJ2K block decoding + Inverse DWT)
+	if err := decoder.Decode(src.Data); err != nil {
 		return fmt.Errorf("HTJ2K decode failed: %w", err)
 	}
 
-	// Convert coefficients back to pixel data
-	// In a full implementation, this would perform inverse DWT
-	pixelData := make([]byte, len(coeffs))
-	for i, c := range coeffs {
-		// Clamp to byte range
-		val := c
-		if val < -128 {
-			val = -128
-		} else if val > 127 {
-			val = 127
-		}
-		pixelData[i] = byte(val)
-	}
+	// Get decoded pixel data
+	pixelData := decoder.GetPixelData()
 
 	// Set destination data
 	dst.Data = pixelData

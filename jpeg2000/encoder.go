@@ -81,6 +81,15 @@ type EncodeParams struct {
 	MCOPrecision         uint8
 	MCORecordOrder       []uint8
 	MCTBindings          []MCTBindingParams
+
+	// Block encoder factory (for HTJ2K support)
+	// If nil, defaults to EBCOT T1 encoder
+	BlockEncoderFactory func(width, height int) BlockEncoder
+}
+
+// BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
+type BlockEncoder interface {
+	Encode(coeffs []int32, numPasses int, roiShift int) ([]byte, error)
 }
 
 type MCTBindingParams struct {
