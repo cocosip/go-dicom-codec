@@ -44,14 +44,13 @@ func TestProgressiveDecodeLossless(t *testing.T) {
 		t.Fatalf("Decoded length %d, want %d", len(decoded), len(pixelData))
 	}
 
-	// Verify lossless quality (allow small tolerance for multi-layer limitations)
+	// Verify lossless quality (should be perfect reconstruction)
 	maxError, avgError := calculateError(pixelData, decoded)
 	t.Logf("Full decode: max error=%d, avg error=%.2f", maxError, avgError)
 
-	// TODO: Current multi-layer lossless has known small errors
-	// This should be 0 for true lossless, but we allow 250 for now
-	if maxError > 250 {
-		t.Errorf("Lossless decoding has unacceptable error %d (threshold 250)", maxError)
+	// Multi-layer lossless should achieve perfect reconstruction (0 error)
+	if maxError > 0 {
+		t.Errorf("Lossless decoding has error %d, want 0 (perfect reconstruction)", maxError)
 	}
 }
 
