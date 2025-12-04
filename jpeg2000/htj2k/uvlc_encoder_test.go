@@ -208,25 +208,25 @@ func TestEncodePrefixBits(t *testing.T) {
 		{
 			name:       "u_pfx=1: '1'",
 			uPfx:       1,
-			wantBits:   0b1,
+			wantBits:   0b1, // "1": bit0=1 → 0x1
 			wantLength: 1,
 		},
 		{
 			name:       "u_pfx=2: '01'",
 			uPfx:       2,
-			wantBits:   0b01,
+			wantBits:   0b10, // "01": bit0=0, bit1=1 → 0x2
 			wantLength: 2,
 		},
 		{
 			name:       "u_pfx=3: '001'",
 			uPfx:       3,
-			wantBits:   0b001,
+			wantBits:   0b100, // "001": bit0=0, bit1=0, bit2=1 → 0x4
 			wantLength: 3,
 		},
 		{
 			name:       "u_pfx=5: '000'",
 			uPfx:       5,
-			wantBits:   0b000,
+			wantBits:   0b000, // "000": bit0=0, bit1=0, bit2=0 → 0x0
 			wantLength: 3,
 		},
 	}

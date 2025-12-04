@@ -85,9 +85,6 @@ func TestHTEncoderDecoder(t *testing.T) {
 			// Log results
 			t.Logf("Encoded size: %d bytes", len(encoded))
 			t.Logf("Max error: %d", maxError)
-			magsgnLen, melLen, vlcLen := encoder.GetSegmentLengths()
-			t.Logf("Segment lengths: MagSgn=%d, MEL=%d, VLC=%d",
-				magsgnLen, melLen, vlcLen)
 
 			// For this basic test, accept non-zero error
 			// TODO: Implement full VLC table for exact reconstruction

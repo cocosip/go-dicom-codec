@@ -123,23 +123,29 @@ func EncodeUVLCInitialPair(u uint32) UVLCCodeword {
 
 // EncodePrefixBits converts u_pfx value to prefix bit pattern
 //
-// Prefix patterns:
-//   - u_pfx=1: "1"    (1 bit)
-//   - u_pfx=2: "01"   (2 bits)
-//   - u_pfx=3: "001"  (3 bits)
-//   - u_pfx=5: "000"  (3 bits)
+// Prefix patterns (reading order):
+//   - u_pfx=1: "1"    (1 bit) - first bit is 1
+//   - u_pfx=2: "01"   (2 bits) - first bit is 0, second bit is 1
+//   - u_pfx=3: "001"  (3 bits) - first bit is 0, second bit is 0, third bit is 1
+//   - u_pfx=5: "000"  (3 bits) - first bit is 0, second bit is 0, third bit is 0
 //
-// Returns bits in little-endian order (LSB first) for emitVLCBits
+// Returns bits in LSB-first encoding order for emitVLCBits.
+// For LSB-first, bit0 is written first, bit1 second, etc.
+// So to produce reading pattern "001", we need:
+//   - bit0 (written first, read first) = 0
+//   - bit1 (written second, read second) = 0
+//   - bit2 (written third, read third) = 1
+//   - Value = (1 << 2) = 0x4
 func EncodePrefixBits(u_pfx uint8) (bits uint32, length int) {
 	switch u_pfx {
 	case 1:
-		return 1, 1 // "1"
+		return 0b1, 1 // "1": bit0=1 → value 0x1
 	case 2:
-		return 0b01, 2 // "01" (read right-to-left: 1, then 0)
+		return 0b10, 2 // "01": bit0=0, bit1=1 → value 0x2
 	case 3:
-		return 0b001, 3 // "001"
+		return 0b100, 3 // "001": bit0=0, bit1=0, bit2=1 → value 0x4
 	case 5:
-		return 0b000, 3 // "000"
+		return 0b000, 3 // "000": bit0=0, bit1=0, bit2=0 → value 0x0
 	default:
 		return 0, 0
 	}
@@ -188,4 +194,46 @@ func (c *UVLCCodeword) EncodeToStream(writer BitStreamWriter) error {
 // BitStreamWriter interface for writing bits to VLC stream
 type BitStreamWriter interface {
 	WriteBits(bits uint32, length int) error
+}
+
+// UVLCEncoder wraps U-VLC encoding functionality for use in HTEncoder
+type UVLCEncoder struct {
+	writer BitStreamWriter
+}
+
+// NewUVLCEncoder creates a new U-VLC encoder
+func NewUVLCEncoder() *UVLCEncoder {
+	return &UVLCEncoder{}
+}
+
+// SetWriter sets the bit stream writer
+func (u *UVLCEncoder) SetWriter(writer BitStreamWriter) {
+	u.writer = writer
+}
+
+// EncodeUVLC encodes a U-VLC value using the standard formula
+func (u *UVLCEncoder) EncodeUVLC(value int, isInitialLinePair bool) error {
+	var cwd UVLCCodeword
+
+	if isInitialLinePair {
+		cwd = EncodeUVLCInitialPair(uint32(value))
+	} else {
+		cwd = EncodeUVLC(uint32(value))
+	}
+
+	if u.writer != nil {
+		return cwd.EncodeToStream(u.writer)
+	}
+	return nil
+}
+
+// EncodeUVLCSimplified encodes U-VLC in simplified mode (for second quad when first has uq>2)
+func (u *UVLCEncoder) EncodeUVLCSimplified(value int) error {
+	// Simplified encoding: 1 bit encoding (value - 1)
+	// value can be 1 or 2, encoded as bit 0 or 1
+	bit := value - 1
+	if u.writer != nil {
+		return u.writer.WriteBits(uint32(bit), 1)
+	}
+	return nil
 }

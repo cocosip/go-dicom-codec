@@ -2,7 +2,7 @@ package htj2k
 
 import (
 	"fmt"
-	"math"
+	"math/bits"
 )
 
 // HTEncoder implements the HTJ2K High-Throughput block encoder
@@ -12,7 +12,7 @@ import (
 // block coder that processes samples in 2x2 quads using three entropy coding tools:
 // 1. MagSgn - Magnitude and sign bits
 // 2. MEL - Adaptive run-length coding for quad significance
-// 3. VLC - Variable-length coding for sample patterns
+// 3. VLC - Variable-length coding for sample patterns with context and U-VLC
 
 type HTEncoder struct {
 	// Block dimensions
@@ -22,25 +22,61 @@ type HTEncoder struct {
 	// Input data
 	data []int32 // Wavelet coefficients
 
+	// Significance map (tracks which samples are significant)
+	sigMap [][]bool
+
 	// Encoders for three segments
 	magsgn *MagSgnEncoder
 	mel    *MELEncoder
 	vlc    *VLCEncoder
+	uvlc   *UVLCEncoder
+
+	// Context computer
+	context *ContextComputer
+
+	// Exponent predictor
+	expPredictor *ExponentPredictorComputer
 
 	// Encoding state
 	maxBitplane int
 	roishift    int
+
+	// Dimensions in quads
+	qw int // width in quads
+	qh int // height in quads
 }
 
 // NewHTEncoder creates a new HT block encoder
 func NewHTEncoder(width, height int) *HTEncoder {
-	return &HTEncoder{
-		width:  width,
-		height: height,
-		magsgn: NewMagSgnEncoder(),
-		mel:    NewMELEncoder(),
-		vlc:    NewVLCEncoder(),
+	qw := (width + 1) / 2
+	qh := (height + 1) / 2
+
+	vlcEnc := NewVLCEncoder()
+	uvlcEnc := NewUVLCEncoder()
+
+	// Connect U-VLC encoder to VLC encoder (they share the same bit stream)
+	uvlcEnc.SetWriter(vlcEnc)
+
+	enc := &HTEncoder{
+		width:        width,
+		height:       height,
+		qw:           qw,
+		qh:           qh,
+		sigMap:       make([][]bool, height),
+		magsgn:       NewMagSgnEncoder(),
+		mel:          NewMELEncoder(),
+		vlc:          vlcEnc,
+		uvlc:         uvlcEnc,
+		context:      NewContextComputer(width, height),
+		expPredictor: NewExponentPredictorComputer(qw, qh),
 	}
+
+	// Initialize significance map
+	for y := 0; y < height; y++ {
+		enc.sigMap[y] = make([]bool, width)
+	}
+
+	return enc
 }
 
 // Encode encodes a code-block using HTJ2K HT cleanup pass
@@ -60,8 +96,11 @@ func (h *HTEncoder) Encode(data []int32, numPasses int, roishift int) ([]byte, e
 		return []byte{}, nil
 	}
 
-	// Encode using HT cleanup pass
-	if err := h.encodeHTCleanup(); err != nil {
+	// Build significance map
+	h.buildSignificanceMap()
+
+	// Encode using HT cleanup pass with quad-pair processing
+	if err := h.encodeHTCleanupPass(); err != nil {
 		return nil, err
 	}
 
@@ -88,22 +127,41 @@ func (h *HTEncoder) findMaxBitplane() int {
 		return -1
 	}
 
-	// Calculate bitplane
-	bitplane := 0
-	for maxVal > 0 {
-		maxVal >>= 1
-		bitplane++
-	}
-
-	return bitplane - 1
+	// Calculate bitplane (position of most significant bit)
+	return bits.Len32(uint32(maxVal)) - 1
 }
 
-// encodeHTCleanup performs the HT cleanup pass encoding
-func (h *HTEncoder) encodeHTCleanup() error {
-	// Process code-block in 2x2 quads (quad-based scanning)
-	for y := 0; y < h.height; y += 2 {
-		for x := 0; x < h.width; x += 2 {
-			if err := h.encodeQuad(x, y); err != nil {
+// buildSignificanceMap builds the significance map from input data
+func (h *HTEncoder) buildSignificanceMap() {
+	for y := 0; y < h.height; y++ {
+		for x := 0; x < h.width; x++ {
+			idx := y*h.width + x
+			h.sigMap[y][x] = (h.data[idx] != 0)
+
+			// Update context computer
+			if h.sigMap[y][x] {
+				h.context.SetSignificant(x, y, true)
+			}
+		}
+	}
+}
+
+// encodeHTCleanupPass performs HT cleanup pass encoding with quad-pair processing
+func (h *HTEncoder) encodeHTCleanupPass() error {
+	// Process code-block in quad-pairs (row by row, pair by pair)
+	for qy := 0; qy < h.qh; qy++ {
+		isInitialLinePair := (qy == 0)
+
+		for g := 0; g < (h.qw+1)/2; g++ {
+			// Quad indices: q1 = 2*g, q2 = 2*g+1
+			q1 := 2 * g
+			q2 := 2*g + 1
+
+			// Check if second quad exists (handle odd width)
+			hasQ2 := q2 < h.qw
+
+			// Encode this quad-pair
+			if err := h.encodeQuadPair(q1, q2, qy, hasQ2, isInitialLinePair); err != nil {
 				return err
 			}
 		}
@@ -112,66 +170,210 @@ func (h *HTEncoder) encodeHTCleanup() error {
 	return nil
 }
 
-// encodeQuad encodes a single 2x2 quad
-func (h *HTEncoder) encodeQuad(x, y int) error {
-	// Collect 4 samples in quad (handle boundaries)
-	quad := make([]int32, 4)
-	quadSig := uint8(0)  // Significance pattern (4 bits)
+// QuadInfo holds encoding information for a single quad
+type QuadInfo struct {
+	Qx, Qy      int      // Quad position
+	Samples     [4]int32 // Sample values
+	Significant [4]bool  // Significance flags
+	Rho         uint8    // Significance pattern (0-15)
+	Context     uint8    // VLC context index
+	Kq          int      // Exponent predictor
+	Uq          int      // Exponent bound
+	ULF         uint8    // ULF flag (0 or 1)
+	EK          uint8    // EMB parameter
+	E1          uint8    // EMB parameter
+	MelBit      int      // MEL bit (0=all zero, 1=has significant)
+}
 
-	// Sample order in quad: [0,1]
-	//                       [2,3]
-	positions := [][2]int{{x, y}, {x + 1, y}, {x, y + 1}, {x + 1, y + 1}}
+// encodeQuadPair encodes a pair of horizontally adjacent quads
+// FIXED: Now processes quads sequentially with context updates between them
+func (h *HTEncoder) encodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool) error {
+	// Get quad1 information
+	info1 := h.getQuadInfo(q1, qy)
+
+	// Encode MEL bit for quad1
+	h.mel.EncodeBit(info1.MelBit)
+
+	// Encode quad1 VLC/UVLC/MagSgn if significant
+	if info1.MelBit == 1 {
+		// First quad: no previous quad, so firstQuadULF=0
+		if err := h.encodeQuadData(info1, isInitialLinePair, false, 0); err != nil {
+			return err
+		}
+		// Update context with quad1 significance
+		h.context.UpdateQuadSignificance(q1, qy, info1.Rho)
+	}
+
+	// Now get quad2 information (AFTER quad1 context update)
+	if hasQ2 {
+		info2 := h.getQuadInfo(q2, qy)
+
+		// Encode MEL bit for quad2
+		h.mel.EncodeBit(info2.MelBit)
+
+		// Encode quad2 VLC/UVLC/MagSgn if significant
+		if info2.MelBit == 1 {
+			// Check if we can use simplified U-VLC for second quad
+			useSimplified := (info1.Uq > 2)
+			// Pass first quad's ULF for initial pair formula decision
+			if err := h.encodeQuadData(info2, isInitialLinePair, useSimplified, int(info1.ULF)); err != nil {
+				return err
+			}
+			// Update context with quad2 significance
+			h.context.UpdateQuadSignificance(q2, qy, info2.Rho)
+		}
+	}
+
+	return nil
+}
+
+// getQuadInfo extracts encoding information for a single quad
+func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
+	info := &QuadInfo{
+		Qx: qx,
+		Qy: qy,
+	}
+
+	// Quad top-left position in samples
+	x0 := qx * 2
+	y0 := qy * 2
+
+	// Collect 4 samples in quad
+	// Sample order: [0,1]
+	//               [2,3]
+	positions := [][2]int{
+		{x0, y0}, {x0 + 1, y0},
+		{x0, y0 + 1}, {x0 + 1, y0 + 1},
+	}
+
+	allZero := true
+	maxMag := int32(0)
+	sigCount := 0
 
 	for i, pos := range positions {
 		px, py := pos[0], pos[1]
 		if px < h.width && py < h.height {
 			idx := py*h.width + px
-			quad[i] = h.data[idx]
+			info.Samples[i] = h.data[idx]
+			info.Significant[i] = (info.Samples[i] != 0)
 
-			// Check if significant at current bitplane
-			if quad[i] != 0 {
-				quadSig |= (1 << i)
+			if info.Significant[i] {
+				allZero = false
+				sigCount++
+
+				// Build rho pattern
+				info.Rho |= (1 << i)
+
+				// Track max magnitude
+				mag := info.Samples[i]
+				if mag < 0 {
+					mag = -mag
+				}
+				if mag > maxMag {
+					maxMag = mag
+				}
 			}
 		}
 	}
 
-	// Encode quad significance using MEL
-	// If all samples are zero, encode as run continuation (0)
-	// Otherwise, encode as run termination (1)
-	allZero := (quadSig == 0)
+	// Set MEL bit
 	if allZero {
-		h.mel.EncodeBit(0) // Continue run
-	} else {
-		h.mel.EncodeBit(1) // End run
+		info.MelBit = 0
+		return info
+	}
+	info.MelBit = 1
 
-		// Encode significance pattern and magnitudes using VLC
-		mags := make([]int, 0, 4)
-		for i := 0; i < 4; i++ {
-			if (quadSig>>i)&1 != 0 {
-				// Sample is significant
-				mag := quad[i]
-				if mag < 0 {
-					mag = -mag
-				}
-				mags = append(mags, int(mag))
+	// Calculate context
+	info.Context = h.context.ComputeContext(qx, qy, qy == 0)
+
+	// Calculate exponent predictor Kq
+	info.Kq = h.expPredictor.ComputePredictor(qx, qy)
+
+	// Calculate exponent bound Uq
+	if maxMag > 0 {
+		info.Uq = bits.Len32(uint32(maxMag))
+	}
+
+	// Calculate U = Uq - Kq (with clipping)
+	u := info.Uq - info.Kq
+	if u < 0 {
+		u = 0
+	}
+
+	// ULF flag
+	if u > 0 {
+		info.ULF = 1
+	}
+
+	// IMPORTANT: When u is clipped to 0, the actual exponent bound is Kq, not Uq!
+	// The decoder will compute maxExponent = Kq + u, and we must encode with that many bits
+	// So update Uq to be max(Uq, Kq) for consistency with decoder
+	if info.Uq < info.Kq {
+		info.Uq = info.Kq
+	}
+
+	// Update exponent predictor with Uq and significance count
+	h.expPredictor.SetQuadExponents(qx, qy, info.Uq, sigCount)
+
+	// EMB parameters - compute based on magnitude bit patterns
+	// For cleanup pass, ek and e1 track which samples have specific bit patterns
+	//
+	// ek (E_k): samples where magnitude bit k is set (bit at position Uq-1)
+	// e1 (E_1): samples where magnitude bit 1 is set (bit at position 0)
+	//
+	// For cleanup pass: set ek and e1 to match rho pattern (all significant samples)
+	// This is correct for cleanup pass as all bits are being coded
+	info.EK = info.Rho
+	info.E1 = info.Rho
+
+	return info
+}
+
+// encodeQuadData encodes VLC, U-VLC, and MagSgn data for a quad
+// useSimplifiedUVLC: if provided and true, use simplified U-VLC (1 bit)
+// firstQuadULF: ULF of first quad in pair (used for initial pair formula decision)
+func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSimplifiedUVLC bool, firstQuadULF int) error {
+	// Encode CxtVLC
+	if err := h.vlc.EncodeCxtVLC(info.Context, info.Rho, info.ULF, info.EK, info.E1, isInitialLinePair); err != nil {
+		return fmt.Errorf("encode CxtVLC: %w", err)
+	}
+
+	// Encode U-VLC if ULF=1
+	if info.ULF == 1 {
+		u := info.Uq - info.Kq
+		if u < 0 {
+			u = 0
+		}
+
+		if useSimplifiedUVLC {
+			// Simplified: just encode u with 1 bit
+			if err := h.uvlc.EncodeUVLCSimplified(u); err != nil {
+				return fmt.Errorf("encode U-VLC simplified: %w", err)
+			}
+		} else {
+			// Use initial pair formula only for second quad when both have ulf=1
+			useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
+			if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
+				return fmt.Errorf("encode U-VLC: %w", err)
 			}
 		}
-		h.vlc.EncodeQuad(quadSig, mags)
+	}
 
-		// Encode magnitude and sign bits using MagSgn
-		for i := 0; i < 4; i++ {
-			if (quadSig>>i)&1 != 0 {
-				val := quad[i]
-				mag := val
-				sign := 0
-				if val < 0 {
-					mag = -val
-					sign = 1
-				}
+	// Encode MagSgn for each significant sample
+	for i := 0; i < 4; i++ {
+		if info.Significant[i] {
+			val := info.Samples[i]
+			mag := uint32(val)
+			sign := 0
+			if val < 0 {
+				mag = uint32(-val)
+				sign = 1
+			}
 
-				// Encode magnitude bits (numBits determined by bitplane)
-				numBits := h.maxBitplane + 1
-				h.magsgn.EncodeMagSgn(uint32(mag), sign, numBits)
+			// Number of magnitude bits to encode
+			numBits := info.Uq
+			if numBits > 0 {
+				h.magsgn.EncodeMagSgn(mag, sign, numBits)
 			}
 		}
 	}
@@ -179,33 +381,32 @@ func (h *HTEncoder) encodeQuad(x, y int) error {
 	return nil
 }
 
-// assembleCodel assembles the three segments (MagSgn, MEL, VLC) into final codeblock
+// assembleCodel assembles the three segments into final codeblock
 func (h *HTEncoder) assembleCodel() []byte {
 	// Flush all encoders
 	magsgnData := h.magsgn.Flush()
 	melData := h.mel.Flush()
 	vlcData := h.vlc.Flush()
 
-	// HTJ2K segment layout:
-	// [MagSgn segment (grows forward)] [MEL segment (grows forward)] [VLC segment (grows backward)]
+	// HTJ2K segment layout (ISO/IEC 15444-15:2019):
+	// [MagSgn][MEL][VLC][Lengths(2 bytes)]
 	//
-	// The last 2 bytes of the segment encode the length of MEL and VLC segments
+	// Last 2 bytes encode segment lengths:
+	//   - Byte[n-2]: MEL length
+	//   - Byte[n-1]: VLC length
 
-	// Calculate total size
 	melLen := len(melData)
 	vlcLen := len(vlcData)
 
-	// Assemble: MagSgn + MEL + VLC + Length(2 bytes)
 	totalLen := len(magsgnData) + melLen + vlcLen + 2
-
 	result := make([]byte, totalLen)
 	pos := 0
 
-	// Copy MagSgn segment (grows forward)
+	// Copy MagSgn segment
 	copy(result[pos:], magsgnData)
 	pos += len(magsgnData)
 
-	// Copy MEL segment (grows forward)
+	// Copy MEL segment
 	copy(result[pos:], melData)
 	pos += melLen
 
@@ -213,55 +414,10 @@ func (h *HTEncoder) assembleCodel() []byte {
 	copy(result[pos:], vlcData)
 	pos += vlcLen
 
-	// Encode lengths in last 2 bytes
-	// Format: [MEL_len (1 byte)] [VLC_len (1 byte)]
-	// For larger blocks, this may need more sophisticated encoding
-	if melLen > 255 || vlcLen > 255 {
-		// Use extended format (not fully implemented here)
-		result[pos] = byte(melLen & 0xFF)
-		result[pos+1] = byte(vlcLen & 0xFF)
-	} else {
-		result[pos] = byte(melLen)
-		result[pos+1] = byte(vlcLen)
-	}
+	// Encode segment lengths
+	result[pos] = byte(melLen & 0xFF)
+	result[pos+1] = byte(vlcLen & 0xFF)
 
 	return result
 }
 
-// GetSegmentLengths returns the lengths of the three segments (for debugging)
-func (h *HTEncoder) GetSegmentLengths() (int, int, int) {
-	return h.magsgn.Length(), h.mel.Length(), h.vlc.Length()
-}
-
-// Utility functions
-
-// abs returns absolute value of int32
-func abs(x int32) int32 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-// bitplane returns the bitplane index for a value
-func bitplane(x int32) int {
-	if x == 0 {
-		return -1
-	}
-
-	val := abs(x)
-	bp := 0
-	for val > 0 {
-		val >>= 1
-		bp++
-	}
-	return bp - 1
-}
-
-// log2 returns the floor of log2(x)
-func log2(x uint32) int {
-	if x == 0 {
-		return -1
-	}
-	return int(math.Floor(math.Log2(float64(x))))
-}

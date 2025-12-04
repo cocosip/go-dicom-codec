@@ -102,6 +102,8 @@ func (e *ExponentPredictorComputer) ComputePredictor(qx, qy int) int {
 	}
 
 	// Subtract gamma if current quad has more than one significant sample
+	// NOTE: gamma[qy][qx] is for neighboring quads, not the current quad
+	// (it's from previous rows/columns that have already been processed)
 	Kq := maxE
 	if e.gamma[qy][qx] {
 		Kq = Kq - 1

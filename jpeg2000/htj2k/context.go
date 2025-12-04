@@ -145,9 +145,9 @@ func (c *ContextComputer) computeNonFirstRowContext(sx, sy int) uint8 {
 		context = uint8(sigCount + 2) // 5+ significant neighbors
 	}
 
-	// Cap context at 15 (4 bits)
-	if context > 15 {
-		context = 15
+	// VLC context is 3 bits (0-7), so cap at 7
+	if context > 7 {
+		context = 7
 	}
 
 	return context

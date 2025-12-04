@@ -7,6 +7,7 @@ type VLCDecoder struct {
 	pos       int       // Current byte position (grows backward)
 	bitBuffer uint32    // Bit buffer
 	bitCount  int       // Number of valid bits in buffer
+	lastByte  uint8     // Last byte read (for bit-unstuffing detection)
 
 	// Lookup tables for fast decoding (1024 entries each)
 	// Key: (c_q << 7) | codeword
@@ -17,10 +18,15 @@ type VLCDecoder struct {
 // NewVLCDecoder creates a new VLC decoder
 func NewVLCDecoder(data []byte) *VLCDecoder {
 	v := &VLCDecoder{
-		data: data,
-		pos:  len(data), // Start from end (backward reading)
+		data:     data,
+		pos:      0,    // Start from beginning (no reversal)
+		lastByte: 0xFF, // Initialize with encoder's vlcLast (first byte was skipped)
 	}
 	v.buildLookupTables()
+
+	// Skip initial 4-bit padding
+	_, _ = v.readBits(4)
+
 	return v
 }
 
@@ -78,14 +84,27 @@ func (v *VLCDecoder) buildLookupTables() {
 	}
 }
 
-// readBits reads n bits from the bit stream (backward)
+// readBits reads n bits from the bit stream (forward, LSB first)
+// Implements bit-unstuffing for JPEG-style bit-stuffing
 func (v *VLCDecoder) readBits(n int) (uint32, bool) {
-	// Ensure we have enough bits in buffer
-	for v.bitCount < n && v.pos > 0 {
-		v.pos--
-		b := uint32(v.data[v.pos])
-		v.bitBuffer |= b << v.bitCount
-		v.bitCount += 8
+	// Ensure we have enough bits in buffer (read forward)
+	for v.bitCount < n && v.pos < len(v.data) {
+		b := uint8(v.data[v.pos])
+		v.pos++
+
+		// Check for bit-unstuffing: if lastByte > 0x8F and b == 0x7F
+		// Then the MSB of b is a stuffed bit and should be ignored
+		if v.lastByte > 0x8F && b == 0x7F {
+			// Only use lower 7 bits (MSB is stuffed)
+			v.bitBuffer |= uint32(b&0x7F) << v.bitCount
+			v.bitCount += 7
+		} else {
+			// Normal byte, use all 8 bits
+			v.bitBuffer |= uint32(b) << v.bitCount
+			v.bitCount += 8
+		}
+
+		v.lastByte = b
 	}
 
 	if v.bitCount < n {
@@ -99,6 +118,24 @@ func (v *VLCDecoder) readBits(n int) (uint32, bool) {
 	v.bitCount -= n
 
 	return result, true
+}
+
+// ReadBit implements BitReader interface for U-VLC integration
+func (v *VLCDecoder) ReadBit() (uint8, error) {
+	bit, ok := v.readBits(1)
+	if !ok {
+		return 0, ErrInsufficientData
+	}
+	return uint8(bit), nil
+}
+
+// ReadBitsLE implements BitReader interface for U-VLC integration
+func (v *VLCDecoder) ReadBitsLE(n int) (uint32, error) {
+	bits, ok := v.readBits(n)
+	if !ok {
+		return 0, ErrInsufficientData
+	}
+	return bits, nil
 }
 
 // DecodeInitialRow decodes VLC for initial quad row

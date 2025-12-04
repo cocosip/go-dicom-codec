@@ -2192,8 +2192,13 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		zeroBitPlanes = effectiveBitDepth - 1 - maxBitplane
 	}
 
-	// Create T1 encoder
-	t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
+	// Create block encoder (EBCOT T1 or HTJ2K)
+	var blockEnc BlockEncoder
+	if e.params.BlockEncoderFactory != nil {
+		blockEnc = e.params.BlockEncoderFactory(actualWidth, actualHeight)
+	} else {
+		blockEnc = t1.NewT1Encoder(actualWidth, actualHeight, 0)
+	}
 
 	// ROI handling: determine style/shift/inside and apply scaling/roishift
 	style, roiShift, inside := e.roiContext(cb)
@@ -2244,7 +2249,23 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			layerBoundaries = []int{1, numPasses}
 		}
 
-		passes, completeData, err := t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, e.params.Lossless)
+		// Try EncodeLayered if available (T1Encoder), otherwise fallback to simple Encode
+		var passes []t1.PassData
+		var completeData []byte
+		var err error
+
+		if t1Enc, ok := blockEnc.(*t1.T1Encoder); ok {
+			// Use layered encoding for T1Encoder
+			passes, completeData, err = t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, e.params.Lossless)
+		} else {
+			// Fallback to simple encoding for HTJ2K
+			completeData, err = blockEnc.Encode(cbData, numPasses, roishift)
+			// Create single pass data
+			if err == nil {
+				passes = []t1.PassData{{ActualBytes: len(completeData)}}
+			}
+		}
+
 		if err != nil || len(passes) == 0 {
 			encodedData := []byte{0x00}
 			pcb.Data = encodedData
@@ -2265,8 +2286,8 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 		return pcb
 	} else {
-		// Single layer: use original encoder
-		encodedData, err := t1Enc.Encode(cbData, numPasses, roishift)
+		// Single layer: use block encoder
+		encodedData, err := blockEnc.Encode(cbData, numPasses, roishift)
 		if err != nil {
 			// Return minimal code-block on error
 			encodedData = []byte{0x00}

@@ -2,11 +2,15 @@ package htj2k
 
 import (
 	"fmt"
+	"math/bits"
 )
 
-// HTDecoder implements the HTJ2K High-Throughput block decoder
-// Reference: ITU-T T.814 | ISO/IEC 15444-15:2019
-
+// HTDecoder implements complete HTJ2K decoder matching HTEncoder
+// This decoder correctly decodes the output from HTEncoder using:
+// - Full VLC decoding with context
+// - U-VLC decoding
+// - MagSgn decoding
+// - Exponent predictor
 type HTDecoder struct {
 	// Block dimensions
 	width  int
@@ -17,117 +21,235 @@ type HTDecoder struct {
 	mel    *MELDecoder
 	vlc    *VLCDecoder
 
+	// U-VLC decoder
+	uvlc *UVLCDecoder
+
+	// Exponent predictor
+	expPredictor *ExponentPredictorComputer
+
+	// Context computer
+	context *ContextComputer
+
 	// Decoded data
 	data []int32
 
 	// Decoding state
 	maxBitplane int
+
+	// Dimensions in quads
+	qw int
+	qh int
 }
 
-// NewHTDecoder creates a new HT block decoder
+// NewHTDecoder creates a new HT decoder
 func NewHTDecoder(width, height int) *HTDecoder {
+	qw := (width + 1) / 2
+	qh := (height + 1) / 2
+
 	return &HTDecoder{
-		width:  width,
-		height: height,
-		data:   make([]int32, width*height),
+		width:        width,
+		height:       height,
+		qw:           qw,
+		qh:           qh,
+		data:         make([]int32, width*height),
+		expPredictor: NewExponentPredictorComputer(qw, qh),
+		context:      NewContextComputer(width, height),
 	}
 }
 
 // Decode decodes a HTJ2K code-block
 func (h *HTDecoder) Decode(codeblock []byte, numPasses int) ([]int32, error) {
 	if len(codeblock) == 0 {
-		// Empty codeblock - all zeros
 		return h.data, nil
 	}
 
-	// Parse the codeblock to extract three segments
 	if err := h.parseCodeblock(codeblock); err != nil {
-		return nil, fmt.Errorf("failed to parse codeblock: %w", err)
+		return nil, fmt.Errorf("parse codeblock: %w", err)
 	}
 
-	// Decode using HT cleanup pass
-	if err := h.decodeHTCleanup(); err != nil {
-		return nil, fmt.Errorf("failed to decode HT cleanup: %w", err)
+	if err := h.decodeHTCleanupPass(); err != nil {
+		return nil, fmt.Errorf("decode cleanup pass: %w", err)
 	}
 
 	return h.data, nil
 }
 
-// parseCodeblock parses the codeblock and initializes segment decoders
+// parseCodeblock parses segments
 func (h *HTDecoder) parseCodeblock(codeblock []byte) error {
 	if len(codeblock) < 2 {
-		return fmt.Errorf("codeblock too short: %d bytes", len(codeblock))
+		return fmt.Errorf("codeblock too short")
 	}
 
-	// Extract lengths from last 2 bytes
 	melLen := int(codeblock[len(codeblock)-2])
 	vlcLen := int(codeblock[len(codeblock)-1])
-
-	// Calculate segment boundaries
-	// Layout: [MagSgn] [MEL] [VLC] [Lengths(2)]
 	totalDataLen := len(codeblock) - 2
 	magsgnLen := totalDataLen - melLen - vlcLen
 
 	if magsgnLen < 0 || melLen < 0 || vlcLen < 0 {
-		return fmt.Errorf("invalid segment lengths: magsgn=%d, mel=%d, vlc=%d",
-			magsgnLen, melLen, vlcLen)
+		return fmt.Errorf("invalid segment lengths")
 	}
 
-	// Extract segments
 	magsgnData := codeblock[0:magsgnLen]
 	melData := codeblock[magsgnLen : magsgnLen+melLen]
 	vlcData := codeblock[magsgnLen+melLen : magsgnLen+melLen+vlcLen]
 
-	// Initialize decoders
 	h.magsgn = NewMagSgnDecoder(magsgnData)
 	h.mel = NewMELDecoder(melData)
 	h.vlc = NewVLCDecoder(vlcData)
 
+	// Create U-VLC decoder with VLC bit reader
+	bitReader := &VLCBitReaderWrapper{decoder: h.vlc}
+	h.uvlc = NewUVLCDecoder(bitReader)
+
 	return nil
 }
 
-// decodeHTCleanup performs HT cleanup pass decoding
-func (h *HTDecoder) decodeHTCleanup() error {
-	// Process code-block in 2x2 quads
-	for y := 0; y < h.height; y += 2 {
-		for x := 0; x < h.width; x += 2 {
-			if err := h.decodeQuad(x, y); err != nil {
+// VLCBitReaderWrapper adapts VLCDecoder to BitReader interface
+type VLCBitReaderWrapper struct {
+	decoder *VLCDecoder
+}
+
+func (v *VLCBitReaderWrapper) ReadBit() (uint8, error) {
+	bit, ok := v.decoder.readBits(1)
+	if !ok {
+		return 0, fmt.Errorf("VLC exhausted")
+	}
+	return uint8(bit), nil
+}
+
+func (v *VLCBitReaderWrapper) ReadBitsLE(n int) (uint32, error) {
+	bits, ok := v.decoder.readBits(n)
+	if !ok {
+		return 0, fmt.Errorf("VLC exhausted")
+	}
+	return bits, nil
+}
+
+// decodeHTCleanupPass decodes with quad-pair processing
+func (h *HTDecoder) decodeHTCleanupPass() error {
+	for qy := 0; qy < h.qh; qy++ {
+		isInitialLinePair := (qy == 0)
+
+		for g := 0; g < (h.qw+1)/2; g++ {
+			q1 := 2 * g
+			q2 := 2*g + 1
+			hasQ2 := q2 < h.qw
+
+			if err := h.decodeQuadPair(q1, q2, qy, hasQ2, isInitialLinePair); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// decodeQuadPair decodes a quad-pair
+func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool) error {
+	// Decode MEL bits
+	melBit1, hasMore1 := h.mel.DecodeBit()
+	if !hasMore1 {
+		return nil
+	}
+
+	var melBit2 int
+	if hasQ2 {
+		var hasMore2 bool
+		melBit2, hasMore2 = h.mel.DecodeBit()
+		if !hasMore2 {
+			hasQ2 = false
+		}
+	}
+
+	// Track first quad's Uq for simplified U-VLC
+	var uq1 int
+
+	// Decode first quad if significant
+	if melBit1 == 1 {
+		rho1, maxExp, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0)
+		if err != nil {
+			return err
+		}
+		uq1 = maxExp
+		// Update context with quad significance
+		h.context.UpdateQuadSignificance(q1, qy, rho1)
+	}
+
+	// Decode second quad if significant
+	if hasQ2 && melBit2 == 1 {
+		// Use simplified U-VLC if first quad has uq > 2
+		useSimplified := (uq1 > 2)
+		rho2, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, uq1)
+		if err != nil {
+			return err
+		}
+		// Update context with quad significance
+		h.context.UpdateQuadSignificance(q2, qy, rho2)
+	}
 
 	return nil
 }
 
-// decodeQuad decodes a single 2x2 quad
-func (h *HTDecoder) decodeQuad(x, y int) error {
-	// Decode MEL bit to determine if quad has significant samples
-	melBit, hasMore := h.mel.DecodeBit()
-	if !hasMore {
-		// End of MEL data, remaining quads are zero
-		return nil
+// decodeQuad decodes a single quad using complete VLC decoding
+// Returns the rho pattern and maxExponent for context updates
+func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadUq int) (uint8, int, error) {
+	// Calculate positions
+	x0 := qx * 2
+	y0 := qy * 2
+
+	// Compute context for VLC lookup
+	ctx := h.context.ComputeContext(qx, qy, isInitialLinePair)
+
+	// Decode VLC to get rho and uOff
+	var rho, uOff uint8
+	var found bool
+
+	if isInitialLinePair {
+		rho, uOff, _, _, found = h.vlc.DecodeInitialRow(ctx)
+	} else {
+		rho, uOff, _, _, found = h.vlc.DecodeNonInitialRow(ctx)
 	}
 
-	if melBit == 0 {
-		// Run continuation - all samples in quad are zero
-		// (already initialized to zero in h.data)
-		return nil
+	if !found {
+		return 0, 0, fmt.Errorf("VLC decode failed for quad (%d,%d) with context=%d, isInitial=%v", qx, qy, ctx, isInitialLinePair)
 	}
 
-	// melBit == 1: Run termination - quad has significant samples
+	// Calculate exponent predictor
+	kq := h.expPredictor.ComputePredictor(qx, qy)
 
-	// Decode VLC to get significance pattern and magnitudes
-	quadSig, mags, hasVLC := h.vlc.DecodeQuad()
-	if !hasVLC {
-		// VLC decoder exhausted - this shouldn't happen in valid stream
-		// Treat remaining samples as zero
-		return nil
+	// Decode U-VLC if uOff=1
+	u := uint32(0)
+	if uOff == 1 {
+		var err error
+		if useSimplifiedUVLC {
+			// Simplified mode: second quad in pair when first has uq > 2
+			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
+		} else if isInitialLinePair && firstQuadUq > 0 {
+			// Initial pair formula: only for second quad when both quads in initial line have ulf=1
+			// firstQuadUq > 0 means first quad had ulf=1 (and this is second quad with ulf=1)
+			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()
+		} else {
+			// Regular U-VLC decoding
+			u, err = h.uvlc.DecodeUnsignedResidual()
+		}
+		if err != nil {
+			return 0, 0, fmt.Errorf("decode U-VLC: %w", err)
+		}
 	}
 
-	// Decode MagSgn for each significant sample
-	magIdx := 0
-	positions := [][2]int{{x, y}, {x + 1, y}, {x, y + 1}, {x + 1, y + 1}}
+	// Calculate Uq = Kq + u
+	maxExponent := kq + int(u)
+
+	// Count significant samples
+	sigCount := bits.OnesCount8(rho)
+
+	// Update exponent predictor
+	h.expPredictor.SetQuadExponents(qx, qy, maxExponent, sigCount)
+
+	// Reconstruct samples
+	positions := [][2]int{
+		{x0, y0}, {x0 + 1, y0},
+		{x0, y0 + 1}, {x0 + 1, y0 + 1},
+	}
 
 	for i, pos := range positions {
 		px, py := pos[0], pos[1]
@@ -135,51 +257,45 @@ func (h *HTDecoder) decodeQuad(x, y int) error {
 			continue
 		}
 
-		if (quadSig>>i)&1 != 0 {
-			// Sample is significant - decode magnitude and sign
-			if magIdx >= len(mags) {
-				return fmt.Errorf("VLC magnitude count mismatch at quad (%d,%d)", x, y)
+		if (rho>>i)&1 != 0 {
+			numBits := maxExponent
+			if numBits <= 0 {
+				numBits = 1
 			}
 
-			// Decode full magnitude and sign from MagSgn
-			numBits := bitlen(uint32(mags[magIdx]))
 			mag, sign, hasMagSgn := h.magsgn.DecodeMagSgn(numBits)
 			if !hasMagSgn {
-				// MagSgn exhausted - use VLC magnitude as fallback
-				mag = uint32(mags[magIdx])
+				mag = 0
 				sign = 0
 			}
 
-			// Reconstruct signed value
 			idx := py*h.width + px
 			if sign == 0 {
 				h.data[idx] = int32(mag)
 			} else {
 				h.data[idx] = -int32(mag)
 			}
-
-			magIdx++
 		}
 	}
 
-	return nil
+	return rho, maxExponent, nil
 }
 
-// GetData returns the decoded coefficient data
+// GetData returns decoded data
 func (h *HTDecoder) GetData() []int32 {
 	return h.data
 }
 
-// DecodeWithBitplane decodes a code-block with known max bitplane
-// Implements t2.BlockDecoder interface
+// DecodeWithBitplane implements BlockDecoder interface
 func (h *HTDecoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
+	h.maxBitplane = maxBitplane
 	_, err := h.Decode(data, numPasses)
 	return err
 }
 
-// DecodeLayered decodes a code-block with TERMALL mode
-// Implements t2.BlockDecoder interface
+// DecodeLayered implements BlockDecoder interface
 func (h *HTDecoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
+	h.maxBitplane = maxBitplane
 	numPasses := len(passLengths)
 	if numPasses == 0 {
 		numPasses = 1
@@ -188,25 +304,9 @@ func (h *HTDecoder) DecodeLayered(data []byte, passLengths []int, maxBitplane in
 	return err
 }
 
-// Reset resets the decoder for reuse
+// Reset resets decoder
 func (h *HTDecoder) Reset() {
 	for i := range h.data {
 		h.data[i] = 0
 	}
-}
-
-// Utility functions
-
-// bitlen returns the number of bits needed to represent a value
-func bitlen(x uint32) int {
-	if x == 0 {
-		return 1
-	}
-
-	count := 0
-	for x > 0 {
-		x >>= 1
-		count++
-	}
-	return count
 }

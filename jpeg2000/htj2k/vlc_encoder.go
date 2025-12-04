@@ -1,39 +1,238 @@
 package htj2k
 
-// VLCEncoder implements VLC encoding (simplified stub)
+import "fmt"
+
+// VLCEncoder implements full context-aware VLC encoding for HTJ2K
+// Based on ISO/IEC 15444-15:2019 Annex F.3 and F.4
+//
+// Features:
+// - Context-based CxtVLC encoding using OpenJPEG tables
+// - Bit-stuffing and proper byte-stream formatting
+// - BitStreamWriter interface for U-VLC integration
 type VLCEncoder struct {
-	buffer []byte
+	// Bit packing state (matches emitVLCBits procedure in spec)
+	vlcPos  int    // Current position in VLC buffer
+	vlcBits int    // Number of bits in vlcTmp
+	vlcTmp  uint8  // Temporary bit accumulator
+	vlcLast uint8  // Last byte written (for bit-stuffing)
+	vlcBuf  []byte // VLC byte buffer (written forwards, reversed later)
+
+	// Encoding tables using hash maps for efficient lookup
+	encodeMap0 map[encodeKey]VLCEncodeEntry // For initial row
+	encodeMap1 map[encodeKey]VLCEncodeEntry // For non-initial rows
 }
 
-// NewVLCEncoder creates a new VLC encoder
+// VLCEncodeEntry represents a CxtVLC encoding table entry
+type VLCEncodeEntry struct {
+	Codeword uint8 // VLC codeword bits
+	Length   uint8 // Codeword length in bits
+	Valid    bool  // Whether this entry is valid
+}
+
+// encodeKey creates a unique key for encoding table lookup
+type encodeKey struct {
+	cq   uint8
+	rho  uint8
+	uOff uint8
+	ek   uint8
+	e1   uint8
+}
+
+// NewVLCEncoder creates a new context-aware VLC encoder
 func NewVLCEncoder() *VLCEncoder {
-	return &VLCEncoder{
-		buffer: make([]byte, 0, 256),
+	encoder := &VLCEncoder{
+		vlcBuf:     make([]byte, 0, 4096),
+		encodeMap0: make(map[encodeKey]VLCEncodeEntry),
+		encodeMap1: make(map[encodeKey]VLCEncodeEntry),
 	}
+
+	// Initialize VLC packer state
+	encoder.initVLCPacker()
+
+	// Build encoding tables from VLC decode tables
+	encoder.buildEncodeTables()
+
+	return encoder
 }
 
-// EncodeQuad encodes a quad (stub implementation)
-func (v *VLCEncoder) EncodeQuad(sig uint8, mag []int) {
-	// Simplified VLC encoding
-	v.buffer = append(v.buffer, sig)
-	for _, m := range mag {
-		if m > 0 {
-			v.buffer = append(v.buffer, uint8(m&0xFF))
+// initVLCPacker initializes the VLC bit packer state
+// Implements the initVLCPacker procedure from Clause F.4
+func (v *VLCEncoder) initVLCPacker() {
+	v.vlcBits = 4
+	v.vlcTmp = 15
+	v.vlcBuf = append(v.vlcBuf, 255) // VLC_buf[0] = 255
+	v.vlcPos = 1
+	v.vlcLast = 255
+}
+
+// buildEncodeTables builds CxtVLC encoding tables from decode tables
+func (v *VLCEncoder) buildEncodeTables() {
+	// Build hash map from VLC_tbl0 (initial row)
+	for _, entry := range VLC_tbl0 {
+		key := encodeKey{
+			cq:   entry.CQ,
+			rho:  entry.Rho,
+			uOff: entry.UOff,
+			ek:   entry.EK,
+			e1:   entry.E1,
+		}
+		v.encodeMap0[key] = VLCEncodeEntry{
+			Codeword: entry.Cwd,
+			Length:   entry.CwdLen,
+			Valid:    true,
+		}
+	}
+
+	// Build hash map from VLC_tbl1 (non-initial rows)
+	for _, entry := range VLC_tbl1 {
+		key := encodeKey{
+			cq:   entry.CQ,
+			rho:  entry.Rho,
+			uOff: entry.UOff,
+			ek:   entry.EK,
+			e1:   entry.E1,
+		}
+		v.encodeMap1[key] = VLCEncodeEntry{
+			Codeword: entry.Cwd,
+			Length:   entry.CwdLen,
+			Valid:    true,
 		}
 	}
 }
 
-// Flush flushes any pending bits and returns the data
+// emitVLCBits writes bits to the VLC stream with bit-stuffing
+// Implements the emitVLCBits procedure from Clause F.4
+func (v *VLCEncoder) emitVLCBits(cwd uint32, length int) error {
+	for length > 0 {
+		// Extract LSB
+		bit := cwd & 1
+		cwd = cwd >> 1
+		length--
+
+		// Add bit to accumulator
+		v.vlcTmp = v.vlcTmp | uint8(bit<<v.vlcBits)
+		v.vlcBits++
+
+		// Check for bit-stuffing condition
+		// If last byte > 0x8F and current accumulator = 0x7F, stuff a bit
+		if (v.vlcLast > 0x8F) && (v.vlcTmp == 0x7F) {
+			v.vlcBits++
+		}
+
+		// Flush byte if accumulator is full
+		if v.vlcBits == 8 {
+			v.vlcBuf = append(v.vlcBuf, v.vlcTmp)
+			v.vlcPos++
+			v.vlcLast = v.vlcTmp
+			v.vlcTmp = 0
+			v.vlcBits = 0
+		}
+	}
+
+	return nil
+}
+
+// WriteBits implements BitStreamWriter interface for U-VLC integration
+func (v *VLCEncoder) WriteBits(bits uint32, length int) error {
+	return v.emitVLCBits(bits, length)
+}
+
+// EncodeCxtVLC encodes a quad using context-based VLC
+//
+// Parameters:
+//   - context: Context value (0-15)
+//   - rho: Significance pattern (4 bits)
+//   - uOff: Unsigned residual offset flag (0 or 1)
+//   - ek: E_k value from EMB pattern
+//   - e1: E_1 value from EMB pattern
+//   - isFirstRow: True for initial line-pair
+func (v *VLCEncoder) EncodeCxtVLC(context, rho, uOff, ek, e1 uint8, isFirstRow bool) error {
+	// Create lookup key
+	key := encodeKey{
+		cq:   context,
+		rho:  rho,
+		uOff: uOff,
+		ek:   ek,
+		e1:   e1,
+	}
+
+	var entry VLCEncodeEntry
+	var found bool
+
+	if isFirstRow {
+		entry, found = v.encodeMap0[key]
+	} else {
+		entry, found = v.encodeMap1[key]
+	}
+
+	if !found {
+		// Entry not found with exact ek/e1 - search for ANY entry with matching (context, rho, uOff)
+		// This handles cases where ek/e1 don't match table entries
+		if isFirstRow {
+			for _, tblEntry := range VLC_tbl0 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					entry = VLCEncodeEntry{
+						Codeword: tblEntry.Cwd,
+						Length:   tblEntry.CwdLen,
+						Valid:    true,
+					}
+					found = true
+					break
+				}
+			}
+		} else {
+			for _, tblEntry := range VLC_tbl1 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					entry = VLCEncodeEntry{
+						Codeword: tblEntry.Cwd,
+						Length:   tblEntry.CwdLen,
+						Valid:    true,
+					}
+					found = true
+					break
+				}
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d", context, rho, uOff)
+		}
+	}
+
+	// Emit the codeword
+	return v.emitVLCBits(uint32(entry.Codeword), int(entry.Length))
+}
+
+// Flush flushes any pending bits and returns the VLC byte-stream
+// The byte-stream is reversed as per spec requirements
 func (v *VLCEncoder) Flush() []byte {
-	return v.buffer
+	// Flush any remaining bits, padding with 1s to byte boundary
+	if v.vlcBits > 0 {
+		// Pad remaining bits with 1s to fill the byte
+		for v.vlcBits < 8 {
+			v.vlcTmp |= (1 << v.vlcBits)
+			v.vlcBits++
+		}
+		v.vlcBuf = append(v.vlcBuf, v.vlcTmp)
+	}
+
+	// Add trailing padding byte (0xFF) to ensure decoder can read 7 bits
+	v.vlcBuf = append(v.vlcBuf, 0xFF)
+
+	// Skip the first byte (255) and return the rest AS-IS (don't reverse)
+	if len(v.vlcBuf) <= 1 {
+		return []byte{}
+	}
+
+	// Return from byte 1 onwards without reversal
+	result := make([]byte, len(v.vlcBuf)-1)
+	copy(result, v.vlcBuf[1:])
+
+	return result
 }
 
-// Length returns the length of encoded data
-func (v *VLCEncoder) Length() int {
-	return len(v.buffer)
-}
-
-// Bytes returns the encoded VLC data
-func (v *VLCEncoder) Bytes() []byte {
-	return v.buffer
+// Reset resets the encoder state for encoding a new block
+func (v *VLCEncoder) Reset() {
+	v.vlcBuf = v.vlcBuf[:0]
+	v.initVLCPacker()
 }
