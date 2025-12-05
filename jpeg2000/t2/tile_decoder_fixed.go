@@ -257,7 +257,12 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 							y1:        y1,
 							data:      cbInfoData.data,
 							numPasses: numPasses,
-							t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+							t1Decoder: func() BlockDecoder {
+							if td.isHTJ2K && td.blockDecoderFactory != nil {
+								return td.blockDecoderFactory(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+							}
+							return t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+						}(),
 						}
 
 						// Decode the code-block
@@ -284,11 +289,18 @@ func (td *TileDecoder) decodeAllCodeBlocksFixed(packets []Packet) error {
 						if shouldDecode {
 							var err error
 							if cbInfoData.passLengths != nil && len(cbInfoData.passLengths) > 0 {
-								// Multi-layer mode: use DecodeLayeredWithMode
-								// useTERMALL flag determines whether passes are terminated independently
-								// lossless flag (from COD transformation) determines whether contexts are reset
-								lossless := td.cod.Transformation == 1 // 1 = 5/3 reversible (lossless)
-								err = cbd.t1Decoder.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, lossless)
+								// Multi-layer mode
+								// Check if this is EBCOT T1 (has DecodeLayeredWithMode) or HTJ2K (use DecodeLayered)
+								if t1Dec, ok := cbd.t1Decoder.(interface {
+									DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error
+								}); ok {
+									// EBCOT T1 decoder with TERMALL mode support
+									lossless := td.cod.Transformation == 1
+									err = t1Dec.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, lossless)
+								} else {
+									// HTJ2K or other decoder - use standard DecodeLayered
+									err = cbd.t1Decoder.DecodeLayered(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0)
+								}
 							} else {
 								// Single-layer mode: use DecodeWithBitplane
 								err = cbd.t1Decoder.DecodeWithBitplane(cbInfoData.data, cbd.numPasses, cbInfoData.maxBitplane, 0)

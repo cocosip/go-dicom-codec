@@ -33,6 +33,8 @@
 
 ### ⚠️ Known Issue: JPEG2000 Integration Layer
 
+**UPDATE (2025-12-05 - Further Investigation)**: Deep investigation reveals the issue is in HTJ2K-T2 packet layer interface, not DWT. See INTEGRATION_ISSUES.md for full analysis.
+
 **Status**: The HTJ2K block encoding/decoding is **fully functional and correct**. However, integration tests with the full JPEG2000 pipeline are currently failing:
 
 **Codec-level tests (PASS):**

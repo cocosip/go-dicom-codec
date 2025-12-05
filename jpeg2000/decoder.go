@@ -668,9 +668,14 @@ func (d *Decoder) decodeTiles() error {
 	// Decode all tiles
 	for tileIdx, tile := range d.cs.Tiles {
 		// Create tile decoder
-		// Use injected blockDecoderFactory if set (e.g., for HTJ2K), otherwise defaults to EBCOT T1
-		isHTJ2K := d.blockDecoderFactory != nil
-		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo, isHTJ2K, d.blockDecoderFactory)
+		// Check if HTJ2K mode is enabled (bit 6 of Scod, 0x40)
+		isHTJ2K := (d.cs.COD.Scod & 0x40) != 0
+		// Use injected blockDecoderFactory if HTJ2K is enabled
+		var blockDecoderFactory t2.BlockDecoderFactory
+		if isHTJ2K && d.blockDecoderFactory != nil {
+			blockDecoderFactory = d.blockDecoderFactory
+		}
+		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo, isHTJ2K, blockDecoderFactory)
 
 		// Decode tile
 		tileData, err := tileDecoder.Decode()

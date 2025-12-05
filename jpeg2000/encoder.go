@@ -858,9 +858,14 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 
 	// Scod - Coding style parameters
 	// Bit 0: Precinct defined (1 if custom precinct sizes are used)
+	// Bit 6 (0x40): HTJ2K mode (JPEG 2000 Part 15)
 	scod := uint8(0)
 	if p.PrecinctWidth > 0 || p.PrecinctHeight > 0 {
 		scod |= 0x01 // Enable precinct sizes
+	}
+	// Set HTJ2K bit if using HTJ2K block encoder
+	if p.BlockEncoderFactory != nil {
+		scod |= 0x40 // Enable HTJ2K mode
 	}
 	_ = binary.Write(codData, binary.BigEndian, scod)
 

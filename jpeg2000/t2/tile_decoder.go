@@ -92,8 +92,8 @@ type CodeBlockDecoder struct {
 	x1, y1    int
 	data      []byte // Compressed data
 	numPasses int
-	t1Decoder *t1.T1Decoder
-	coeffs    []int32 // Decoded coefficients
+	t1Decoder BlockDecoder // Can be EBCOT T1 or HTJ2K decoder
+	coeffs    []int32      // Decoded coefficients
 }
 
 type ROIInfo struct {
@@ -628,7 +628,14 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 			cbData, hasData := cbDataMap[cbIdx]
 			maxBitplane := maxBitplaneMap[cbIdx]
 
-			// Create code-block decoder
+			// Create code-block decoder - use HTJ2K if enabled, otherwise EBCOT T1
+			var blockDecoder BlockDecoder
+			if td.isHTJ2K && td.blockDecoderFactory != nil {
+				blockDecoder = td.blockDecoderFactory(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+			} else {
+				blockDecoder = t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+			}
+
 			cbd := &CodeBlockDecoder{
 				x0:        x0,
 				y0:        y0,
@@ -636,7 +643,7 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				y1:        y1,
 				data:      cbData,
 				numPasses: (maxBitplane + 1) * 3,
-				t1Decoder: t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle)),
+				t1Decoder: blockDecoder,
 			}
 
 			// Decode the code-block
@@ -648,13 +655,13 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				}
 
 				// Use DecodeWithBitplane for accurate reconstruction
-				err := cbd.t1Decoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, roishift)
+				err := blockDecoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, roishift)
 				if err != nil {
 					// If decode fails, use zeros
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)
 				} else {
 					// Get decoded coefficients
-					cbd.coeffs = cbd.t1Decoder.GetData()
+					cbd.coeffs = blockDecoder.GetData()
 
 					// Inverse General Scaling for ROI blocks (Srgn=1)
 					if style == 1 && shiftVal > 0 && inside {

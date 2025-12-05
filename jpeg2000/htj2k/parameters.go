@@ -46,7 +46,7 @@ func NewHTJ2KParameters() *HTJ2KParameters {
 		Quality:     80, // Default quality 80 for lossy
 		BlockWidth:  64, // Default block width
 		BlockHeight: 64, // Default block height
-		NumLevels:   5,  // Default 5 decomposition levels
+		NumLevels:   5,  // Default: 5 levels (recommended for most images)
 		params:      make(map[string]interface{}),
 	}
 }
@@ -57,7 +57,7 @@ func NewHTJ2KLosslessParameters() *HTJ2KParameters {
 		Quality:     100, // Quality 100 for lossless
 		BlockWidth:  64,
 		BlockHeight: 64,
-		NumLevels:   5,
+		NumLevels:   5,  // Default: 5 levels (recommended for most images)
 		params:      make(map[string]interface{}),
 	}
 }

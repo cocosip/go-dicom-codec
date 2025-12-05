@@ -132,7 +132,17 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	)
 
 	// Configure HTJ2K-specific settings
-	encParams.NumLevels = htj2kParams.NumLevels
+	// Adjust NumLevels based on image size to ensure minimum subband size >= 1
+	maxLevels := calculateMaxLevels(int(src.Width), int(src.Height))
+	// Cap at 5 for now due to issues with larger images (TODO: investigate)
+	if maxLevels > 5 {
+		maxLevels = 5
+	}
+	if htj2kParams.NumLevels > maxLevels {
+		encParams.NumLevels = maxLevels
+	} else {
+		encParams.NumLevels = htj2kParams.NumLevels
+	}
 	encParams.CodeBlockWidth = htj2kParams.BlockWidth
 	encParams.CodeBlockHeight = htj2kParams.BlockHeight
 
@@ -272,4 +282,31 @@ func RegisterHTJ2KCodecs() {
 
 func init() {
 	RegisterHTJ2KCodecs()
+}
+
+// calculateMaxLevels calculates the maximum number of wavelet decomposition levels
+// that can be applied to an image of given dimensions.
+// Each level divides dimensions by 2, so max levels = floor(log2(min(width, height)))
+func calculateMaxLevels(width, height int) int {
+	minDim := width
+	if height < minDim {
+		minDim = height
+	}
+
+	if minDim <= 0 {
+		return 0
+	}
+
+	// Calculate floor(log2(minDim))
+	maxLevels := 0
+	for (1 << maxLevels) < minDim {
+		maxLevels++
+	}
+
+	// Cap at 6 levels (JPEG2000 standard limit)
+	if maxLevels > 6 {
+		maxLevels = 6
+	}
+
+	return maxLevels
 }
