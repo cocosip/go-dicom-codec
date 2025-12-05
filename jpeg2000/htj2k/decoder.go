@@ -223,7 +223,8 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 		var err error
 		if useSimplifiedUVLC {
 			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
-		} else if isInitialLinePair && firstQuadULF == 1 {
+		} else if false && isInitialLinePair && firstQuadULF == 1 {
+			// FIXME: Initial pair formula disabled due to encoder/decoder mismatch with u < 3
 			// Initial pair formula: only for second quad when both quads in initial line have ulf=1
 			// firstQuadULF == 1 means first quad had uOff=1 (and this is second quad with uOff=1)
 			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()

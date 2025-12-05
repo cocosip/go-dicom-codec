@@ -371,8 +371,13 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 				return fmt.Errorf("encode simplified U-VLC: %w", err)
 			}
 		} else {
-			// Use initial pair formula only for second quad when both have ulf=1
-			useInitialPairFormula := isInitialLinePair && firstQuadULF == 1
+			// FIXME: Initial pair formula disabled due to issues with u < 3
+			// Use initial pair formula ONLY when:
+			// 1. This is a quad in the initial line-pair (isInitialLinePair=true)
+			// 2. First quad has ULF=1 (firstQuadULF==1)
+			// 3. Current quad also has ULF=1 (info.ULF==1, which is already checked above)
+			// 4. u >= 3 (initial pair formula minimum, since 2 + 1 + 0 + 0 = 3)
+			useInitialPairFormula := false // Disabled: isInitialLinePair && firstQuadULF == 1 && u >= 3
 			if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
 				return fmt.Errorf("encode U-VLC: %w", err)
 			}

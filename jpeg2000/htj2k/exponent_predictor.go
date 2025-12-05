@@ -70,7 +70,11 @@ func (e *ExponentPredictorComputer) SetQuadExponents(qx, qy int, maxExponent int
 // Returns:
 //   - Kq: The exponent predictor value
 func (e *ExponentPredictorComputer) ComputePredictor(qx, qy int) int {
-	// Get left and top neighbor exponents
+	// For first row (y=0), Kq = 1
+	if qy == 0 {
+		return 1
+	}
+
 	var E_left int
 	if qx > 0 {
 		E_left = e.exponents[qy][qx-1]
@@ -85,15 +89,9 @@ func (e *ExponentPredictorComputer) ComputePredictor(qx, qy int) int {
 		E_top = 0
 	}
 
-	// Kq = max(E_left, E_top)
 	maxE := E_left
 	if E_top > maxE {
 		maxE = E_top
-	}
-
-	// For first quad (0,0) with no neighbors, use Kq = 1
-	if qx == 0 && qy == 0 {
-		maxE = 1
 	}
 
 	Kq := maxE
