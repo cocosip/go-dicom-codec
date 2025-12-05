@@ -315,6 +315,7 @@ func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
 	h.expPredictor.SetQuadExponents(qx, qy, info.Uq, sigCount)
 
 	// Compute ek/e1 from magnitude bit patterns for significant samples
+	// IMPORTANT: Use adjusted Uq for ek/e1 computation
 	var ek uint8 = 0
 	var e1 uint8 = 0
 	if info.Uq > 0 {
@@ -376,12 +377,6 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 				return fmt.Errorf("encode U-VLC: %w", err)
 			}
 		}
-
-		// Use the transmitted exponent bound for predictor and MagSgn
-		effectiveUq := info.Kq + u
-		info.Uq = effectiveUq
-		h.expPredictor.SetQuadExponents(info.Qx, info.Qy, info.Uq, bits.OnesCount8(info.Rho))
-
 	}
 
 	// Encode MagSgn for each significant sample

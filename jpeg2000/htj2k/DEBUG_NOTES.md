@@ -1,21 +1,22 @@
 # HTJ2K Debugging Notes
 
-## Latest Status (2025-12-05) - Final
+## Latest Status (2025-12-05) - All Block Tests Passing
 
-### ✅ HTBlock Encoder/Decoder - ALL TESTS PASSING!
+### ✅ HTBlock Encoder/Decoder - ALL LOW-LEVEL TESTS PASSING!
 
 **All low-level HTJ2K block encoder/decoder tests pass perfectly:**
-- ✅ TestHTBlockEncoderDecoder/4x4 - PASS (0 errors)
-- ✅ TestHTBlockEncoderDecoder/8x8 - PASS (0 errors) ← **FIXED!** (was failing with 59/64 errors)
-- ✅ TestHTBlockEncoderDecoder/16x16 - PASS (0 errors) ← **FIXED!**
+- ✅ TestHTBlockEncoderDecoder/4x4 - PASS (0 errors) ← **FIXED!**
+- ✅ TestHTBlockEncoderDecoder/8x8 - PASS (0 errors)
+- ✅ TestHTBlockEncoderDecoder/16x16 - PASS (0 errors)
 - ✅ All HTEncoderDecoder tests - PASS
 - ✅ All MEL, MagSgn, VLC encoder/decoder tests - PASS
 - ✅ All context and exponent predictor tests - PASS
 
-**The three critical fixes documented in DEBUG_NOTES.md are confirmed working:**
-1. ✅ Fix 7: Initial Pair Formula (U-VLC)
-2. ✅ Fix 8: Uq < Kq Inconsistency
-3. ✅ Fix 9: Context Overflow
+**Four critical fixes applied to HTJ2K block encoder/decoder:**
+1. ✅ Fix 7: Initial Pair Formula condition (decoder firstQuadULF logic)
+2. ✅ Fix 8: Uq < Kq Inconsistency (max adjustment for MagSgn)
+3. ✅ Fix 9: Context Overflow (cap at 7 bits)
+4. ✅ **Fix 10: Exponent Predictor First Row** (use left neighbor for qx>0)
 
 ### ⚠️ Known Issue: JPEG2000 Integration Layer
 
@@ -45,11 +46,12 @@
 2. Verify coefficient data flow between DWT → HTJ2K blocks → inverse DWT
 3. Check if HTJ2K requires different packet/codestream structure than EBCOT T1
 
-### Major Breakthroughs (2025-12-04)
+### Major Breakthroughs (2025-12-04 - 2025-12-05)
 
 1. ✅ **Initial Pair Formula Misuse** - Fixed U-VLC initial pair formula to only apply when BOTH quads in initial line have ulf=1
 2. ✅ **Uq < Kq Inconsistency** - Fixed encoder to use max(Uq, Kq) for SetQuadExponents and MagSgn encoding
 3. ✅ **Context Overflow** - Fixed context computation to cap at 7 (3 bits) instead of 15 (4 bits)
+4. ✅ **Exponent Predictor First Row Bug** - Fixed predictor to use left neighbor exponent for first row quads (qx>0)
 
 ### All HTJ2K Block Tests Results
 - ✅ TestHTBlockZeroCoeffs - PASS
@@ -124,6 +126,39 @@ if context > 7 {
 ```
 
 **Result**: 8x8 test no longer crashes with "context=8" error.
+
+#### Fix 10: Exponent Predictor First Row Bug (CRITICAL - Dec 5)
+**Problem**: The exponent predictor returned Kq=1 for ALL quads in the first row (qy=0), ignoring left neighbor exponents.
+
+**Root Cause**:
+```go
+// WRONG: Returns 1 for entire first row
+if qy == 0 {
+    return 1
+}
+```
+
+This caused quad (1,0) to use Kq=1 instead of Kq=4 (from left neighbor quad (0,0) with Uq=4), resulting in incorrect u calculations and wrong MagSgn bit counts.
+
+**Example**:
+- Quad (0,0): maxMag=8 → Uq=4, Kq=1 (correct, no neighbors)
+- Quad (1,0): maxMag=6 → Uq=3, **Kq=1 (WRONG!)**, u=2
+  - Should be: Kq=4 (from left neighbor), u=-1→0
+
+**Solution** (exponent_predictor.go:72-107):
+```go
+// Get left and top neighbor exponents
+E_left := e.exponents[qy][qx-1] if qx > 0, else 0
+E_top := e.exponents[qy-1][qx] if qy > 0, else 0
+maxE := max(E_left, E_top)
+
+// Only first quad (0,0) with no neighbors uses Kq=1
+if qx == 0 && qy == 0 {
+    maxE = 1
+}
+```
+
+**Result**: 4x4 test now passes! All block tests (4x4, 8x8, 16x16) achieve perfect reconstruction.
 
 ## Previous Status (2025-12-04)
 

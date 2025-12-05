@@ -11,9 +11,13 @@ func TestHTBlockEncoderDecoder(t *testing.T) {
 		width  int
 		height int
 	}{
+		{"2x2", 2, 2},
+		{"3x3", 3, 3},
 		{"4x4", 4, 4},
+		{"5x5", 5, 5},
 		{"8x8", 8, 8},
 		{"16x16", 16, 16},
+		{"32x32", 32, 32},
 	}
 
 	for _, tt := range tests {
