@@ -1807,7 +1807,6 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 	if numLayers <= 0 {
 		numLayers = 1
 	}
-	fmt.Printf("applyRD layers=%d target=%.2f blocks=%d\n", numLayers, e.params.TargetRatio, len(blocks))
 	if len(blocks) == 0 {
 		return
 	}
@@ -1846,10 +1845,6 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 		if target < budget {
 			budget = target
 		}
-	}
-
-	if e.params.TargetRatio > 0 {
-		fmt.Printf("PCRD budget=%.2f totalRate=%.2f blocks=%d\n", budget, totalRate, len(blocks))
 	}
 
 	var alloc *LayerAllocation

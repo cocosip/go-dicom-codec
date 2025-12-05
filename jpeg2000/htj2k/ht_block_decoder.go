@@ -1,12 +1,14 @@
 package htj2k
 
+import "encoding/binary"
+
 // HTBlockDecoder implements complete HTJ2K block decoding
 // with proper context computation and VLC decoding
 type HTBlockDecoder struct {
-	width   int
-	height  int
-	numQX   int // Number of quads in X direction
-	numQY   int // Number of quads in Y direction
+	width  int
+	height int
+	numQX  int // Number of quads in X direction
+	numQY  int // Number of quads in Y direction
 
 	// Component decoders
 	mel     *MELDecoderSpec
@@ -20,7 +22,7 @@ type HTBlockDecoder struct {
 
 // NewHTBlockDecoder creates a new HTJ2K block decoder
 func NewHTBlockDecoder(width, height int) *HTBlockDecoder {
-	numQX := (width + 1) / 2  // Ceiling division
+	numQX := (width + 1) / 2 // Ceiling division
 	numQY := (height + 1) / 2
 
 	return &HTBlockDecoder{
@@ -63,28 +65,41 @@ func (h *HTBlockDecoder) parseSegments(codeblock []byte) error {
 		return nil
 	}
 
-	// Last 2 bytes encode segment lengths
-	melLen := int(codeblock[len(codeblock)-2])
-	vlcLen := int(codeblock[len(codeblock)-1])
+	// Prefer 2-byte footer (MEL, VLC) for large segments; fall back to legacy 1-byte footer.
+	var (
+		melLen, vlcLen int
+		magsgnLen      int
+		ok             bool
+	)
 
-	if melLen+vlcLen+2 > len(codeblock) {
-		// Invalid lengths
-		return nil
+	if len(codeblock) >= 4 {
+		melLen = int(binary.BigEndian.Uint16(codeblock[len(codeblock)-4 : len(codeblock)-2]))
+		vlcLen = int(binary.BigEndian.Uint16(codeblock[len(codeblock)-2:]))
+		dataLen := len(codeblock) - 4
+		magsgnLen = dataLen - melLen - vlcLen
+		if melLen >= 0 && vlcLen >= 0 && magsgnLen >= 0 {
+			ok = true
+		}
 	}
 
-	// Calculate segment boundaries
-	// Layout: [MagSgn] [MEL] [VLC] [Lengths(2)]
-	dataLen := len(codeblock) - 2
-	magsgnLen := dataLen - melLen - vlcLen
+	if !ok {
+		melLen = int(codeblock[len(codeblock)-2])
+		vlcLen = int(codeblock[len(codeblock)-1])
+		dataLen := len(codeblock) - 2
+		magsgnLen = dataLen - melLen - vlcLen
+		if melLen < 0 || vlcLen < 0 || magsgnLen < 0 {
+			return nil
+		}
+	}
 
-	if magsgnLen < 0 {
+	if magsgnLen+melLen+vlcLen > len(codeblock) {
 		return nil
 	}
 
 	// Extract segments
 	magsgnData := codeblock[0:magsgnLen]
 	melData := codeblock[magsgnLen : magsgnLen+melLen]
-	vlcData := codeblock[magsgnLen+melLen : dataLen]
+	vlcData := codeblock[magsgnLen+melLen : magsgnLen+melLen+vlcLen]
 
 	// Initialize decoders
 	h.magsgn = NewMagSgnDecoder(magsgnData)

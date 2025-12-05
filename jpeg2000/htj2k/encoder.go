@@ -423,7 +423,8 @@ func (h *HTEncoder) assembleCodel() []byte {
 	melLen := len(melData)
 	vlcLen := len(vlcData)
 
-	totalLen := len(magsgnData) + melLen + vlcLen + 2
+	// Use 2-byte length fields for MEL and VLC to avoid overflow on larger blocks.
+	totalLen := len(magsgnData) + melLen + vlcLen + 4
 	result := make([]byte, totalLen)
 	pos := 0
 
@@ -439,9 +440,11 @@ func (h *HTEncoder) assembleCodel() []byte {
 	copy(result[pos:], vlcData)
 	pos += vlcLen
 
-	// Encode segment lengths
-	result[pos] = byte(melLen & 0xFF)
-	result[pos+1] = byte(vlcLen & 0xFF)
+	// Encode segment lengths (big-endian uint16)
+	result[pos] = byte((melLen >> 8) & 0xFF)
+	result[pos+1] = byte(melLen & 0xFF)
+	result[pos+2] = byte((vlcLen >> 8) & 0xFF)
+	result[pos+3] = byte(vlcLen & 0xFF)
 
 	return result
 }

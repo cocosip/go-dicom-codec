@@ -17,12 +17,14 @@ func TestHTJ2KLosslessRoundTrip(t *testing.T) {
 		{"64x64", 64, 64},
 		{"128x128", 128, 128},
 		{"256x256", 256, 256},
+		{"512x512", 512, 512},
+		{"1024x1024", 1024, 1024},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test image (grayscale gradient)
-			size := int(tt.width * tt.height)
+			size := int(tt.width) * int(tt.height)
 			testData := make([]byte, size)
 			for i := 0; i < size; i++ {
 				testData[i] = byte(i % 256)
@@ -107,7 +109,7 @@ func TestHTJ2KLosslessRPCLRoundTrip(t *testing.T) {
 	// Create test image
 	width := uint16(64)
 	height := uint16(64)
-	size := int(width * height)
+	size := int(width) * int(height)
 	testData := make([]byte, size)
 	for i := 0; i < size; i++ {
 		testData[i] = byte(i % 256)
@@ -182,7 +184,7 @@ func TestHTJ2KLossyRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test image
-			size := int(tt.width * tt.height)
+			size := int(tt.width) * int(tt.height)
 			testData := make([]byte, size)
 			for i := 0; i < size; i++ {
 				testData[i] = byte(i % 256)
@@ -261,14 +263,14 @@ func TestHTJ2KLossyRoundTrip(t *testing.T) {
 func TestHTJ2KRGBRoundTrip(t *testing.T) {
 	width := uint16(64)
 	height := uint16(64)
-	size := int(width * height * 3) // RGB
+	size := int(width) * int(height) * 3 // RGB
 
 	// Create RGB test image
 	testData := make([]byte, size)
 	for i := 0; i < int(width*height); i++ {
-		testData[i*3+0] = byte(i % 256)        // R
-		testData[i*3+1] = byte((i * 2) % 256)  // G
-		testData[i*3+2] = byte((i * 3) % 256)  // B
+		testData[i*3+0] = byte(i % 256)       // R
+		testData[i*3+1] = byte((i * 2) % 256) // G
+		testData[i*3+2] = byte((i * 3) % 256) // B
 	}
 
 	src := &codec.PixelData{
@@ -329,7 +331,7 @@ func TestHTJ2KRGBRoundTrip(t *testing.T) {
 func TestHTJ2K12BitRoundTrip(t *testing.T) {
 	width := uint16(64)
 	height := uint16(64)
-	size := int(width * height * 2) // 12-bit stored as uint16
+	size := int(width) * int(height) * 2 // 12-bit stored as uint16
 
 	// Create 12-bit test image (stored as uint16)
 	testData := make([]byte, size)

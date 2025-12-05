@@ -1,8 +1,6 @@
 package htj2k
 
-import (
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-)
+import "github.com/cocosip/go-dicom/pkg/imaging/codec"
 
 // Ensure HTJ2KParameters implements codec.Parameters
 var _ codec.Parameters = (*HTJ2KParameters)(nil)
@@ -57,7 +55,7 @@ func NewHTJ2KLosslessParameters() *HTJ2KParameters {
 		Quality:     100, // Quality 100 for lossless
 		BlockWidth:  64,
 		BlockHeight: 64,
-		NumLevels:   3,  // Conservative default (TODO: fix HTJ2K block coding issue for >64x64 images with gradient patterns)
+		NumLevels:   3, // Conservative default (TODO: fix HTJ2K block coding issue for >64x64 images with gradient patterns)
 		params:      make(map[string]interface{}),
 	}
 }

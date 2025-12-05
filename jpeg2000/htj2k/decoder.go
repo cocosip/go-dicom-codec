@@ -1,6 +1,7 @@
 package htj2k
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 )
@@ -80,13 +81,35 @@ func (h *HTDecoder) parseCodeblock(codeblock []byte) error {
 		return fmt.Errorf("codeblock too short")
 	}
 
-	melLen := int(codeblock[len(codeblock)-2])
-	vlcLen := int(codeblock[len(codeblock)-1])
-	totalDataLen := len(codeblock) - 2
-	magsgnLen := totalDataLen - melLen - vlcLen
+	// Prefer 2-byte footer (melLen, vlcLen) to support large segments; fall back to legacy 1-byte footer.
+	var (
+		melLen, vlcLen int
+		magsgnLen      int
+		ok             bool
+	)
 
-	if magsgnLen < 0 || melLen < 0 || vlcLen < 0 {
-		return fmt.Errorf("invalid segment lengths")
+	if len(codeblock) >= 4 {
+		melLen = int(binary.BigEndian.Uint16(codeblock[len(codeblock)-4 : len(codeblock)-2]))
+		vlcLen = int(binary.BigEndian.Uint16(codeblock[len(codeblock)-2:]))
+		totalDataLen := len(codeblock) - 4
+		magsgnLen = totalDataLen - melLen - vlcLen
+		if melLen >= 0 && vlcLen >= 0 && magsgnLen >= 0 {
+			ok = true
+		}
+	}
+
+	if !ok {
+		melLen = int(codeblock[len(codeblock)-2])
+		vlcLen = int(codeblock[len(codeblock)-1])
+		totalDataLen := len(codeblock) - 2
+		magsgnLen = totalDataLen - melLen - vlcLen
+		if melLen < 0 || vlcLen < 0 || magsgnLen < 0 {
+			return fmt.Errorf("invalid segment lengths")
+		}
+	}
+
+	if magsgnLen+melLen+vlcLen > len(codeblock) {
+		return fmt.Errorf("segment lengths exceed codeblock size")
 	}
 
 	magsgnData := codeblock[0:magsgnLen]

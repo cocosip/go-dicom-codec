@@ -108,12 +108,12 @@ func TestHTJ2KParameters_SetParameter(t *testing.T) {
 
 func TestHTJ2KParameters_Validate(t *testing.T) {
 	tests := []struct {
-		name         string
-		setup        func(*HTJ2KParameters)
-		wantQuality  int
-		wantBW       int
-		wantBH       int
-		wantLevels   int
+		name        string
+		setup       func(*HTJ2KParameters)
+		wantQuality int
+		wantBW      int
+		wantBH      int
+		wantLevels  int
 	}{
 		{
 			name: "Valid parameters",
@@ -126,7 +126,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 			wantQuality: 80,
 			wantBW:      64,
 			wantBH:      64,
-			wantLevels:  3,
+			wantLevels:  5,
 		},
 		{
 			name: "Quality too low",
