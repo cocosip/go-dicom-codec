@@ -134,10 +134,6 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Configure HTJ2K-specific settings
 	// Adjust NumLevels based on image size to ensure minimum subband size >= 1
 	maxLevels := calculateMaxLevels(int(src.Width), int(src.Height))
-	// Cap at 5 for now due to issues with larger images (TODO: investigate)
-	if maxLevels > 5 {
-		maxLevels = 5
-	}
 	if htj2kParams.NumLevels > maxLevels {
 		encParams.NumLevels = maxLevels
 	} else {
