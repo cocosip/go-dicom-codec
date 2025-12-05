@@ -203,12 +203,11 @@ func (h *HTEncoder) encodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 	if hasQ2 {
 		info2 := h.getQuadInfo(q2, qy)
 
-		// Enable simplified U-VLC for second quad only when first quad's u value is small and non-zero
-		u1 := info1.Uq - info1.Kq
-		if u1 < 0 {
-			u1 = 0
-		}
-		useSimplified := info1.ULF == 1 && u1 == 3
+		// Disable simplified U-VLC for lossless encoding
+		// TODO: Enable simplified U-VLC only when it's beneficial and lossless
+		// Simplified encoding requires second quad's u <= 2 when first quad's u > 2
+		// For now, always use regular or initial-pair U-VLC
+		useSimplified := false
 
 		// Encode MEL bit for quad2
 		h.mel.EncodeBit(info2.MelBit)
@@ -358,8 +357,10 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 			u = 0
 		}
 
+		// Encode U-VLC (may use simplified or regular encoding)
 		if useSimplifiedUVLC {
 			// Simplified coding only supports values 1 or 2
+			// Clamp u for transmission AND for MagSgn encoding
 			if u < 1 {
 				u = 1
 			} else if u > 2 {

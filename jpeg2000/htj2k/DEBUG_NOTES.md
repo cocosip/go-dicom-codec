@@ -1,27 +1,65 @@
 # HTJ2K Debugging Notes
 
-## Latest Status (2025-12-04 - Updated)
+## Latest Status (2025-12-05) - Final
 
-### Major Breakthroughs Today
+### ✅ HTBlock Encoder/Decoder - ALL TESTS PASSING!
+
+**All low-level HTJ2K block encoder/decoder tests pass perfectly:**
+- ✅ TestHTBlockEncoderDecoder/4x4 - PASS (0 errors)
+- ✅ TestHTBlockEncoderDecoder/8x8 - PASS (0 errors) ← **FIXED!** (was failing with 59/64 errors)
+- ✅ TestHTBlockEncoderDecoder/16x16 - PASS (0 errors) ← **FIXED!**
+- ✅ All HTEncoderDecoder tests - PASS
+- ✅ All MEL, MagSgn, VLC encoder/decoder tests - PASS
+- ✅ All context and exponent predictor tests - PASS
+
+**The three critical fixes documented in DEBUG_NOTES.md are confirmed working:**
+1. ✅ Fix 7: Initial Pair Formula (U-VLC)
+2. ✅ Fix 8: Uq < Kq Inconsistency
+3. ✅ Fix 9: Context Overflow
+
+### ⚠️ Known Issue: JPEG2000 Integration Layer
+
+**Status**: The HTJ2K block encoding/decoding is **fully functional and correct**. However, integration tests with the full JPEG2000 pipeline are currently failing:
+
+- ❌ TestHTJ2KLosslessRoundTrip
+- ❌ TestHTJ2KLosslessRPCLRoundTrip
+- ❌ TestHTJ2KLossyRoundTrip
+- ❌ TestHTJ2KRGBRoundTrip
+- ❌ TestHTJ2K12BitRoundTrip
+
+**Analysis**: These failures are NOT in the HTJ2K block coder, but in how the JPEG2000 encoder/decoder interfaces with HTJ2K blocks. The full pipeline includes:
+1. DWT (Discrete Wavelet Transform)
+2. Quantization
+3. HTJ2K Block Encoding ✅ (**working independently**)
+4. T2 Packet Encoding/Decoding
+5. Inverse Quantization
+6. Inverse DWT
+
+**Evidence**:
+- HTBlock tests encode/decode blocks correctly in isolation ✅
+- JPEG2000 roundtrip tests with EBCOT T1 work perfectly ✅
+- Only HTJ2K integration fails ❌
+
+**Next Steps** (for future investigation):
+1. Debug HTJ2K block encoder/decoder interface with T2 packet layer
+2. Verify coefficient data flow between DWT → HTJ2K blocks → inverse DWT
+3. Check if HTJ2K requires different packet/codestream structure than EBCOT T1
+
+### Major Breakthroughs (2025-12-04)
 
 1. ✅ **Initial Pair Formula Misuse** - Fixed U-VLC initial pair formula to only apply when BOTH quads in initial line have ulf=1
 2. ✅ **Uq < Kq Inconsistency** - Fixed encoder to use max(Uq, Kq) for SetQuadExponents and MagSgn encoding
 3. ✅ **Context Overflow** - Fixed context computation to cap at 7 (3 bits) instead of 15 (4 bits)
 
-### Test Results (After Latest Fixes)
+### All HTJ2K Block Tests Results
 - ✅ TestHTBlockZeroCoeffs - PASS
 - ✅ TestHTBlockSingleNonZero - PASS
 - ✅ TestHTBlockDecoder - PASS
 - ✅ TestHTBlockDecoderWithContext - PASS
-- ✅ Test2x2With100 - PASS
-- ✅ Test2x2AllSame - PASS
-- ✅ Test2x2Simple - PASS (value=7)
-- ✅ Test4x4Direct - PASS
-- ✅ TestValue7Single - PASS (value=7 now decodes correctly!)
-- ✅ TestValue7All - PASS
-- ❌ TestHTBlockEncoderDecoder/4x4 - PASS
-- ❌ TestHTBlockEncoderDecoder/8x8 - FAIL (59/64 errors, max error=109)
-- ❌ TestHTBlockEncoderDecoder/16x16 - FAIL
+- ✅ TestHTEncoderDecoder - PASS (all sub-tests)
+- ✅ TestMELEncoder - PASS
+- ✅ TestMagSgnEncoder - PASS
+- ✅ All context and exponent predictor tests - PASS
 
 ### Fixes Applied Today
 

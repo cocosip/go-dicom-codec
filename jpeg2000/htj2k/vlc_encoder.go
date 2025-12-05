@@ -1,6 +1,9 @@
 package htj2k
 
-import "fmt"
+import (
+	"fmt"
+	"math/bits"
+)
 
 // VLCEncoder implements full context-aware VLC encoding for HTJ2K
 // Based on ISO/IEC 15444-15:2019 Annex F.3 and F.4
@@ -166,34 +169,45 @@ func (v *VLCEncoder) EncodeCxtVLC(context, rho, uOff, ek, e1 uint8, isFirstRow b
 	}
 
 	if !found {
-		// Fallback: search any entry with matching (context, rho, uOff)
+		// Fallback: search entry with matching (context, rho, uOff) and most EMB bits
+		// Per ISO/IEC 15444-15:2019 Annex C: select entry with most set bits in (EK & ek_table) | (E1 & e1_table)
         if isFirstRow {
-            maxLen := uint8(0)
+            maxBits := -1
             var best VLCEncodeEntry
             for _, tblEntry := range VLC_tbl0 {
                 if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-                    if tblEntry.CwdLen > maxLen {
-                        maxLen = tblEntry.CwdLen
+                    // Count matching EMB bits
+                    ekMatch := ek & tblEntry.EK
+                    e1Match := e1 & tblEntry.E1
+                    matchBits := countBits(ekMatch) + countBits(e1Match)
+
+                    if matchBits > maxBits {
+                        maxBits = matchBits
                         best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
                     }
                 }
             }
-            if maxLen != 0 {
+            if maxBits >= 0 {
                 entry = best
                 found = true
             }
         } else {
-            maxLen := uint8(0)
+            maxBits := -1
             var best VLCEncodeEntry
             for _, tblEntry := range VLC_tbl1 {
                 if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-                    if tblEntry.CwdLen > maxLen {
-                        maxLen = tblEntry.CwdLen
+                    // Count matching EMB bits
+                    ekMatch := ek & tblEntry.EK
+                    e1Match := e1 & tblEntry.E1
+                    matchBits := countBits(ekMatch) + countBits(e1Match)
+
+                    if matchBits > maxBits {
+                        maxBits = matchBits
                         best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
                     }
                 }
             }
-            if maxLen != 0 {
+            if maxBits >= 0 {
                 entry = best
                 found = true
             }
@@ -218,33 +232,45 @@ func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFir
 		entry, found = v.encodeMap1[key]
 	}
 	if !found {
+		// Fallback: search entry with matching (context, rho, uOff) and most EMB bits
+		// Per ISO/IEC 15444-15:2019 Annex C: select entry with most set bits in (EK & ek_table) | (E1 & e1_table)
 		if isFirstRow {
-			minLen := uint8(255)
+			maxBits := -1
 			var best VLCEncodeEntry
 			for _, tblEntry := range VLC_tbl0 {
 				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-					if tblEntry.CwdLen < minLen {
-						minLen = tblEntry.CwdLen
+					// Count matching EMB bits
+					ekMatch := ek & tblEntry.EK
+					e1Match := e1 & tblEntry.E1
+					matchBits := countBits(ekMatch) + countBits(e1Match)
+
+					if matchBits > maxBits {
+						maxBits = matchBits
 						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
 					}
 				}
 			}
-			if minLen != 255 {
+			if maxBits >= 0 {
 				entry = best
 				found = true
 			}
 		} else {
-			minLen := uint8(255)
+			maxBits := -1
 			var best VLCEncodeEntry
 			for _, tblEntry := range VLC_tbl1 {
 				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-					if tblEntry.CwdLen < minLen {
-						minLen = tblEntry.CwdLen
+					// Count matching EMB bits
+					ekMatch := ek & tblEntry.EK
+					e1Match := e1 & tblEntry.E1
+					matchBits := countBits(ekMatch) + countBits(e1Match)
+
+					if matchBits > maxBits {
+						maxBits = matchBits
 						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
 					}
 				}
 			}
-			if minLen != 255 {
+			if maxBits >= 0 {
 				entry = best
 				found = true
 			}
@@ -291,4 +317,9 @@ func (v *VLCEncoder) Flush() []byte {
 func (v *VLCEncoder) Reset() {
 	v.vlcBuf = v.vlcBuf[:0]
 	v.initVLCPacker()
+}
+
+// countBits counts the number of set bits in a uint8 value
+func countBits(val uint8) int {
+	return bits.OnesCount8(val)
 }
