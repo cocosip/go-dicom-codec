@@ -59,11 +59,15 @@ import "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 params := lossy.NewLossyParameters()
 params.Quality = 95      // 1-100: compression quality
 params.NumLevels = 5     // 0-6: wavelet decomposition levels
+params.NumLayers = 1     // 1-N: quality layers (progressive)
+params.TargetRatio = 0   // 0 or >1: target compression ratio
 
 // Or use method chaining
 params := lossy.NewLossyParameters().
     WithQuality(95).
-    WithNumLevels(5)
+    WithNumLevels(5).
+    WithNumLayers(3).
+    WithTargetRatio(8.0)
 
 // Use with codec
 codec := lossy.NewCodec(80)
@@ -72,11 +76,33 @@ err := codec.Encode(src, dst, params)
 
 **Parameters:**
 - `Quality` (int, default: 80): Compression quality (1-100)
-  - 100: Near-lossless (~3:1 compression)
-  - 80: High quality (~3-4:1 compression)
-  - 50: Medium quality (~6:1 compression)
-  - 20: High compression (~10:1 compression)
+  - 100: Near-lossless (~2-3:1 compression, max error ≤1-2 pixels)
+  - 95: Archival quality (~3:1 compression)
+  - 85: High quality (~3-5:1 compression, visually lossless)
+  - 75: Good quality (~5-7:1 compression)
+  - 60: Medium quality (~7-10:1 compression, minor artifacts)
+  - 50: Low quality (~10-15:1 compression, visible artifacts)
+  - 20: High compression (~15-30:1, significant quality loss)
 - `NumLevels` (int, default: 5): Wavelet decomposition levels (0-6)
+  - More levels = better compression but slower encoding
+  - Recommended: 1-3 for small images (<128x128), 5-6 for large images (>=512x512)
+- `NumLayers` (int, default: 1): Number of quality layers for progressive refinement
+  - 1: Single quality level (default, fastest)
+  - 2-3: Progressive download/streaming
+  - 4+: Fine-grained progressive refinement
+  - See [Progressive Encoding Guide](jpeg2000/USAGE_GUIDE.md#progressivemulti-layer-encoding)
+- `TargetRatio` (float64, default: 0): Target compression ratio (original_size / compressed_size)
+  - 0: Use Quality parameter (default)
+  - >1: Target specific compression ratio (e.g., 5.0 for 5:1 compression)
+  - Actual ratio may vary ±5-20% depending on image complexity
+  - Uses PCRD (Post-Compression Rate-Distortion) optimization
+- `QuantStepScale` (float64, default: 1.0): Global quantization step multiplier (advanced)
+  - 1.0: Normal quantization
+  - >1.0: Coarser quantization (more compression, lower quality)
+  - <1.0: Finer quantization (less compression, higher quality)
+- `SubbandSteps` ([]float64, default: nil): Custom per-subband quantization steps (advanced)
+  - Length must be exactly `3*NumLevels + 1`
+  - For expert users who need precise control over quantization
 
 ### JPEG 2000 Lossless: `JPEG2000LosslessParameters`
 
