@@ -1,6 +1,7 @@
 package lossless
 
 import (
+	"encoding/binary"
 	"fmt"
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
@@ -81,6 +82,11 @@ func (c *LosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 	// Validate parameters
 	losslessParams.Validate()
 	predictor := losslessParams.Predictor
+	// DICOM UID 1.2.840.10008.1.2.4.57 (transfer.JPEGLossless) is Selection Value 1 only.
+	// Enforce predictor=1 for this TS to match reader expectations.
+	if c.transferSyntax == transfer.JPEGLossless || predictor == 0 {
+		predictor = 1
+	}
 
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()
@@ -95,9 +101,19 @@ func (c *LosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
+		// For signed pixels, shift into unsigned domain before encoding as per JPEG Lossless expectations.
+		adjusted := frameData
+		if frameInfo.PixelRepresentation != 0 {
+			shifted, serr := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
+			if serr != nil {
+				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, serr)
+			}
+			adjusted = shifted
+		}
+
 		// Encode using the lossless encoder
 		jpegData, err := Encode(
-			frameData,
+			adjusted,
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
@@ -131,7 +147,7 @@ func (c *LosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()
-	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
 		// Get encoded frame data
 		frameData, err := oldPixelData.GetFrame(frameIndex)
 		if err != nil {
@@ -159,8 +175,18 @@ func (c *LosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 				components, frameInfo.SamplesPerPixel)
 		}
 
+		// Shift back to signed domain if needed.
+		decodedFrame := pixelData
+		if frameInfo.PixelRepresentation != 0 {
+			shifted, serr := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
+			if serr != nil {
+				return fmt.Errorf("failed to unshift decoded frame %d: %w", frameIndex, serr)
+			}
+			decodedFrame = shifted
+		}
+
 		// Add decoded frame to destination
-		if err := newPixelData.AddFrame(pixelData); err != nil {
+		if err := newPixelData.AddFrame(decodedFrame); err != nil {
 			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}
@@ -177,4 +203,81 @@ func RegisterLosslessCodec(predictor int) {
 
 func init() {
 	RegisterLosslessCodec(0)
+}
+
+// shiftSignedFrame shifts signed samples into unsigned domain (encode) or back (decode).
+// It respects BitsStored/HighBit and BitsAllocated for correct two's-complement handling.
+func shiftSignedFrame(frame []byte, bitsStored, highBit, bitsAllocated uint16, toUnsigned bool) ([]byte, error) {
+	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
+		return nil, fmt.Errorf("unsupported BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
+	}
+	if highBit >= bitsAllocated {
+		return nil, fmt.Errorf("invalid HighBit=%d for BitsAllocated=%d", highBit, bitsAllocated)
+	}
+
+	bytesPerSample := int((bitsAllocated + 7) / 8)
+	if len(frame)%bytesPerSample != 0 {
+		return nil, fmt.Errorf("frame length %d is not aligned to %d bytes/sample", len(frame), bytesPerSample)
+	}
+
+	offset := int32(1) << (bitsStored - 1)
+	maxUnsigned := int32((1 << bitsStored) - 1)
+	minSigned := -offset
+	maxSigned := offset - 1
+	signMask := uint32(1) << highBit
+	valueMask := uint32((uint64(1) << (highBit + 1)) - 1)
+
+	out := make([]byte, len(frame))
+	for i := 0; i < len(frame); i += bytesPerSample {
+		var raw uint32
+		if bytesPerSample == 1 {
+			raw = uint32(frame[i])
+		} else {
+			raw = uint32(binary.LittleEndian.Uint16(frame[i:]))
+		}
+
+		if toUnsigned {
+			signedVal := signExtend(raw, valueMask, signMask)
+			unsignedVal := signedVal + offset
+			if unsignedVal < 0 {
+				unsignedVal = 0
+			}
+			if unsignedVal > maxUnsigned {
+				unsignedVal = maxUnsigned
+			}
+			if bytesPerSample == 1 {
+				out[i] = byte(unsignedVal)
+			} else {
+				binary.LittleEndian.PutUint16(out[i:], uint16(unsignedVal))
+			}
+		} else {
+			signedVal := int32(raw) - offset
+			if signedVal < minSigned {
+				signedVal = minSigned
+			}
+			if signedVal > maxSigned {
+				signedVal = maxSigned
+			}
+			stored := uint32(uint64(signedVal) & uint64((1<<bitsStored)-1))
+			if (stored & signMask) != 0 {
+				upperMask := ^uint32((uint64(1)<<(highBit+1)) - 1)
+				stored |= upperMask
+			}
+			if bytesPerSample == 1 {
+				out[i] = byte(stored & 0xFF)
+			} else {
+				binary.LittleEndian.PutUint16(out[i:], uint16(stored))
+			}
+		}
+	}
+
+	return out, nil
+}
+
+func signExtend(raw uint32, valueMask uint32, signMask uint32) int32 {
+	val := raw & valueMask
+	if (val & signMask) != 0 {
+		val |= ^valueMask
+	}
+	return int32(val)
 }
