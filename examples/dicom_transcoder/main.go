@@ -16,45 +16,46 @@ import (
 	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
 
 	"github.com/cocosip/go-dicom/pkg/dicom/dataset"
+	"github.com/cocosip/go-dicom/pkg/dicom/element"
 	"github.com/cocosip/go-dicom/pkg/dicom/parser"
 	"github.com/cocosip/go-dicom/pkg/dicom/tag"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/dicom/writer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/io/buffer"
 )
 
 func main() {
-	fmt.Println("╔════════════════════════════════════════════════════════════════╗")
-	fmt.Println("║         DICOM Transfer Syntax Transcoder                       ║")
-	fmt.Println("║         Converts DICOM files between compression formats       ║")
-	fmt.Println("╚════════════════════════════════════════════════════════════════╝")
+	fmt.Println("DICOM Transfer Syntax Transcoder")
+	fmt.Println("Converts DICOM files between compression formats")
+	fmt.Println(strings.Repeat("-", 70))
 	fmt.Println()
 
 	// Get input file path
 	inputPath := getInputFilePath()
 	if inputPath == "" {
-		fmt.Println("\n✗ No input file specified. Exiting...")
+		fmt.Println("\nNo input file specified. Exiting...")
 		waitForExit()
 		return
 	}
 
 	// Check if file exists
 	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
-		fmt.Printf("\n✗ File not found: %s\n", inputPath)
+		fmt.Printf("\nFile not found: %s\n", inputPath)
 		waitForExit()
 		return
 	}
 
-	fmt.Printf("\n📂 Input file: %s\n", inputPath)
+	fmt.Printf("\nInput file: %s\n", inputPath)
 
 	// Read DICOM file
-	fmt.Println("\n⏳ Reading DICOM file...")
+	fmt.Println("\nReading DICOM file...")
 	parseResult, err := parser.ParseFile(inputPath,
-		parser.WithReadOption(parser.ReadAll),     // Read all elements including pixel data
-		parser.WithLargeObjectSize(100*1024*1024), // Allow large objects up to 100MB
+		parser.WithReadOption(parser.ReadAll),
+		parser.WithLargeObjectSize(100*1024*1024),
 	)
 	if err != nil {
-		fmt.Printf("✗ Failed to read DICOM file: %v\n", err)
+		fmt.Printf("Failed to read DICOM file: %v\n", err)
 		waitForExit()
 		return
 	}
@@ -62,15 +63,8 @@ func main() {
 	ds := parseResult.Dataset
 	sourceTS := parseResult.TransferSyntax
 
-	fmt.Printf("✓ Successfully read DICOM file\n")
+	fmt.Printf("Successfully read DICOM file\n")
 	fmt.Printf("  Source Transfer Syntax: %s\n", sourceTS.UID().UID())
-
-	// Debug: Check pixel data element type
-	if pixelDataElem, ok := ds.Get(tag.PixelData); ok {
-		fmt.Printf("  Pixel Data Element Type: %T\n", pixelDataElem)
-	} else {
-		fmt.Printf("  ⚠ Warning: Pixel Data element not found\n")
-	}
 
 	// Display image information
 	displayImageInfo(ds)
@@ -78,12 +72,12 @@ func main() {
 	// Get output directory
 	outputDir := getOutputDirectory(inputPath)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		fmt.Printf("\n✗ Failed to create output directory: %v\n", err)
+		fmt.Printf("\nFailed to create output directory: %v\n", err)
 		waitForExit()
 		return
 	}
 
-	fmt.Printf("\n📁 Output directory: %s\n", outputDir)
+	fmt.Printf("\nOutput directory: %s\n", outputDir)
 
 	// Define target transfer syntaxes
 	targetFormats := []struct {
@@ -92,57 +86,22 @@ func main() {
 		suffix     string
 		isLossless bool
 	}{
-		{
-			name:       "JPEG Baseline (Lossy 8-bit)",
-			ts:         transfer.JPEGBaseline8Bit,
-			suffix:     "jpeg_baseline",
-			isLossless: false,
-		},
-		{
-			name:       "JPEG Lossless",
-			ts:         transfer.JPEGLossless,
-			suffix:     "jpeg_lossless",
-			isLossless: true,
-		},
-		{
-			name:       "JPEG Lossless SV1",
-			ts:         transfer.JPEGLosslessSV1,
-			suffix:     "jpeg_lossless_sv1",
-			isLossless: true,
-		},
-		{
-			name:       "JPEG-LS Lossless",
-			ts:         transfer.JPEGLSLossless,
-			suffix:     "jpegls_lossless",
-			isLossless: true,
-		},
-		{
-			name:       "RLE",
-			ts:         transfer.RLELossless,
-			suffix:     "rle",
-			isLossless: false,
-		},
-		{
-			name:       "JPEG 2000 Lossless",
-			ts:         transfer.JPEG2000Lossless,
-			suffix:     "j2k_lossless",
-			isLossless: true,
-		},
-		{
-			name:       "JPEG 2000 Lossy",
-			ts:         transfer.JPEG2000,
-			suffix:     "j2k_lossy",
-			isLossless: false,
-		},
+		{"JPEG Baseline (Lossy 8-bit)", transfer.JPEGBaseline8Bit, "jpeg_baseline", false},
+		{"JPEG Lossless", transfer.JPEGLossless, "jpeg_lossless", true},
+		{"JPEG Lossless SV1", transfer.JPEGLosslessSV1, "jpeg_lossless_sv1", true},
+		{"JPEG-LS Lossless", transfer.JPEGLSLossless, "jpegls_lossless", true},
+		{"RLE", transfer.RLELossless, "rle", false},
+		{"JPEG 2000 Lossless", transfer.JPEG2000Lossless, "j2k_lossless", true},
+		{"JPEG 2000 Lossy", transfer.JPEG2000, "j2k_lossy", false},
 	}
 
 	// Get codec registry
 	registry := codec.GetGlobalRegistry()
 
 	// Transcode to each format
-	fmt.Println("\n" + strings.Repeat("═", 70))
+	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Println("Starting transcoding process...")
-	fmt.Println(strings.Repeat("═", 70))
+	fmt.Println(strings.Repeat("-", 70))
 
 	successCount := 0
 	failCount := 0
@@ -154,8 +113,7 @@ func main() {
 		// Pre-check for JPEG Baseline 8-bit limitation
 		bitsStored := ds.TryGetUInt16(tag.BitsStored, 0)
 		if format.ts == transfer.JPEGBaseline8Bit && bitsStored > 8 {
-			fmt.Printf("      ⊘ Skipped: JPEG Baseline only supports 8-bit images (your image is %d-bit)\n", bitsStored)
-			fmt.Printf("      💡 Tip: Use JPEG 2000 Lossy for high-quality lossy compression of 16-bit images\n")
+			fmt.Printf("      Skipped: JPEG Baseline only supports 8-bit images (your image is %d-bit)\n", bitsStored)
 			failCount++
 			continue
 		}
@@ -166,7 +124,7 @@ func main() {
 
 		// Perform transcoding
 		if err := transcodeDICOMFile(ds, outputPath, sourceTS, format.ts, registry); err != nil {
-			fmt.Printf("      ✗ Failed: %v\n", err)
+			fmt.Printf("      Failed: %v\n", err)
 			failCount++
 			continue
 		}
@@ -176,24 +134,24 @@ func main() {
 		outputSize, _ := getFileSize(outputPath)
 		ratio := float64(inputSize) / float64(outputSize)
 
-		fmt.Printf("      ✓ Success!\n")
-		fmt.Printf("      📊 Size: %s → %s (%.2fx compression)\n",
+		fmt.Printf("      Success!\n")
+		fmt.Printf("      Size: %s -> %s (%.2fx compression)\n",
 			formatBytes(inputSize), formatBytes(outputSize), ratio)
-		fmt.Printf("      💾 Output: %s\n", filepath.Base(outputPath))
+		fmt.Printf("      Output: %s\n", filepath.Base(outputPath))
 
 		successCount++
 	}
 
 	// Summary
-	fmt.Println("\n" + strings.Repeat("═", 70))
+	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Println("Transcoding Summary")
-	fmt.Println(strings.Repeat("═", 70))
-	fmt.Printf("✓ Successful: %d\n", successCount)
+	fmt.Println(strings.Repeat("-", 70))
+	fmt.Printf("Success: %d\n", successCount)
 	if failCount > 0 {
-		fmt.Printf("✗ Failed:     %d\n", failCount)
+		fmt.Printf("Failed:  %d\n", failCount)
 	}
-	fmt.Printf("📁 Output directory: %s\n", outputDir)
-	fmt.Println(strings.Repeat("═", 70))
+	fmt.Printf("Output directory: %s\n", outputDir)
+	fmt.Println(strings.Repeat("-", 70))
 
 	// Wait for user input before exit
 	waitForExit()
@@ -232,7 +190,7 @@ func getOutputDirectory(inputPath string) string {
 
 // displayImageInfo shows information about the DICOM image
 func displayImageInfo(ds *dataset.Dataset) {
-	fmt.Println("\n📋 Image Information:")
+	fmt.Println("\nImage Information:")
 
 	// Get image dimensions
 	rows := ds.TryGetUInt16(tag.Rows, 0)
@@ -272,8 +230,11 @@ func displayImageInfo(ds *dataset.Dataset) {
 func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, targetTS *transfer.Syntax, registry *codec.Registry) error {
 	// Skip if already in target format
 	if sourceTS.UID().UID() == targetTS.UID().UID() {
-		// Just copy the dataset with correct transfer syntax
-		if err := writer.WriteFile(outputPath, ds, writer.WithTransferSyntax(sourceTS)); err != nil {
+		clone := ds.Clone()
+		if err := fixEncapsulatedPadding(clone, sourceTS); err != nil {
+			return fmt.Errorf("fix padding: %w", err)
+		}
+		if err := writer.WriteFile(outputPath, clone, writer.WithTransferSyntax(sourceTS)); err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
 		return nil
@@ -286,11 +247,76 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return fmt.Errorf("transcode failed: %w", err)
 	}
 
+	if err := fixEncapsulatedPadding(newDS, targetTS); err != nil {
+		return fmt.Errorf("fix padding: %w", err)
+	}
+
 	// Write with correct transfer syntax (also ensures File Meta includes TSUID)
 	if err := writer.WriteFile(outputPath, newDS, writer.WithTransferSyntax(targetTS)); err != nil {
 		return fmt.Errorf("failed to write output file: %w", err)
 	}
 
+	return nil
+}
+
+// fixEncapsulatedPadding ensures each fragment is even-length and BOT offsets match padded sizes.
+func fixEncapsulatedPadding(ds *dataset.Dataset, ts *transfer.Syntax) error {
+	if ts == nil || !ts.IsEncapsulated() {
+		return nil
+	}
+	pd, ok := ds.Get(tag.PixelData)
+	if !ok {
+		return nil
+	}
+
+	switch v := pd.(type) {
+	case *element.OtherByteFragment:
+		frags := v.Fragments()
+		if len(frags) == 0 {
+			return nil
+		}
+		var offsets []uint32
+		var run uint32
+		newFrag := element.NewOtherByteFragment(tag.PixelData)
+		for _, frag := range frags {
+			data := frag.Data()
+			if len(data)%2 != 0 {
+				data = append(data, 0x00)
+			}
+			offsets = append(offsets, run)
+			run += uint32(len(data))
+			newFrag.AddFragment(buffer.NewMemory(data))
+		}
+		if len(frags) > 1 {
+			newFrag.SetOffsetTable(offsets)
+		}
+		ds.Remove(tag.PixelData)
+		_ = ds.Add(newFrag)
+	case *element.OtherWordFragment:
+		frags := v.Fragments()
+		if len(frags) == 0 {
+			return nil
+		}
+		var offsets []uint32
+		var run uint32
+		newFrag := element.NewOtherWordFragment(tag.PixelData)
+		for _, frag := range frags {
+			data := frag.Data()
+			if len(data)%2 != 0 {
+				data = append(data, 0x00)
+			}
+			offsets = append(offsets, run)
+			run += uint32(len(data))
+			newFrag.AddFragment(buffer.NewMemory(data))
+		}
+		if len(frags) > 1 {
+			newFrag.SetOffsetTable(offsets)
+		}
+		ds.Remove(tag.PixelData)
+		_ = ds.Add(newFrag)
+	default:
+		// Uncompressed or unexpected type; nothing to fix.
+	}
 	return nil
 }
 
@@ -319,7 +345,7 @@ func formatBytes(bytes int64) string {
 
 // waitForExit waits for user input before exiting
 func waitForExit() {
-	fmt.Println("\n" + strings.Repeat("─", 70))
+	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Print("Press Enter to exit...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
 }

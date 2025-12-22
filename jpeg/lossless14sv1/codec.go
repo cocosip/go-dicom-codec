@@ -64,7 +64,7 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Shift signed samples to unsigned domain if needed.
+		// Shift signed samples into unsigned domain per JPEG Lossless requirements.
 		adjusted := frameData
 		if frameInfo.PixelRepresentation != 0 {
 			shifted, serr := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
@@ -137,6 +137,7 @@ func (c *LosslessSV1Codec) Decode(oldPixelData types.PixelData, newPixelData typ
 				components, frameInfo.SamplesPerPixel)
 		}
 
+		// Shift back to signed domain if needed.
 		decodedFrame := pixelData
 		if frameInfo.PixelRepresentation != 0 {
 			shifted, serr := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
@@ -221,7 +222,7 @@ func shiftSignedFrame(frame []byte, bitsStored, highBit, bitsAllocated uint16, t
 			}
 			stored := uint32(uint64(signedVal) & uint64((1<<bitsStored)-1))
 			if (stored & signMask) != 0 {
-				upperMask := ^uint32((uint64(1)<<(highBit+1)) - 1)
+				upperMask := ^uint32((uint64(1) << (highBit + 1)) - 1)
 				stored |= upperMask
 			}
 			if bytesPerSample == 1 {

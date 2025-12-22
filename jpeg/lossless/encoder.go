@@ -58,15 +58,26 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 		enc.predictor = SelectBestPredictor(samples, width, height)
 	}
 
-	// Use standard DC Huffman tables
-	enc.dcTables[0] = common.BuildStandardHuffmanTable(
-		common.StandardDCLuminanceBits,
-		common.StandardDCLuminanceValues,
-	)
-	enc.dcTables[1] = common.BuildStandardHuffmanTable(
-		common.StandardDCChrominanceBits,
-		common.StandardDCChrominanceValues,
-	)
+	// Select Huffman tables: standard (<=11-bit) or extended (12-16 bit needs larger categories)
+	if bitDepth >= 12 {
+		enc.dcTables[0] = common.BuildStandardHuffmanTable(
+			common.ExtendedDCLuminanceBits,
+			common.ExtendedDCLuminanceValues,
+		)
+		enc.dcTables[1] = common.BuildStandardHuffmanTable(
+			common.ExtendedDCChrominanceBits,
+			common.ExtendedDCChrominanceValues,
+		)
+	} else {
+		enc.dcTables[0] = common.BuildStandardHuffmanTable(
+			common.StandardDCLuminanceBits,
+			common.StandardDCLuminanceValues,
+		)
+		enc.dcTables[1] = common.BuildStandardHuffmanTable(
+			common.StandardDCChrominanceBits,
+			common.StandardDCChrominanceValues,
+		)
+	}
 
 	// Build Huffman codes
 	enc.dcCodes[0] = common.BuildHuffmanCodes(enc.dcTables[0])
@@ -107,12 +118,12 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 func (enc *Encoder) writeSOF3(writer *common.Writer) error {
 	data := make([]byte, 6+enc.components*3)
 
-	data[0] = byte(enc.precision)       // Precision
-	data[1] = byte(enc.height >> 8)     // Height high byte
-	data[2] = byte(enc.height)          // Height low byte
-	data[3] = byte(enc.width >> 8)      // Width high byte
-	data[4] = byte(enc.width)           // Width low byte
-	data[5] = byte(enc.components)      // Number of components
+	data[0] = byte(enc.precision)   // Precision
+	data[1] = byte(enc.height >> 8) // Height high byte
+	data[2] = byte(enc.height)      // Height low byte
+	data[3] = byte(enc.width >> 8)  // Width high byte
+	data[4] = byte(enc.width)       // Width low byte
+	data[5] = byte(enc.components)  // Number of components
 
 	if enc.components == 1 {
 		// Grayscale

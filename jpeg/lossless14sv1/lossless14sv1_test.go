@@ -80,7 +80,7 @@ func TestEncodeDecodeRGB8bit(t *testing.T) {
 			offset := (y*width + x) * 3
 			pixelData[offset+0] = byte(x * 4)       // R
 			pixelData[offset+1] = byte(y * 4)       // G
-			pixelData[offset+2] = byte((x+y) * 2)   // B
+			pixelData[offset+2] = byte((x + y) * 2) // B
 		}
 	}
 
@@ -304,6 +304,41 @@ func TestEncodeInvalidParameters(t *testing.T) {
 				t.Errorf("Encode() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSigned16BitRoundTrip(t *testing.T) {
+	width, height := 8, 4
+	pixelData := make([]byte, width*height*2)
+
+	values := []int16{-2000, -1000, -10, 0, 10, 1000, 2000, 30000}
+	for i := 0; i < width*height; i++ {
+		v := values[i%len(values)]
+		u := uint16(v)
+		off := i * 2
+		pixelData[off] = byte(u & 0xFF)
+		pixelData[off+1] = byte(u >> 8)
+	}
+
+	jpegData, err := Encode(pixelData, width, height, 1, 16)
+	if err != nil {
+		t.Fatalf("Encode signed 16-bit failed: %v", err)
+	}
+
+	decoded, w, h, comps, bits, err := Decode(jpegData)
+	if err != nil {
+		t.Fatalf("Decode signed 16-bit failed: %v", err)
+	}
+	if w != width || h != height || comps != 1 || bits != 16 {
+		t.Fatalf("Metadata mismatch w=%d h=%d comps=%d bits=%d", w, h, comps, bits)
+	}
+	if len(decoded) != len(pixelData) {
+		t.Fatalf("Decoded length mismatch: got %d want %d", len(decoded), len(pixelData))
+	}
+	for i := range pixelData {
+		if decoded[i] != pixelData[i] {
+			t.Fatalf("Pixel %d mismatch got=%d want=%d", i, decoded[i], pixelData[i])
+		}
 	}
 }
 
