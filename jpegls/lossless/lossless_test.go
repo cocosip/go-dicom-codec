@@ -290,3 +290,89 @@ func TestGradientImage(t *testing.T) {
 		t.Logf("Gradient: Perfect lossless reconstruction!")
 	}
 }
+
+// TestLargeImage16Bit tests encoding of large 16-bit images (reproducing Issue 2)
+func TestLargeImage16Bit(t *testing.T) {
+	// Test with image size similar to the failing case: 888×459
+	width, height := 888, 459
+	bitDepth := 16
+	components := 1
+
+	// Create test image with 16-bit values
+	// Use sequential values starting from 590 (as in the bug report)
+	pixelData := make([]byte, width*height*2)
+	for i := 0; i < width*height; i++ {
+		val := (590 + i) % 65536
+		pixelData[i*2] = byte(val & 0xFF)
+		pixelData[i*2+1] = byte((val >> 8) & 0xFF)
+	}
+
+	t.Logf("Testing large image: %dx%d = %d pixels", width, height, width*height)
+
+	// Encode
+	encoded, err := Encode(pixelData, width, height, components, bitDepth)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	t.Logf("Original size: %d bytes", len(pixelData))
+	t.Logf("Compressed size: %d bytes", len(encoded))
+	t.Logf("Compression ratio: %.2fx", float64(len(pixelData))/float64(len(encoded)))
+
+	// Decode
+	decoded, w, h, c, bd, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+
+	// Verify dimensions
+	if w != width || h != height || c != components || bd != bitDepth {
+		t.Errorf("Dimension mismatch: got %dx%d, %d components, %d-bit; want %dx%d, %d components, %d-bit",
+			w, h, c, bd, width, height, components, bitDepth)
+	}
+
+	// Verify lossless
+	if len(decoded) != len(pixelData) {
+		t.Fatalf("Decoded data length mismatch: got %d, want %d", len(decoded), len(pixelData))
+	}
+
+	errors := 0
+	firstError := -1
+	maxError := 0
+	for i := 0; i < len(pixelData)/2; i++ {
+		origLow := pixelData[i*2]
+		origHigh := pixelData[i*2+1]
+		decodedLow := decoded[i*2]
+		decodedHigh := decoded[i*2+1]
+
+		origVal := int(origLow) | (int(origHigh) << 8)
+		decodedVal := int(decodedLow) | (int(decodedHigh) << 8)
+
+		if origVal != decodedVal {
+			if firstError == -1 {
+				firstError = i
+				t.Logf("First error at pixel %d: original=%d, decoded=%d", i, origVal, decodedVal)
+			}
+			errors++
+			diff := origVal - decodedVal
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > maxError {
+				maxError = diff
+			}
+			if errors <= 10 {
+				t.Logf("Pixel %d mismatch: got %d, want %d (diff=%d)", i, decodedVal, origVal, origVal-decodedVal)
+			}
+		}
+	}
+
+	totalBytes := len(pixelData)
+	if errors > 0 {
+		errorPercent := float64(errors*2*100) / float64(totalBytes)
+		t.Errorf("Large image: Total pixel errors: %d / %d pixels (%.1f%% of bytes), max error: %d, first error at pixel %d",
+			errors, width*height, errorPercent, maxError, firstError)
+	} else {
+		t.Logf("Large image: Perfect lossless reconstruction! (0 errors)")
+	}
+}

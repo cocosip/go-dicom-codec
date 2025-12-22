@@ -45,15 +45,31 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		precision:  bitDepth,
 	}
 
-	// Use standard DC Huffman tables
-	enc.dcTables[0] = common.BuildStandardHuffmanTable(
-		common.StandardDCLuminanceBits,
-		common.StandardDCLuminanceValues,
-	)
-	enc.dcTables[1] = common.BuildStandardHuffmanTable(
-		common.StandardDCChrominanceBits,
-		common.StandardDCChrominanceValues,
-	)
+	// Use extended DC Huffman tables for bit depths >= 12, standard tables otherwise
+	// Standard tables only support category 0-11 (max value ±2047)
+	// 12-bit data needs category 12 (max value ±4095)
+	// 16-bit data needs category 16 (max value ±65535)
+	if bitDepth >= 12 {
+		// Extended tables support category 0-16 for 12-16 bit data
+		enc.dcTables[0] = common.BuildStandardHuffmanTable(
+			common.ExtendedDCLuminanceBits,
+			common.ExtendedDCLuminanceValues,
+		)
+		enc.dcTables[1] = common.BuildStandardHuffmanTable(
+			common.ExtendedDCChrominanceBits,
+			common.ExtendedDCChrominanceValues,
+		)
+	} else {
+		// Standard tables support category 0-11 for up to 11-bit data
+		enc.dcTables[0] = common.BuildStandardHuffmanTable(
+			common.StandardDCLuminanceBits,
+			common.StandardDCLuminanceValues,
+		)
+		enc.dcTables[1] = common.BuildStandardHuffmanTable(
+			common.StandardDCChrominanceBits,
+			common.StandardDCChrominanceValues,
+		)
+	}
 
 	// Build Huffman codes
 	enc.dcCodes[0] = common.BuildHuffmanCodes(enc.dcTables[0])

@@ -15,6 +15,7 @@ import (
 	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/dicom/dataset"
 	"github.com/cocosip/go-dicom/pkg/dicom/element"
 	"github.com/cocosip/go-dicom/pkg/dicom/parser"
@@ -270,29 +271,10 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return nil
 	}
 
-	// Use imaging.CreatePixelData to properly extract pixel data
-	pixelData, err := imaging.CreatePixelData(ds)
+	// Create source pixel data from DICOM dataset
+	srcPixelData, err := imaging.CreatePixelData(ds)
 	if err != nil {
-		return fmt.Errorf("failed to create pixel data: %w", err)
-	}
-
-	// Convert to codec.PixelData format
-	srcCodecData := pixelData.ToCodecPixelData()
-	srcCodecData.TransferSyntaxUID = sourceTS.UID().UID()
-
-	// Create destination codec data
-	dstCodecData := &codec.PixelData{
-		Width:                     srcCodecData.Width,
-		Height:                    srcCodecData.Height,
-		NumberOfFrames:            srcCodecData.NumberOfFrames,
-		BitsAllocated:             srcCodecData.BitsAllocated,
-		BitsStored:                srcCodecData.BitsStored,
-		HighBit:                   srcCodecData.HighBit,
-		SamplesPerPixel:           srcCodecData.SamplesPerPixel,
-		PixelRepresentation:       srcCodecData.PixelRepresentation,
-		PlanarConfiguration:       srcCodecData.PlanarConfiguration,
-		PhotometricInterpretation: srcCodecData.PhotometricInterpretation,
-		TransferSyntaxUID:         targetTS.UID().UID(),
+		return fmt.Errorf("failed to create source pixel data: %w", err)
 	}
 
 	// Get target codec
@@ -301,18 +283,48 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return fmt.Errorf("no codec available for target transfer syntax %s", targetTS.UID().UID())
 	}
 
-	// Encode to target format
-	if err := targetCodec.Encode(srcCodecData, dstCodecData, nil); err != nil {
-		return fmt.Errorf("encoding failed: %w", err)
+	// Create source wrapper using TestPixelData
+	// This allows us to extract frames from the DicomPixelData
+	srcFrameInfo := srcPixelData.GetFrameInfo()
+	srcWrapper := codecHelpers.NewTestPixelData(srcFrameInfo)
+
+	// Add all frames from source
+	for i := 0; i < srcPixelData.FrameCount(); i++ {
+		frameData, err := srcPixelData.GetFrame(i)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", i, err)
+		}
+		if err := srcWrapper.AddFrame(frameData); err != nil {
+			return fmt.Errorf("failed to add source frame %d: %w", i, err)
+		}
 	}
 
-	// Clone the dataset and update pixel data
+	// Create destination wrapper for encoded data
+	dstWrapper := codecHelpers.NewTestPixelData(srcFrameInfo)
+
+	// Encode using the codec
+	// The codec will compress each frame and add to dstWrapper
+	if err := targetCodec.Encode(srcWrapper, dstWrapper, nil); err != nil {
+		return fmt.Errorf("encoding to %s failed: %w", targetTS.UID().UID(), err)
+	}
+
+	// Clone the dataset and remove old pixel data
 	newDS := ds.Clone()
 	newDS.Remove(tag.PixelData)
 
-	// Add compressed pixel data as fragment sequence
+	// Create encapsulated pixel data element (OtherByteFragment for compressed data)
 	obf := element.NewOtherByteFragment(tag.PixelData)
-	obf.AddFragment(buffer.NewMemory(dstCodecData.Data))
+
+	// Add each encoded frame as a fragment
+	for i := 0; i < dstWrapper.FrameCount(); i++ {
+		frameData, err := dstWrapper.GetFrame(i)
+		if err != nil {
+			return fmt.Errorf("failed to get encoded frame %d: %w", i, err)
+		}
+		obf.AddFragment(buffer.NewMemory(frameData))
+	}
+
+	// Add pixel data element to dataset
 	if err := newDS.Add(obf); err != nil {
 		return fmt.Errorf("failed to add pixel data: %w", err)
 	}

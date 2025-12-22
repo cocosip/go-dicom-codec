@@ -281,10 +281,8 @@ func TestLosslessSV1CodecRegistry(t *testing.T) {
 }
 
 func TestLosslessSV116Bit(t *testing.T) {
-	// KNOWN LIMITATION: 12-bit+ data may fail due to Huffman table category limits
-	// Standard DC Huffman tables support categories 0-11 (±2047 range)
-	// This test documents the limitation rather than expecting success
-	t.Skip("Skipping 12-bit test - known Huffman table limitation (categories 0-11 only)")
+	// Test 16-bit data with extended Huffman tables
+	// Extended DC Huffman tables support categories 0-16 (±65535 range)
 
 	// Test 16-bit data
 	width, height := 32, 32

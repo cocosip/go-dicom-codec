@@ -137,6 +137,31 @@ var StandardACChrominanceValues = []byte{
 	0xf9, 0xfa,
 }
 
+// Extended Huffman tables for high bit-depth (>12 bits) lossless JPEG
+// These tables support category 0-16 for 16-bit precision
+
+// ExtendedDCLuminanceBits contains the number of codes for each length (DC luminance, extended)
+// Supports category 0-16 for bit depths up to 16
+var ExtendedDCLuminanceBits = [16]int{
+	0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, // Extended for cat 12-15, cat 16 uses length 16
+}
+
+// ExtendedDCLuminanceValues contains the Huffman values (DC luminance, extended)
+var ExtendedDCLuminanceValues = []byte{
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+}
+
+// ExtendedDCChrominanceBits contains the number of codes for each length (DC chrominance, extended)
+// Supports category 0-16 for bit depths up to 16
+var ExtendedDCChrominanceBits = [16]int{
+	0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, // Extended for cat 12-16
+}
+
+// ExtendedDCChrominanceValues contains the Huffman values (DC chrominance, extended)
+var ExtendedDCChrominanceValues = []byte{
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+}
+
 // BuildStandardHuffmanTable builds a standard Huffman table
 func BuildStandardHuffmanTable(bits [16]int, values []byte) *HuffmanTable {
 	table := &HuffmanTable{

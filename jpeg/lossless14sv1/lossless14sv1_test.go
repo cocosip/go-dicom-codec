@@ -136,7 +136,6 @@ func TestEncodeDecodeRGB8bit(t *testing.T) {
 }
 
 func TestEncodeDecode12bit(t *testing.T) {
-	t.Skip("12-bit support requires extended Huffman tables - TODO")
 	// Create test image (12-bit grayscale)
 	width, height := 32, 32
 	bitDepth := 12
@@ -196,6 +195,86 @@ func TestEncodeDecode12bit(t *testing.T) {
 		t.Errorf("Total errors: %d (lossless should have 0 errors)", errors)
 	} else {
 		t.Logf("Perfect reconstruction: all bytes match")
+	}
+}
+
+func TestEncodeDecode16bit(t *testing.T) {
+	// Create test image (16-bit grayscale) - testing the extended Huffman tables
+	width, height := 32, 32
+	bitDepth := 16
+	pixelData := make([]byte, width*height*2) // 2 bytes per sample
+
+	// Create a 16-bit gradient with values spanning the full range
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			// Use values that require category 16 (high values)
+			val := ((x+y)*1024 + 590) % 65536
+			offset := (y*width + x) * 2
+			pixelData[offset] = byte(val & 0xFF)
+			pixelData[offset+1] = byte((val >> 8) & 0xFF)
+		}
+	}
+
+	// Encode
+	jpegData, err := Encode(pixelData, width, height, 1, bitDepth)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	t.Logf("Original size: %d bytes", len(pixelData))
+	t.Logf("Compressed size: %d bytes", len(jpegData))
+	t.Logf("Compression ratio: %.2fx", float64(len(pixelData))/float64(len(jpegData)))
+
+	// Decode
+	decodedData, w, h, _, bits, err := Decode(jpegData)
+	if err != nil {
+		t.Fatalf("Decode failed: %v", err)
+	}
+
+	// Verify dimensions
+	if w != width || h != height {
+		t.Errorf("Dimensions mismatch: got %dx%d, want %dx%d", w, h, width, height)
+	}
+
+	if bits != bitDepth {
+		t.Errorf("Bit depth mismatch: got %d, want %d", bits, bitDepth)
+	}
+
+	// Verify perfect reconstruction
+	if len(decodedData) != len(pixelData) {
+		t.Fatalf("Data length mismatch: got %d, want %d", len(decodedData), len(pixelData))
+	}
+
+	errors := 0
+	maxError := 0
+	for i := 0; i < len(pixelData)/2; i++ {
+		origLow := pixelData[i*2]
+		origHigh := pixelData[i*2+1]
+		decodedLow := decodedData[i*2]
+		decodedHigh := decodedData[i*2+1]
+
+		origVal := int(origLow) | (int(origHigh) << 8)
+		decodedVal := int(decodedLow) | (int(decodedHigh) << 8)
+
+		if origVal != decodedVal {
+			errors++
+			diff := origVal - decodedVal
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > maxError {
+				maxError = diff
+			}
+			if errors <= 5 {
+				t.Errorf("Pixel %d mismatch: got %d, want %d", i, decodedVal, origVal)
+			}
+		}
+	}
+
+	if errors > 0 {
+		t.Errorf("Total pixel errors: %d (lossless should have 0 errors), max error: %d", errors, maxError)
+	} else {
+		t.Logf("Perfect reconstruction: all %d pixels match", width*height)
 	}
 }
 
