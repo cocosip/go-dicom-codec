@@ -3,7 +3,7 @@ module dicom-transcoder-example
 go 1.25.0
 
 require (
-	github.com/cocosip/go-dicom v0.0.0-20251219052848-6a4d2da5f9d3
+	github.com/cocosip/go-dicom v0.0.0-20251222041935-dc638f56cdba
 	github.com/cocosip/go-dicom-codec v0.0.0
 )
 

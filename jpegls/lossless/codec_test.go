@@ -5,6 +5,8 @@ import (
 
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
+    "github.com/cocosip/go-dicom/pkg/imaging/types"
+    codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecInterface tests the Codec interface implementation for JPEGLSLosslessCodec
@@ -36,11 +38,10 @@ func TestCodecEncodeDecode8Bit(t *testing.T) {
         pixelData[i] = byte(i % 256)
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -48,37 +49,43 @@ func TestCodecEncodeDecode8Bit(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
-    encoded := &codec.PixelData{}
+    encoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Encode(src, encoded, nil); err != nil {
         t.Fatalf("Encode failed: %v", err)
     }
 
-    decoded := &codec.PixelData{}
+    decoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Decode(encoded, decoded, nil); err != nil {
         t.Fatalf("Decode failed: %v", err)
     }
 
-    if int(decoded.Width) != width || int(decoded.Height) != height {
-        t.Errorf("Dimension mismatch: got %dx%d, want %dx%d", decoded.Width, decoded.Height, width, height)
+    decodedInfo := decoded.GetFrameInfo()
+    if int(decodedInfo.Width) != width || int(decodedInfo.Height) != height {
+        t.Errorf("Dimension mismatch: got %dx%d, want %dx%d", decodedInfo.Width, decodedInfo.Height, width, height)
     }
-    if decoded.SamplesPerPixel != 1 {
-        t.Errorf("Components mismatch: got %d, want %d", decoded.SamplesPerPixel, 1)
+    if decodedInfo.SamplesPerPixel != 1 {
+        t.Errorf("Components mismatch: got %d, want %d", decodedInfo.SamplesPerPixel, 1)
     }
 
+    decodedFrame, err := decoded.GetFrame(0)
+    if err != nil {
+        t.Fatalf("GetFrame failed: %v", err)
+    }
     errors := 0
-    for i := 0; i < len(src.Data); i++ {
-        if decoded.Data[i] != src.Data[i] {
+    for i := 0; i < len(decodedFrame); i++ {
+        if decodedFrame[i] != pixelData[i] {
             errors++
             if errors <= 5 {
-                t.Errorf("Pixel %d mismatch: got %d, want %d", i, decoded.Data[i], src.Data[i])
+                t.Errorf("Pixel %d mismatch: got %d, want %d", i, decodedFrame[i], pixelData[i])
             }
         }
     }
     if errors > 0 {
-        t.Errorf("Total pixel errors: %d / %d", errors, len(src.Data))
+        t.Errorf("Total pixel errors: %d / %d", errors, len(pixelData))
     }
 }
 
@@ -100,11 +107,10 @@ func TestCodecEncodeDecode12Bit(t *testing.T) {
         }
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             16,
         BitsStored:                12,
         HighBit:                   11,
@@ -112,27 +118,32 @@ func TestCodecEncodeDecode12Bit(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
-    encoded := &codec.PixelData{}
+    encoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Encode(src, encoded, nil); err != nil {
         t.Fatalf("12-bit Encode failed: %v", err)
     }
 
-    decoded := &codec.PixelData{}
+    decoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Decode(encoded, decoded, nil); err != nil {
         t.Fatalf("12-bit Decode failed: %v", err)
     }
 
+    decodedFrame, err := decoded.GetFrame(0)
+    if err != nil {
+        t.Fatalf("GetFrame failed: %v", err)
+    }
     errors := 0
-    for i := 0; i < len(src.Data); i++ {
-        if decoded.Data[i] != src.Data[i] {
+    for i := 0; i < len(pixelData); i++ {
+        if decodedFrame[i] != pixelData[i] {
             errors++
         }
     }
     if errors > 0 {
-        t.Errorf("12-bit: Total pixel errors: %d / %d", errors, len(src.Data))
+        t.Errorf("12-bit: Total pixel errors: %d / %d", errors, len(pixelData))
     }
 }
 
@@ -154,11 +165,10 @@ func TestCodecRGB(t *testing.T) {
         }
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -166,27 +176,32 @@ func TestCodecRGB(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "RGB",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
-    encoded := &codec.PixelData{}
+    encoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Encode(src, encoded, nil); err != nil {
         t.Fatalf("RGB Encode failed: %v", err)
     }
 
-    decoded := &codec.PixelData{}
+    decoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Decode(encoded, decoded, nil); err != nil {
         t.Fatalf("RGB Decode failed: %v", err)
     }
 
+    decodedFrame, err := decoded.GetFrame(0)
+    if err != nil {
+        t.Fatalf("GetFrame failed: %v", err)
+    }
     errors := 0
-    for i := 0; i < len(src.Data); i++ {
-        if decoded.Data[i] != src.Data[i] {
+    for i := 0; i < len(pixelData); i++ {
+        if decodedFrame[i] != pixelData[i] {
             errors++
         }
     }
     if errors > 0 {
-        t.Errorf("RGB: Total pixel errors: %d / %d", errors, len(src.Data))
+        t.Errorf("RGB: Total pixel errors: %d / %d", errors, len(pixelData))
     }
 }
 
@@ -209,11 +224,10 @@ func TestCodecRegistry(t *testing.T) {
         pixelData[i] = byte(i % 256)
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -221,23 +235,28 @@ func TestCodecRegistry(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
-    encoded := &codec.PixelData{}
+    encoded := codecHelpers.NewTestPixelData(frameInfo)
     err := retrievedCodec.Encode(src, encoded, nil)
     if err != nil {
         t.Fatalf("Registry encode failed: %v", err)
     }
 
-    decoded := &codec.PixelData{}
+    decoded := codecHelpers.NewTestPixelData(frameInfo)
     err = retrievedCodec.Decode(encoded, decoded, nil)
     if err != nil {
         t.Fatalf("Registry decode failed: %v", err)
     }
 
-    for i := 0; i < len(src.Data); i++ {
-        if decoded.Data[i] != src.Data[i] {
+    decodedFrame, err := decoded.GetFrame(0)
+    if err != nil {
+        t.Fatalf("GetFrame failed: %v", err)
+    }
+    for i := 0; i < len(pixelData); i++ {
+        if decodedFrame[i] != pixelData[i] {
             t.Errorf("Pixel %d mismatch in registry test", i)
             break
         }

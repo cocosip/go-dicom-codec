@@ -6,6 +6,8 @@ import (
 
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
+    "github.com/cocosip/go-dicom/pkg/imaging/types"
+    codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecInterface verifies that Codec implements codec.Codec
@@ -62,11 +64,10 @@ func TestParameterNearValues(t *testing.T) {
         pixelData[i] = byte(i % 256)
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -74,8 +75,9 @@ func TestParameterNearValues(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
     cases := []struct{
         name string
@@ -91,12 +93,13 @@ func TestParameterNearValues(t *testing.T) {
         t.Run(tc.name, func(t *testing.T) {
             params := codec.NewBaseParameters()
             params.SetParameter("near", tc.near)
-            encoded := &codec.PixelData{}
+            encoded := codecHelpers.NewTestPixelData(frameInfo)
             err := c.Encode(src, encoded, params)
             if (err != nil) != tc.wantErr {
                 t.Fatalf("Encode error=%v, wantErr=%v", err, tc.wantErr)
             }
-            if !tc.wantErr && len(encoded.Data) == 0 {
+            frame, frameErr := encoded.GetFrame(0)
+            if !tc.wantErr && (frameErr != nil || len(frame) == 0) {
                 t.Error("encoded data is empty")
             }
         })
@@ -113,12 +116,10 @@ func TestCodecEncode(t *testing.T) {
         pixelData[i] = byte(i % 256)
     }
 
-    // Base src
-    baseSrc := &codec.PixelData{
-        Data:                      pixelData,
+    // Base frameInfo
+    baseFrameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -126,39 +127,40 @@ func TestCodecEncode(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
 
     tests := []struct {
         name    string
-        mutate  func(*codec.PixelData) codec.Parameters
+        mutate  func(*types.FrameInfo) (*types.FrameInfo, codec.Parameters)
         wantErr bool
     }{
         {
             name: "Valid NEAR=0 (lossless)",
-            mutate: func(src *codec.PixelData) codec.Parameters {
-                p := codec.NewBaseParameters(); p.SetParameter("near", 0); return p
+            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+                p := codec.NewBaseParameters(); p.SetParameter("near", 0); return fi, p
             },
             wantErr: false,
         },
         {
             name: "Valid NEAR=3",
-            mutate: func(src *codec.PixelData) codec.Parameters {
-                p := codec.NewBaseParameters(); p.SetParameter("near", 3); return p
+            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+                p := codec.NewBaseParameters(); p.SetParameter("near", 3); return fi, p
             },
             wantErr: false,
         },
         {
             name: "Invalid width",
-            mutate: func(src *codec.PixelData) codec.Parameters {
-                src.Width = 0; return nil
+            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+                newFi := *fi
+                newFi.Width = 0; return &newFi, nil
             },
             wantErr: true,
         },
         {
             name: "Invalid components",
-            mutate: func(src *codec.PixelData) codec.Parameters {
-                src.SamplesPerPixel = 2; return nil
+            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+                newFi := *fi
+                newFi.SamplesPerPixel = 2; return &newFi, nil
             },
             wantErr: true,
         },
@@ -166,16 +168,18 @@ func TestCodecEncode(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            // copy src to avoid mutation leakage
-            src := *baseSrc
-            params := tt.mutate(&src)
-            encoded := &codec.PixelData{}
-            err := c.Encode(&src, encoded, params)
+            // copy frameInfo to avoid mutation leakage
+            frameInfo, params := tt.mutate(baseFrameInfo)
+            src := codecHelpers.NewTestPixelData(frameInfo)
+            src.AddFrame(pixelData)
+            encoded := codecHelpers.NewTestPixelData(frameInfo)
+            err := c.Encode(src, encoded, params)
             if (err != nil) != tt.wantErr {
                 t.Errorf("Encode() error = %v, wantErr %v", err, tt.wantErr)
                 return
             }
-            if !tt.wantErr && len(encoded.Data) == 0 {
+            frame, frameErr := encoded.GetFrame(0)
+            if !tt.wantErr && (frameErr != nil || len(frame) == 0) {
                 t.Error("Encode() returned empty data")
             }
         })
@@ -192,11 +196,10 @@ func TestCodecDecode(t *testing.T) {
         pixelData[i] = byte((i * 7) % 256)
     }
 
-    src := &codec.PixelData{
-        Data:                      pixelData,
+    // Create source PixelData
+    frameInfo := &types.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
-        NumberOfFrames:            1,
         BitsAllocated:             8,
         BitsStored:                8,
         HighBit:                   7,
@@ -204,33 +207,39 @@ func TestCodecDecode(t *testing.T) {
         PixelRepresentation:       0,
         PlanarConfiguration:       0,
         PhotometricInterpretation: "MONOCHROME2",
-        TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
     }
+    src := codecHelpers.NewTestPixelData(frameInfo)
+    src.AddFrame(pixelData)
 
     params := codec.NewBaseParameters()
     params.SetParameter("near", 3)
 
-    encoded := &codec.PixelData{}
+    encoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Encode(src, encoded, params); err != nil {
         t.Fatalf("Encode() failed: %v", err)
     }
 
-    decoded := &codec.PixelData{}
+    decoded := codecHelpers.NewTestPixelData(frameInfo)
     if err := c.Decode(encoded, decoded, nil); err != nil {
         t.Fatalf("Decode() failed: %v", err)
     }
 
-    if int(decoded.Width) != width || int(decoded.Height) != height {
+    decodedInfo := decoded.GetFrameInfo()
+    if int(decodedInfo.Width) != width || int(decodedInfo.Height) != height {
         t.Errorf("Decoded dimensions mismatch")
     }
-    if decoded.SamplesPerPixel != 1 || decoded.BitsStored != 8 {
+    if decodedInfo.SamplesPerPixel != 1 || decodedInfo.BitsStored != 8 {
         t.Errorf("Decoded metadata mismatch")
     }
 
+    decodedFrame, err := decoded.GetFrame(0)
+    if err != nil {
+        t.Fatalf("GetFrame failed: %v", err)
+    }
     // Verify error bound (NEAR=3)
     maxError := 0
-    for i := 0; i < len(src.Data); i++ {
-        diff := int(decoded.Data[i]) - int(src.Data[i])
+    for i := 0; i < len(pixelData); i++ {
+        diff := int(decodedFrame[i]) - int(pixelData[i])
         if diff < 0 {
             diff = -diff
         }
@@ -257,8 +266,20 @@ func TestCodecDecodeInvalid(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            srcEnc := &codec.PixelData{Data: tt.data}
-            dst := &codec.PixelData{}
+            frameInfo := &types.FrameInfo{
+                Width:                     32,
+                Height:                    32,
+                BitsAllocated:             8,
+                BitsStored:                8,
+                HighBit:                   7,
+                SamplesPerPixel:           1,
+                PixelRepresentation:       0,
+                PlanarConfiguration:       0,
+                PhotometricInterpretation: "MONOCHROME2",
+            }
+            srcEnc := codecHelpers.NewTestPixelData(frameInfo)
+            srcEnc.AddFrame(tt.data)
+            dst := codecHelpers.NewTestPixelData(frameInfo)
             err := c.Decode(srcEnc, dst, nil)
             if err == nil {
                 t.Error("Decode() expected error, got nil")
@@ -293,11 +314,10 @@ func TestCodecRoundTrip(t *testing.T) {
                 pixelData[i] = byte((i * 7) % 256)
             }
 
-            src := &codec.PixelData{
-                Data:                      pixelData,
+            // Create source PixelData
+            frameInfo := &types.FrameInfo{
                 Width:                     uint16(tt.width),
                 Height:                    uint16(tt.height),
-                NumberOfFrames:            1,
                 BitsAllocated:             8,
                 BitsStored:                8,
                 HighBit:                   7,
@@ -305,25 +325,30 @@ func TestCodecRoundTrip(t *testing.T) {
                 PixelRepresentation:       0,
                 PlanarConfiguration:       0,
                 PhotometricInterpretation: map[int]string{1: "MONOCHROME2", 3: "RGB"}[tt.components],
-                TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
             }
+            src := codecHelpers.NewTestPixelData(frameInfo)
+            src.AddFrame(pixelData)
 
             params := codec.NewBaseParameters()
             params.SetParameter("near", tt.near)
 
-            encoded := &codec.PixelData{}
+            encoded := codecHelpers.NewTestPixelData(frameInfo)
             if err := c.Encode(src, encoded, params); err != nil {
                 t.Fatalf("Encode() failed: %v", err)
             }
 
-            decoded := &codec.PixelData{}
+            decoded := codecHelpers.NewTestPixelData(frameInfo)
             if err := c.Decode(encoded, decoded, nil); err != nil {
                 t.Fatalf("Decode() failed: %v", err)
             }
 
+            decodedFrame, err := decoded.GetFrame(0)
+            if err != nil {
+                t.Fatalf("GetFrame failed: %v", err)
+            }
             maxError := 0
-            for i := 0; i < len(src.Data); i++ {
-                diff := int(decoded.Data[i]) - int(src.Data[i])
+            for i := 0; i < len(pixelData); i++ {
+                diff := int(decodedFrame[i]) - int(pixelData[i])
                 if diff < 0 {
                     diff = -diff
                 }

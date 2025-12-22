@@ -5,7 +5,8 @@ import (
 	"log"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // ExampleCodec_Encode demonstrates basic lossy encoding
@@ -19,11 +20,9 @@ func ExampleCodec_Encode() {
 	}
 
 	// Prepare source pixel data
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -32,20 +31,24 @@ func ExampleCodec_Encode() {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create codec with default quality (80)
 	c := lossy.NewCodec(80)
 
 	// Encode
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, dst, nil)
 	if err != nil {
 		log.Fatalf("Encoding failed: %v", err)
 	}
 
-	fmt.Printf("Original size: %d bytes\n", len(src.Data))
-	fmt.Printf("Encoded size: %d bytes\n", len(dst.Data))
-	fmt.Printf("Compression ratio: %.2f:1\n", float64(len(src.Data))/float64(len(dst.Data)))
+	srcData, _ := src.GetFrame(0)
+	dstData, _ := dst.GetFrame(0)
+	fmt.Printf("Original size: %d bytes\n", len(srcData))
+	fmt.Printf("Encoded size: %d bytes\n", len(dstData))
+	fmt.Printf("Compression ratio: %.2f:1\n", float64(len(srcData))/float64(len(dstData)))
 }
 
 // ExampleCodec_Encode_withQualityParameter demonstrates encoding with custom quality
@@ -58,11 +61,9 @@ func ExampleCodec_Encode_withQualityParameter() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -71,6 +72,9 @@ func ExampleCodec_Encode_withQualityParameter() {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Test different quality levels
 	qualities := []int{100, 80, 50}
@@ -85,23 +89,25 @@ func ExampleCodec_Encode_withQualityParameter() {
 		// params.SetParameter("quality", quality)
 		// err := c.Encode(src, dst, params)
 
-		dst := &codec.PixelData{}
+		dst := codecHelpers.NewTestPixelData(frameInfo)
 		err := c.Encode(src, dst, nil)
 		if err != nil {
 			log.Fatalf("Encoding failed: %v", err)
 		}
 
 		// Decode to check quality
-		decoded := &codec.PixelData{}
+		decoded := codecHelpers.NewTestPixelData(frameInfo)
 		err = c.Decode(dst, decoded, nil)
 		if err != nil {
 			log.Fatalf("Decoding failed: %v", err)
 		}
 
 		// Calculate error
+		srcData, _ := src.GetFrame(0)
+		decodedData, _ := decoded.GetFrame(0)
 		var maxError int
-		for i := range src.Data {
-			diff := int(decoded.Data[i]) - int(src.Data[i])
+		for i := range srcData {
+			diff := int(decodedData[i]) - int(srcData[i])
 			if diff < 0 {
 				diff = -diff
 			}
@@ -110,7 +116,8 @@ func ExampleCodec_Encode_withQualityParameter() {
 			}
 		}
 
-		compressionRatio := float64(len(src.Data)) / float64(len(dst.Data))
+		dstData, _ := dst.GetFrame(0)
+		compressionRatio := float64(len(srcData)) / float64(len(dstData))
 		fmt.Printf("Quality %d: Compression %.2f:1, Max error: %d\n",
 			quality, compressionRatio, maxError)
 	}
@@ -132,11 +139,9 @@ func ExampleCodec_Decode() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -146,19 +151,23 @@ func ExampleCodec_Decode() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	// Encode
 	c := lossy.NewCodec(80)
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	_ = c.Encode(src, encoded, nil)
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Decode(encoded, decoded, nil)
 	if err != nil {
 		log.Fatalf("Decoding failed: %v", err)
 	}
 
-	fmt.Printf("Decoded width: %d\n", decoded.Width)
-	fmt.Printf("Decoded height: %d\n", decoded.Height)
-	fmt.Printf("Decoded data size: %d bytes\n", len(decoded.Data))
+	fmt.Printf("Decoded width: %d\n", decoded.GetFrameInfo().Width)
+	fmt.Printf("Decoded height: %d\n", decoded.GetFrameInfo().Height)
+	decodedData, _ := decoded.GetFrame(0)
+	fmt.Printf("Decoded data size: %d bytes\n", len(decodedData))
 }

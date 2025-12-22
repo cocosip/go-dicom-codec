@@ -4,7 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecName tests the codec name
@@ -47,11 +48,9 @@ func TestBasicEncodeDecode(t *testing.T) {
 	}
 
 	// Create source PixelData
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -60,10 +59,12 @@ func TestBasicEncodeDecode(t *testing.T) {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Test encoding
 	c := NewCodec(80)
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Encode(src, encoded, nil)
 	if err != nil {
@@ -71,32 +72,34 @@ func TestBasicEncodeDecode(t *testing.T) {
 	}
 
 	// Verify encoded data exists
-	if len(encoded.Data) == 0 {
+	encodedData, _ := encoded.GetFrame(0)
+	if len(encodedData) == 0 {
 		t.Fatal("Encoded data is empty")
 	}
 
 	// Encoded data should be smaller than original (compression)
 	t.Logf("Original size: %d bytes, Encoded size: %d bytes, Ratio: %.2f:1",
-		len(src.Data), len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)))
+		len(pixelData), len(encodedData), float64(len(pixelData))/float64(len(encodedData)))
 
 	// Test decoding
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = c.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Verify decoded data
-	if len(decoded.Data) != len(src.Data) {
-		t.Errorf("Decoded data length mismatch: got %d, want %d", len(decoded.Data), len(src.Data))
+	decodedData, _ := decoded.GetFrame(0)
+	if len(decodedData) != len(pixelData) {
+		t.Errorf("Decoded data length mismatch: got %d, want %d", len(decodedData), len(pixelData))
 	}
 
-	if decoded.Width != src.Width {
-		t.Errorf("Width mismatch: got %d, want %d", decoded.Width, src.Width)
+	if decoded.GetFrameInfo().Width != src.GetFrameInfo().Width {
+		t.Errorf("Width mismatch: got %d, want %d", decoded.GetFrameInfo().Width, src.GetFrameInfo().Width)
 	}
 
-	if decoded.Height != src.Height {
-		t.Errorf("Height mismatch: got %d, want %d", decoded.Height, src.Height)
+	if decoded.GetFrameInfo().Height != src.GetFrameInfo().Height {
+		t.Errorf("Height mismatch: got %d, want %d", decoded.GetFrameInfo().Height, src.GetFrameInfo().Height)
 	}
 
 	// For lossy compression, we expect some error but it should be small
@@ -106,7 +109,7 @@ func TestBasicEncodeDecode(t *testing.T) {
 	errorCount := 0
 
 	for i := 0; i < numPixels; i++ {
-		diff := int(decoded.Data[i]) - int(src.Data[i])
+		diff := int(decodedData[i]) - int(pixelData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -159,11 +162,9 @@ func TestLargerImage(t *testing.T) {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -173,8 +174,11 @@ func TestLargerImage(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	c := NewCodec(80)
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	// Encode
 	err := c.Encode(src, encoded, nil)
@@ -182,20 +186,22 @@ func TestLargerImage(t *testing.T) {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	compressionRatio := float64(len(src.Data)) / float64(len(encoded.Data))
+	encodedData, _ := encoded.GetFrame(0)
+	compressionRatio := float64(len(pixelData)) / float64(len(encodedData))
 	t.Logf("Compression ratio for 64x64: %.2f:1", compressionRatio)
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = c.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Calculate error
+	decodedData, _ := decoded.GetFrame(0)
 	var maxError int
 	for i := 0; i < numPixels; i++ {
-		diff := int(decoded.Data[i]) - int(src.Data[i])
+		diff := int(decodedData[i]) - int(pixelData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -226,11 +232,9 @@ func TestRGBImage(t *testing.T) {
 		pixelData[i*3+2] = byte((i * 5) % 256) // B
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -240,8 +244,11 @@ func TestRGBImage(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	c := NewCodec(80)
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	// Encode
 	err := c.Encode(src, encoded, nil)
@@ -249,25 +256,27 @@ func TestRGBImage(t *testing.T) {
 		t.Fatalf("Encode RGB failed: %v", err)
 	}
 
-	compressionRatio := float64(len(src.Data)) / float64(len(encoded.Data))
+	encodedData, _ := encoded.GetFrame(0)
+	compressionRatio := float64(len(pixelData)) / float64(len(encodedData))
 	t.Logf("RGB compression ratio: %.2f:1", compressionRatio)
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = c.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode RGB failed: %v", err)
 	}
 
 	// Verify
-	if len(decoded.Data) != len(src.Data) {
-		t.Errorf("RGB data length mismatch: got %d, want %d", len(decoded.Data), len(src.Data))
+	decodedData, _ := decoded.GetFrame(0)
+	if len(decodedData) != len(pixelData) {
+		t.Errorf("RGB data length mismatch: got %d, want %d", len(decodedData), len(pixelData))
 	}
 
 	// Calculate error for RGB
 	var maxError int
-	for i := 0; i < len(src.Data); i++ {
-		diff := int(decoded.Data[i]) - int(src.Data[i])
+	for i := 0; i < len(pixelData); i++ {
+		diff := int(decodedData[i]) - int(pixelData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -295,11 +304,9 @@ func TestRateControlAndLayers(t *testing.T) {
 		pixelData[i] = byte((i * 7) % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -308,6 +315,9 @@ func TestRateControlAndLayers(t *testing.T) {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// 自定义参数：目标压缩比 5:1，多层，量化倍率 1.2，并提供显式子带步长（长度需匹配 3*numLevels+1）。
 	params := NewLossyParameters().
@@ -331,28 +341,29 @@ func TestRateControlAndLayers(t *testing.T) {
 	params.WithSubbandSteps(steps)
 
 	c := NewCodec(80)
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Encode(src, encoded, params); err != nil {
 		t.Fatalf("Encode with rate control/layers failed: %v", err)
 	}
 
-	if len(encoded.Data) == 0 {
+	encodedData, _ := encoded.GetFrame(0)
+	if len(encodedData) == 0 {
 		t.Fatalf("Encoded data is empty")
 	}
 
-	ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+	ratio := float64(len(pixelData)) / float64(len(encodedData))
 	t.Logf("Target ratio: %.2f, actual: %.2f", params.TargetRatio, ratio)
 	// 验证压缩比接近目标（容差 50% 内）
 	if math.Abs(ratio-params.TargetRatio) > params.TargetRatio*0.5 {
 		t.Fatalf("Ratio too far from target: got %.2f, want ~%.2f", ratio, params.TargetRatio)
 	}
 
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Decode(encoded, decoded, nil); err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
-	if decoded.Width != src.Width || decoded.Height != src.Height {
+	if decoded.GetFrameInfo().Width != src.GetFrameInfo().Width || decoded.GetFrameInfo().Height != src.GetFrameInfo().Height {
 		t.Fatalf("Dim mismatch after decode: got %dx%d, want %dx%d",
-			decoded.Width, decoded.Height, src.Width, src.Height)
+			decoded.GetFrameInfo().Width, decoded.GetFrameInfo().Height, src.GetFrameInfo().Width, src.GetFrameInfo().Height)
 	}
 }

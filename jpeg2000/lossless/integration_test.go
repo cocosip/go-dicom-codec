@@ -5,6 +5,8 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecRegistration verifies the codec is registered in the global registry
@@ -51,27 +53,30 @@ func TestCodecInterfaceCompliance(t *testing.T) {
 	}
 
 	// Test Encode method exists and works
-	src := &codec.PixelData{
-		Data:            []byte{1, 2, 3},
+	frameInfo := &types.FrameInfo{
 		Width:           1,
 		Height:          1,
-		SamplesPerPixel: 1,
-		BitsStored:      8,
 		BitsAllocated:   8,
+		BitsStored:      8,
 		HighBit:         7,
+		SamplesPerPixel: 1,
 	}
-	dst := &codec.PixelData{}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame([]byte{1, 2, 3})
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, dst, nil)
 	// Encoding should work now
 	if err != nil {
 		t.Errorf("Encode failed: %v", err)
 	}
-	if len(dst.Data) == 0 {
+	dstData, _ := dst.GetFrame(0)
+	if len(dstData) == 0 {
 		t.Error("Encoded data is empty")
 	}
 
 	// Test Decode method exists
-	err = c.Decode(&codec.PixelData{}, dst, nil)
+	emptyDst := codecHelpers.NewTestPixelData(frameInfo)
+	err = c.Decode(codecHelpers.NewTestPixelData(frameInfo), emptyDst, nil)
 	// We expect an error (empty data)
 	if err == nil {
 		t.Error("Decode should return error for empty data")
@@ -113,38 +118,53 @@ func TestCodecMetadata(t *testing.T) {
 func TestDecodeErrorHandling(t *testing.T) {
 	c := NewCodec()
 
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+
+	srcWithData := codecHelpers.NewTestPixelData(frameInfo)
+	srcWithData.AddFrame([]byte{1})
+
+	srcWithInvalidData := codecHelpers.NewTestPixelData(frameInfo)
+	srcWithInvalidData.AddFrame([]byte{0x00, 0x01, 0x02})
+
 	tests := []struct {
 		name        string
-		src         *codec.PixelData
-		dst         *codec.PixelData
+		src         types.PixelData
+		dst         types.PixelData
 		expectError bool
 		errorContains string
 	}{
 		{
 			name:          "Nil source",
 			src:           nil,
-			dst:           &codec.PixelData{},
+			dst:           codecHelpers.NewTestPixelData(frameInfo),
 			expectError:   true,
 			errorContains: "cannot be nil",
 		},
 		{
 			name:          "Nil destination",
-			src:           &codec.PixelData{Data: []byte{1}},
+			src:           srcWithData,
 			dst:           nil,
 			expectError:   true,
 			errorContains: "cannot be nil",
 		},
 		{
 			name:          "Empty data",
-			src:           &codec.PixelData{Data: []byte{}},
-			dst:           &codec.PixelData{},
+			src:           codecHelpers.NewTestPixelData(frameInfo),
+			dst:           codecHelpers.NewTestPixelData(frameInfo),
 			expectError:   true,
 			errorContains: "empty",
 		},
 		{
 			name:          "Invalid JPEG 2000 data",
-			src:           &codec.PixelData{Data: []byte{0x00, 0x01, 0x02}},
-			dst:           &codec.PixelData{},
+			src:           srcWithInvalidData,
+			dst:           codecHelpers.NewTestPixelData(frameInfo),
 			expectError:   true,
 			errorContains: "decode failed",
 		},
@@ -185,42 +205,57 @@ func TestDecodeErrorHandling(t *testing.T) {
 func TestEncodeErrorHandling(t *testing.T) {
 	c := NewCodec()
 
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+
+	srcWithData := codecHelpers.NewTestPixelData(frameInfo)
+	srcWithData.AddFrame([]byte{1})
+
+	frameInfoSmall := &types.FrameInfo{
+		Width:           8,
+		Height:          8,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+	srcValid := codecHelpers.NewTestPixelData(frameInfoSmall)
+	srcValid.AddFrame(make([]byte, 64))
+
 	tests := []struct {
 		name        string
-		src         *codec.PixelData
-		dst         *codec.PixelData
+		src         types.PixelData
+		dst         types.PixelData
 		expectError bool
 	}{
 		{
 			name:        "Nil source",
 			src:         nil,
-			dst:         &codec.PixelData{},
+			dst:         codecHelpers.NewTestPixelData(frameInfo),
 			expectError: true,
 		},
 		{
 			name:        "Nil destination",
-			src:         &codec.PixelData{Data: []byte{1}},
+			src:         srcWithData,
 			dst:         nil,
 			expectError: true,
 		},
 		{
 			name:        "Empty data",
-			src:         &codec.PixelData{Data: []byte{}},
-			dst:         &codec.PixelData{},
+			src:         codecHelpers.NewTestPixelData(frameInfo),
+			dst:         codecHelpers.NewTestPixelData(frameInfo),
 			expectError: true,
 		},
 		{
-			name: "Valid data (encoding works)",
-			src: &codec.PixelData{
-				Data:            make([]byte, 64),
-				Width:           8,
-				Height:          8,
-				SamplesPerPixel: 1,
-				BitsStored:      8,
-				BitsAllocated:   8,
-				HighBit:         7,
-			},
-			dst:         &codec.PixelData{},
+			name:        "Valid data (encoding works)",
+			src:         srcValid,
+			dst:         codecHelpers.NewTestPixelData(frameInfoSmall),
 			expectError: false,
 		},
 	}

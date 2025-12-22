@@ -7,6 +7,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
 )
 
 var _ codec.Codec = (*Codec)(nil)
@@ -68,42 +69,53 @@ func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
+// GetDefaultParameters returns the default codec parameters
+func (c *Codec) GetDefaultParameters() codec.Parameters {
+	if c.lossless {
+		return NewHTJ2KLosslessParameters()
+	}
+	params := NewHTJ2KParameters()
+	params.Quality = c.quality
+	return params
+}
+
 // Encode encodes pixel data to HTJ2K format
-func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
 
 	// Get encoding parameters
 	var htj2kParams *HTJ2KParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if hp, ok := params.(*HTJ2KParameters); ok {
+		if hp, ok := parameters.(*HTJ2KParameters); ok {
 			htj2kParams = hp
 		} else {
 			// Fallback: create from generic parameters
 			htj2kParams = NewHTJ2KParameters()
-			if q := params.GetParameter("quality"); q != nil {
+			if q := parameters.GetParameter("quality"); q != nil {
 				if qInt, ok := q.(int); ok {
 					htj2kParams.Quality = qInt
 				}
 			}
-			if bw := params.GetParameter("blockWidth"); bw != nil {
+			if bw := parameters.GetParameter("blockWidth"); bw != nil {
 				if bwInt, ok := bw.(int); ok {
 					htj2kParams.BlockWidth = bwInt
 				}
 			}
-			if bh := params.GetParameter("blockHeight"); bh != nil {
+			if bh := parameters.GetParameter("blockHeight"); bh != nil {
 				if bhInt, ok := bh.(int); ok {
 					htj2kParams.BlockHeight = bhInt
 				}
 			}
-			if nl := params.GetParameter("numLevels"); nl != nil {
+			if nl := parameters.GetParameter("numLevels"); nl != nil {
 				if nlInt, ok := nl.(int); ok {
 					htj2kParams.NumLevels = nlInt
 				}
@@ -124,16 +136,16 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 
 	// Create JPEG 2000 encoding parameters with HTJ2K enabled
 	encParams := jpeg2000.DefaultEncodeParams(
-		int(src.Width),
-		int(src.Height),
-		int(src.SamplesPerPixel),
-		int(src.BitsStored),
-		src.PixelRepresentation != 0,
+		int(frameInfo.Width),
+		int(frameInfo.Height),
+		int(frameInfo.SamplesPerPixel),
+		int(frameInfo.BitsStored),
+		frameInfo.PixelRepresentation != 0,
 	)
 
 	// Configure HTJ2K-specific settings
 	// Adjust NumLevels based on image size to ensure minimum subband size >= 1
-	maxLevels := calculateMaxLevels(int(src.Width), int(src.Height))
+	maxLevels := calculateMaxLevels(int(frameInfo.Width), int(frameInfo.Height))
 	if htj2kParams.NumLevels > maxLevels {
 		encParams.NumLevels = maxLevels
 	} else {
@@ -163,55 +175,55 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Create encoder with HTJ2K enabled
 	encoder := jpeg2000.NewEncoder(encParams)
 
-	// Encode using full JPEG 2000 pipeline (DWT + HTJ2K block coding + T2)
-	encoded, err := encoder.Encode(src.Data)
-	if err != nil {
-		return fmt.Errorf("HTJ2K encode failed: %w", err)
-	}
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Set destination data
-	dst.Data = encoded
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = src.BitsStored
-	dst.HighBit = src.HighBit
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Encode using full JPEG 2000 pipeline (DWT + HTJ2K block coding + T2)
+		encoded, err := encoder.Encode(frameData)
+		if err != nil {
+			return fmt.Errorf("HTJ2K encode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add encoded frame to destination
+		if err := newPixelData.AddFrame(encoded); err != nil {
+			return fmt.Errorf("failed to add encoded frame %d: %w", frameIndex, err)
+		}
+	}
 
 	return nil
 }
 
 // Decode decodes HTJ2K data to uncompressed pixel data
-func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
-	}
-
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
 	}
 
 	// Get decoding parameters
 	var htj2kParams *HTJ2KParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if hp, ok := params.(*HTJ2KParameters); ok {
+		if hp, ok := parameters.(*HTJ2KParameters); ok {
 			htj2kParams = hp
 		} else {
 			// Fallback: create from generic parameters
 			htj2kParams = NewHTJ2KParameters()
-			if bw := params.GetParameter("blockWidth"); bw != nil {
+			if bw := parameters.GetParameter("blockWidth"); bw != nil {
 				if bwInt, ok := bw.(int); ok {
 					htj2kParams.BlockWidth = bwInt
 				}
 			}
-			if bh := params.GetParameter("blockHeight"); bh != nil {
+			if bh := parameters.GetParameter("blockHeight"); bh != nil {
 				if bhInt, ok := bh.(int); ok {
 					htj2kParams.BlockHeight = bhInt
 				}
@@ -225,36 +237,38 @@ func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Validate parameters
 	htj2kParams.Validate()
 
-	// Create JPEG 2000 decoder
-	decoder := jpeg2000.NewDecoder()
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get encoded frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Set HTJ2K block decoder factory
-	// The decoder will use this factory to create HTJ2K block decoders instead of EBCOT T1 decoders
-	decoder.SetBlockDecoderFactory(func(width, height int, cblkstyle int) t2.BlockDecoder {
-		return NewHTDecoder(width, height)
-	})
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
 
-	// Decode using full JPEG 2000 pipeline (T2 + HTJ2K block decoding + Inverse DWT)
-	if err := decoder.Decode(src.Data); err != nil {
-		return fmt.Errorf("HTJ2K decode failed: %w", err)
+		// Create JPEG 2000 decoder
+		decoder := jpeg2000.NewDecoder()
+
+		// Set HTJ2K block decoder factory
+		// The decoder will use this factory to create HTJ2K block decoders instead of EBCOT T1 decoders
+		decoder.SetBlockDecoderFactory(func(width, height int, cblkstyle int) t2.BlockDecoder {
+			return NewHTDecoder(width, height)
+		})
+
+		// Decode using full JPEG 2000 pipeline (T2 + HTJ2K block decoding + Inverse DWT)
+		if err := decoder.Decode(frameData); err != nil {
+			return fmt.Errorf("HTJ2K decode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add decoded frame to destination
+		if err := newPixelData.AddFrame(decoder.GetPixelData()); err != nil {
+			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
+		}
 	}
-
-	// Get decoded pixel data
-	pixelData := decoder.GetPixelData()
-
-	// Set destination data
-	dst.Data = pixelData
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = src.BitsStored
-	dst.HighBit = src.HighBit
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID() // Decoded to uncompressed
 
 	return nil
 }

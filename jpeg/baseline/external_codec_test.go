@@ -6,6 +6,8 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 func TestBaselineCodecInterface(t *testing.T) {
@@ -44,11 +46,9 @@ func TestBaselineCodecEncodeDecode(t *testing.T) {
 	}
 
 	// Create source PixelData
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -56,64 +56,69 @@ func TestBaselineCodecEncodeDecode(t *testing.T) {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create codec with quality 85
 	baselineCodec := NewBaselineCodec(85)
 
 	// Encode
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := baselineCodec.Encode(src, encoded, nil)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	t.Logf("Original size: %d bytes", len(src.Data))
-	t.Logf("Compressed size: %d bytes", len(encoded.Data))
-	t.Logf("Compression ratio: %.2fx", float64(len(src.Data))/float64(len(encoded.Data)))
+	srcData, _ := src.GetFrame(0)
+	encodedData, _ := encoded.GetFrame(0)
+	t.Logf("Original size: %d bytes", len(srcData))
+	t.Logf("Compressed size: %d bytes", len(encodedData))
+	t.Logf("Compression ratio: %.2fx", float64(len(srcData))/float64(len(encodedData)))
 
 	// Verify encoded data is not empty
-	if len(encoded.Data) == 0 {
+	if len(encodedData) == 0 {
 		t.Fatal("Encoded data is empty")
 	}
 
 	// Verify encoded data is smaller than original (should be compressed)
-	if len(encoded.Data) >= len(src.Data) {
+	if len(encodedData) >= len(srcData) {
 		t.Logf("Warning: Encoded data (%d bytes) is not smaller than original (%d bytes)",
-			len(encoded.Data), len(src.Data))
+			len(encodedData), len(srcData))
 	}
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = baselineCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Verify dimensions
-	if decoded.Width != src.Width || decoded.Height != src.Height {
+	decodedInfo := decoded.GetFrameInfo()
+	if decodedInfo.Width != frameInfo.Width || decodedInfo.Height != frameInfo.Height {
 		t.Errorf("Dimensions mismatch: got %dx%d, want %dx%d",
-			decoded.Width, decoded.Height, src.Width, src.Height)
+			decodedInfo.Width, decodedInfo.Height, frameInfo.Width, frameInfo.Height)
 	}
 
 	// Verify samples per pixel
-	if decoded.SamplesPerPixel != src.SamplesPerPixel {
+	if decodedInfo.SamplesPerPixel != frameInfo.SamplesPerPixel {
 		t.Errorf("Samples per pixel mismatch: got %d, want %d",
-			decoded.SamplesPerPixel, src.SamplesPerPixel)
+			decodedInfo.SamplesPerPixel, frameInfo.SamplesPerPixel)
 	}
 
 	// Verify data length
-	if len(decoded.Data) != len(src.Data) {
-		t.Fatalf("Data length mismatch: got %d, want %d", len(decoded.Data), len(src.Data))
+	decodedData, _ := decoded.GetFrame(0)
+	if len(decodedData) != len(srcData) {
+		t.Fatalf("Data length mismatch: got %d, want %d", len(decodedData), len(srcData))
 	}
 
 	// JPEG Baseline is lossy, so we can't expect perfect reconstruction
 	// Instead, check that most pixels are close
 	maxDiff := 0
 	totalDiff := 0
-	for i := 0; i < len(src.Data); i++ {
-		diff := int(src.Data[i]) - int(decoded.Data[i])
+	for i := 0; i < len(srcData); i++ {
+		diff := int(srcData[i]) - int(decodedData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -122,7 +127,7 @@ func TestBaselineCodecEncodeDecode(t *testing.T) {
 		}
 		totalDiff += diff
 	}
-	avgDiff := float64(totalDiff) / float64(len(src.Data))
+	avgDiff := float64(totalDiff) / float64(len(srcData))
 
 	t.Logf("Max pixel difference: %d", maxDiff)
 	t.Logf("Average pixel difference: %.2f", avgDiff)
@@ -155,11 +160,9 @@ func TestBaselineCodecRGB(t *testing.T) {
 	}
 
 	// Create source PixelData
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -167,45 +170,50 @@ func TestBaselineCodecRGB(t *testing.T) {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "RGB",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create codec with quality 90
 	baselineCodec := NewBaselineCodec(90)
 
 	// Encode
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := baselineCodec.Encode(src, encoded, nil)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	t.Logf("RGB Original size: %d bytes", len(src.Data))
-	t.Logf("RGB Compressed size: %d bytes", len(encoded.Data))
-	t.Logf("RGB Compression ratio: %.2fx", float64(len(src.Data))/float64(len(encoded.Data)))
+	srcData, _ := src.GetFrame(0)
+	encodedData, _ := encoded.GetFrame(0)
+	t.Logf("RGB Original size: %d bytes", len(srcData))
+	t.Logf("RGB Compressed size: %d bytes", len(encodedData))
+	t.Logf("RGB Compression ratio: %.2fx", float64(len(srcData))/float64(len(encodedData)))
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = baselineCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Verify dimensions
-	if decoded.Width != src.Width || decoded.Height != src.Height {
+	decodedInfo := decoded.GetFrameInfo()
+	if decodedInfo.Width != frameInfo.Width || decodedInfo.Height != frameInfo.Height {
 		t.Errorf("Dimensions mismatch: got %dx%d, want %dx%d",
-			decoded.Width, decoded.Height, src.Width, src.Height)
+			decodedInfo.Width, decodedInfo.Height, frameInfo.Width, frameInfo.Height)
 	}
 
-	if decoded.SamplesPerPixel != src.SamplesPerPixel {
+	if decodedInfo.SamplesPerPixel != frameInfo.SamplesPerPixel {
 		t.Errorf("Components mismatch: got %d, want %d",
-			decoded.SamplesPerPixel, src.SamplesPerPixel)
+			decodedInfo.SamplesPerPixel, frameInfo.SamplesPerPixel)
 	}
 
 	// Check quality (lossy)
+	decodedData, _ := decoded.GetFrame(0)
 	maxDiff := 0
-	for i := 0; i < len(src.Data); i++ {
-		diff := int(src.Data[i]) - int(decoded.Data[i])
+	for i := 0; i < len(srcData); i++ {
+		diff := int(srcData[i]) - int(decodedData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -233,11 +241,10 @@ func TestBaselineCodecWithParameters(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	// Create source PixelData
+	frameInfo := &types.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -245,8 +252,9 @@ func TestBaselineCodecWithParameters(t *testing.T) {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create codec with default quality (85)
 	baselineCodec := NewBaselineCodec(85)
@@ -256,25 +264,28 @@ func TestBaselineCodecWithParameters(t *testing.T) {
 	params.SetParameter("quality", 95)
 
 	// Encode with high quality
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := baselineCodec.Encode(src, encoded, params)
 	if err != nil {
 		t.Fatalf("Encode with parameters failed: %v", err)
 	}
 
-	t.Logf("Compressed with quality 95: %d bytes", len(encoded.Data))
+	encodedData, _ := encoded.GetFrame(0)
+	t.Logf("Compressed with quality 95: %d bytes", len(encodedData))
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = baselineCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Higher quality should result in better reconstruction
+	srcData, _ := src.GetFrame(0)
+	decodedData, _ := decoded.GetFrame(0)
 	maxDiff := 0
-	for i := 0; i < len(src.Data); i++ {
-		diff := int(src.Data[i]) - int(decoded.Data[i])
+	for i := 0; i < len(srcData); i++ {
+		diff := int(srcData[i]) - int(decodedData[i])
 		if diff < 0 {
 			diff = -diff
 		}
@@ -315,11 +326,10 @@ func TestBaselineCodecRegistry(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	// Create source PixelData
+	frameInfo := &types.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -327,22 +337,24 @@ func TestBaselineCodecRegistry(t *testing.T) {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)
 	if err != nil {
 		t.Fatalf("Encode with retrieved codec failed: %v", err)
 	}
 
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = retrievedCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode with retrieved codec failed: %v", err)
 	}
 
-	t.Logf("Registry codec test passed: %dx%d image", decoded.Width, decoded.Height)
+	decodedInfo := decoded.GetFrameInfo()
+	t.Logf("Registry codec test passed: %dx%d image", decodedInfo.Width, decodedInfo.Height)
 }
 
 func TestBaselineQualityLevels(t *testing.T) {
@@ -353,11 +365,10 @@ func TestBaselineQualityLevels(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	// Create source PixelData
+	frameInfo := &types.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -365,30 +376,34 @@ func TestBaselineQualityLevels(t *testing.T) {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	qualities := []int{50, 75, 85, 95}
 	for _, quality := range qualities {
 		t.Run(fmt.Sprintf("Quality_%d", quality), func(t *testing.T) {
 			baselineCodec := NewBaselineCodec(quality)
 
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := baselineCodec.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed: %v", err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = baselineCodec.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed: %v", err)
 			}
 
 			// Calculate max difference
+			srcData, _ := src.GetFrame(0)
+			encodedData, _ := encoded.GetFrame(0)
+			decodedData, _ := decoded.GetFrame(0)
 			maxDiff := 0
-			for i := 0; i < len(src.Data); i++ {
-				diff := int(src.Data[i]) - int(decoded.Data[i])
+			for i := 0; i < len(srcData); i++ {
+				diff := int(srcData[i]) - int(decodedData[i])
 				if diff < 0 {
 					diff = -diff
 				}
@@ -397,9 +412,9 @@ func TestBaselineQualityLevels(t *testing.T) {
 				}
 			}
 
-			ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+			ratio := float64(len(srcData)) / float64(len(encodedData))
 			t.Logf("Quality %d: Size=%d bytes, Ratio=%.2fx, MaxDiff=%d",
-				quality, len(encoded.Data), ratio, maxDiff)
+				quality, len(encodedData), ratio, maxDiff)
 		})
 	}
 }

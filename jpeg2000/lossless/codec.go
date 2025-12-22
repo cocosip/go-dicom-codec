@@ -6,6 +6,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
 )
 
 var _ codec.Codec = (*Codec)(nil)
@@ -43,27 +44,33 @@ func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
+// GetDefaultParameters returns the default codec parameters
+func (c *Codec) GetDefaultParameters() codec.Parameters {
+	return NewLosslessParameters()
+}
+
 // Encode encodes pixel data to JPEG 2000 Lossless format
-func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
 
 	// Get encoding parameters
 	var losslessParams *JPEG2000LosslessParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if jp, ok := params.(*JPEG2000LosslessParameters); ok {
+		if jp, ok := parameters.(*JPEG2000LosslessParameters); ok {
 			losslessParams = jp
 		} else {
 			// Fallback: create from generic parameters
 			losslessParams = NewLosslessParameters()
-			if n := params.GetParameter("numLevels"); n != nil {
+			if n := parameters.GetParameter("numLevels"); n != nil {
 				if nInt, ok := n.(int); ok && nInt >= 0 && nInt <= 6 {
 					losslessParams.NumLevels = nInt
 				}
@@ -79,39 +86,39 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 
 	// Create encoding parameters
 	encParams := jpeg2000.DefaultEncodeParams(
-		int(src.Width),
-		int(src.Height),
-		int(src.SamplesPerPixel),
-		int(src.BitsStored),
-		src.PixelRepresentation != 0,
+		int(frameInfo.Width),
+		int(frameInfo.Height),
+		int(frameInfo.SamplesPerPixel),
+		int(frameInfo.BitsStored),
+		frameInfo.PixelRepresentation != 0,
 	)
     encParams.NumLevels = losslessParams.NumLevels
-    if params != nil {
-        if v := params.GetParameter("mctMatrix"); v != nil {
+    if parameters != nil {
+        if v := parameters.GetParameter("mctMatrix"); v != nil {
             if m, ok := v.([][]float64); ok { encParams.MCTMatrix = m }
         }
-        if v := params.GetParameter("inverseMctMatrix"); v != nil {
+        if v := parameters.GetParameter("inverseMctMatrix"); v != nil {
             if m, ok := v.([][]float64); ok { encParams.InverseMCTMatrix = m }
         }
-        if v := params.GetParameter("mctOffsets"); v != nil {
+        if v := parameters.GetParameter("mctOffsets"); v != nil {
             if m, ok := v.([]int32); ok { encParams.MCTOffsets = m }
         }
-        if v := params.GetParameter("mctNormScale"); v != nil {
+        if v := parameters.GetParameter("mctNormScale"); v != nil {
             switch x := v.(type) { case float64: encParams.MCTNormScale = x; case float32: encParams.MCTNormScale = float64(x) }
         }
-        if v := params.GetParameter("mctAssocType"); v != nil {
+        if v := parameters.GetParameter("mctAssocType"); v != nil {
             if t, ok := v.(uint8); ok { encParams.MCTAssocType = t }
         }
-        if v := params.GetParameter("mctMatrixElementType"); v != nil {
+        if v := parameters.GetParameter("mctMatrixElementType"); v != nil {
             if t, ok := v.(uint8); ok { encParams.MCTMatrixElementType = t }
         }
-        if v := params.GetParameter("mcoPrecision"); v != nil {
+        if v := parameters.GetParameter("mcoPrecision"); v != nil {
             if t, ok := v.(uint8); ok { encParams.MCOPrecision = t }
         }
-        if v := params.GetParameter("mcoRecordOrder"); v != nil {
+        if v := parameters.GetParameter("mcoRecordOrder"); v != nil {
             if arr, ok := v.([]uint8); ok { encParams.MCORecordOrder = arr }
         }
-        if v := params.GetParameter("mctBindings"); v != nil {
+        if v := parameters.GetParameter("mctBindings"); v != nil {
             if arr, ok := v.([]jpeg2000.MCTBindingParams); ok { encParams.MCTBindings = arr }
         }
     }
@@ -119,61 +126,74 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)
 
-	// Encode
-	encoded, err := encoder.Encode(src.Data)
-	if err != nil {
-		return fmt.Errorf("JPEG 2000 encode failed: %w", err)
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	if frameCount == 0 {
+		return fmt.Errorf("source pixel data is empty (no frames)")
 	}
 
-	// Set destination data
-	dst.Data = encoded
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = src.BitsStored
-	dst.HighBit = src.HighBit
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
+
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Encode
+		encoded, err := encoder.Encode(frameData)
+		if err != nil {
+			return fmt.Errorf("JPEG 2000 encode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add encoded frame to destination
+		if err := newPixelData.AddFrame(encoded); err != nil {
+			return fmt.Errorf("failed to add encoded frame %d: %w", frameIndex, err)
+		}
+	}
 
 	return nil
 }
 
 // Decode decodes JPEG 2000 Lossless data to uncompressed pixel data
-func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	if frameCount == 0 {
+		return fmt.Errorf("source pixel data is empty (no frames)")
 	}
 
-	// Create decoder
-	decoder := jpeg2000.NewDecoder()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get encoded frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Decode
-	if err := decoder.Decode(src.Data); err != nil {
-		return fmt.Errorf("JPEG 2000 decode failed: %w", err)
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Create decoder
+		decoder := jpeg2000.NewDecoder()
+
+		// Decode
+		if err := decoder.Decode(frameData); err != nil {
+			return fmt.Errorf("JPEG 2000 decode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add decoded frame to destination
+		if err := newPixelData.AddFrame(decoder.GetPixelData()); err != nil {
+			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
+		}
 	}
-
-	// Set destination data
-	dst.Data = decoder.GetPixelData()
-	dst.Width = uint16(decoder.Width())
-	dst.Height = uint16(decoder.Height())
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = uint16(decoder.BitDepth())
-	dst.HighBit = dst.BitsStored - 1
-	dst.SamplesPerPixel = uint16(decoder.Components())
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID() // Decoded to uncompressed
 
 	return nil
 }

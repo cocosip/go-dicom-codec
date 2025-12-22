@@ -5,6 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
 )
 
 var _ codec.Codec = (*ExtendedCodec)(nil)
@@ -41,28 +42,42 @@ func (c *ExtendedCodec) TransferSyntax() *transfer.Syntax {
 	return transfer.JPEGExtended12Bit
 }
 
+// GetDefaultParameters returns the default codec parameters
+func (c *ExtendedCodec) GetDefaultParameters() codec.Parameters {
+	params := NewExtendedParameters()
+	params.Quality = c.quality
+	params.BitDepth = c.bitDepth
+	return params
+}
+
 // Encode encodes pixel data using JPEG Extended
-func (c *ExtendedCodec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
+func (c *ExtendedCodec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
+	}
+
 	// Extract parameters
-	width := int(src.Width)
-	height := int(src.Height)
-	components := int(src.SamplesPerPixel)
+	width := int(frameInfo.Width)
+	height := int(frameInfo.Height)
+	components := int(frameInfo.SamplesPerPixel)
 
 	// Get encoding parameters
 	var extendedParams *JPEGExtendedParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if jp, ok := params.(*JPEGExtendedParameters); ok {
+		if jp, ok := parameters.(*JPEGExtendedParameters); ok {
 			extendedParams = jp
 		} else {
 			// Fallback: create from generic parameters
 			extendedParams = NewExtendedParameters()
-			if q := params.GetParameter("quality"); q != nil {
+			if q := parameters.GetParameter("quality"); q != nil {
 				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
 					extendedParams.Quality = qInt
 				}
 			}
-			if bd := params.GetParameter("bitDepth"); bd != nil {
+			if bd := parameters.GetParameter("bitDepth"); bd != nil {
 				if bdInt, ok := bd.(int); ok && (bdInt == 8 || bdInt == 12) {
 					extendedParams.BitDepth = bdInt
 				}
@@ -80,72 +95,60 @@ func (c *ExtendedCodec) Encode(src *codec.PixelData, dst *codec.PixelData, param
 
 	// Determine bit depth from source if not explicitly set
 	bitDepth := extendedParams.BitDepth
-	if src.BitsStored > 0 && src.BitsStored <= 8 {
+	if frameInfo.BitsStored > 0 && frameInfo.BitsStored <= 8 {
 		bitDepth = 8
-	} else if src.BitsStored > 8 && src.BitsStored <= 12 {
+	} else if frameInfo.BitsStored > 8 && frameInfo.BitsStored <= 12 {
 		bitDepth = 12
 	}
 
 	quality := extendedParams.Quality
 
-	// Encode
-	encoded, err := Encode(src.Data, width, height, components, bitDepth, quality)
-	if err != nil {
-		return fmt.Errorf("JPEG Extended encode failed: %w", err)
-	}
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Set destination data
-	dst.Data = encoded
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = src.BitsStored
-	dst.HighBit = src.HighBit
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = transfer.JPEGExtended12Bit.UID().UID()
+		// Encode
+		encoded, err := Encode(frameData, width, height, components, bitDepth, quality)
+		if err != nil {
+			return fmt.Errorf("JPEG Extended encode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add encoded frame to destination
+		if err := newPixelData.AddFrame(encoded); err != nil {
+			return fmt.Errorf("failed to add encoded frame %d: %w", frameIndex, err)
+		}
+	}
 
 	return nil
 }
 
 // Decode decodes JPEG Extended data
-func (c *ExtendedCodec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	// Decode
-	decoded, width, height, components, bitDepth, err := Decode(src.Data)
-	if err != nil {
-		return fmt.Errorf("JPEG Extended decode failed: %w", err)
+func (c *ExtendedCodec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get encoded frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
+
+		// Decode
+		decoded, _, _, _, _, err := Decode(frameData)
+		if err != nil {
+			return fmt.Errorf("JPEG Extended decode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add decoded frame to destination
+		if err := newPixelData.AddFrame(decoded); err != nil {
+			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
+		}
 	}
-
-	// Determine bits allocated
-	bitsAllocated := uint16(8)
-	bitsStored := uint16(bitDepth)
-	if bitDepth > 8 {
-		bitsAllocated = 16
-	}
-
-	// Set destination data
-	dst.Data = decoded
-	dst.Width = uint16(width)
-	dst.Height = uint16(height)
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = bitsAllocated
-	dst.BitsStored = bitsStored
-	dst.HighBit = bitsStored - 1
-	dst.SamplesPerPixel = uint16(components)
-	dst.PixelRepresentation = 0
-	dst.PlanarConfiguration = 0
-
-	// Set photometric interpretation
-	if components == 1 {
-		dst.PhotometricInterpretation = "MONOCHROME2"
-	} else {
-		dst.PhotometricInterpretation = "RGB"
-	}
-
-	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID()
 
 	return nil
 }

@@ -5,7 +5,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestQualityParameter tests different quality levels
@@ -23,11 +24,9 @@ func TestQualityParameter(t *testing.T) {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -36,32 +35,36 @@ func TestQualityParameter(t *testing.T) {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Test with quality 100 (near-lossless)
 	t.Run("Quality 100", func(t *testing.T) {
 		// Create codec with quality=100
 		c := NewCodec(100)
 
-		encoded := &codec.PixelData{}
+		encoded := codecHelpers.NewTestPixelData(frameInfo)
 		err := c.Encode(src, encoded, nil)
 		if err != nil {
 			t.Fatalf("Encode failed: %v", err)
 		}
 
+		encodedData, _ := encoded.GetFrame(0)
 		t.Logf("Quality 100 - Size: %d bytes, Ratio: %.2f:1",
-			len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)))
+			len(encodedData), float64(len(pixelData))/float64(len(encodedData)))
 
-		decoded := &codec.PixelData{}
+		decoded := codecHelpers.NewTestPixelData(frameInfo)
 		err = c.Decode(encoded, decoded, nil)
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)
 		}
 
 		// Calculate error
+		decodedData, _ := decoded.GetFrame(0)
 		var maxError int
 		var totalError int64
 		for i := 0; i < numPixels; i++ {
-			diff := int(decoded.Data[i]) - int(src.Data[i])
+			diff := int(decodedData[i]) - int(pixelData[i])
 			if diff < 0 {
 				diff = -diff
 			}
@@ -84,25 +87,27 @@ func TestQualityParameter(t *testing.T) {
 	t.Run("Quality 50", func(t *testing.T) {
 		c := NewCodec(50)
 
-		encoded := &codec.PixelData{}
+		encoded := codecHelpers.NewTestPixelData(frameInfo)
 		err := c.Encode(src, encoded, nil)
 		if err != nil {
 			t.Fatalf("Encode failed: %v", err)
 		}
 
+		encodedData, _ := encoded.GetFrame(0)
 		t.Logf("Quality 50 - Size: %d bytes, Ratio: %.2f:1",
-			len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)))
+			len(encodedData), float64(len(pixelData))/float64(len(encodedData)))
 
-		decoded := &codec.PixelData{}
+		decoded := codecHelpers.NewTestPixelData(frameInfo)
 		err = c.Decode(encoded, decoded, nil)
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)
 		}
 
 		// Calculate error
+		decodedData, _ := decoded.GetFrame(0)
 		var maxError int
 		for i := 0; i < numPixels; i++ {
-			diff := int(decoded.Data[i]) - int(src.Data[i])
+			diff := int(decodedData[i]) - int(pixelData[i])
 			if diff < 0 {
 				diff = -diff
 			}
@@ -168,11 +173,9 @@ func TestQualityRange(t *testing.T) {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -181,6 +184,8 @@ func TestQualityRange(t *testing.T) {
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	qualities := []int{1, 10, 30, 50, 70, 90, 95, 99}
 	results := make([]struct {
@@ -194,30 +199,32 @@ func TestQualityRange(t *testing.T) {
 		t.Run(fmt.Sprintf("Quality_%d", quality), func(t *testing.T) {
 			c := NewCodec(quality)
 
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := c.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed for quality %d: %v", quality, err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = c.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed for quality %d: %v", quality, err)
 			}
 
-			psnr := calculatePSNR(src.Data, decoded.Data, 255.0)
-			mse := calculateMSE(src.Data, decoded.Data)
+			encodedData, _ := encoded.GetFrame(0)
+			decodedData, _ := decoded.GetFrame(0)
+			psnr := calculatePSNR(pixelData, decodedData, 255.0)
+			mse := calculateMSE(pixelData, decodedData)
 
 			results = append(results, struct {
 				quality int
 				size    int
 				psnr    float64
 				mse     float64
-			}{quality, len(encoded.Data), psnr, mse})
+			}{quality, len(encodedData), psnr, mse})
 
 			t.Logf("Quality %d: Size=%d bytes, Ratio=%.2f:1, PSNR=%.2f dB, MSE=%.2f",
-				quality, len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)), psnr, mse)
+				quality, len(encodedData), float64(len(pixelData))/float64(len(encodedData)), psnr, mse)
 		})
 	}
 
@@ -319,11 +326,9 @@ func TestDifferentImagePatterns(t *testing.T) {
 				}
 			}
 
-			src := &codec.PixelData{
-				Data:                      pixelData,
+			frameInfo := &types.FrameInfo{
 				Width:                     width,
 				Height:                    height,
-				NumberOfFrames:            1,
 				BitsAllocated:             8,
 				BitsStored:                8,
 				HighBit:                   7,
@@ -333,29 +338,34 @@ func TestDifferentImagePatterns(t *testing.T) {
 				PhotometricInterpretation: "MONOCHROME2",
 			}
 
+			src := codecHelpers.NewTestPixelData(frameInfo)
+			src.AddFrame(pixelData)
+
 			c := NewCodec(quality)
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := c.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed: %v", err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = c.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed: %v", err)
 			}
 
-			psnr := calculatePSNR(src.Data, decoded.Data, 255.0)
-			ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+			encodedData, _ := encoded.GetFrame(0)
+			decodedData, _ := decoded.GetFrame(0)
+			psnr := calculatePSNR(pixelData, decodedData, 255.0)
+			ratio := float64(len(pixelData)) / float64(len(encodedData))
 
 			t.Logf("%s: Size=%d, Ratio=%.2f:1, PSNR=%.2f dB",
-				pattern.name, len(encoded.Data), ratio, psnr)
+				pattern.name, len(encodedData), ratio, psnr)
 
 			// Verify dimensions preserved
-			if decoded.Width != src.Width || decoded.Height != src.Height {
+			if decoded.GetFrameInfo().Width != src.GetFrameInfo().Width || decoded.GetFrameInfo().Height != src.GetFrameInfo().Height {
 				t.Errorf("Dimensions changed: got %dx%d, want %dx%d",
-					decoded.Width, decoded.Height, src.Width, src.Height)
+					decoded.GetFrameInfo().Width, decoded.GetFrameInfo().Height, src.GetFrameInfo().Width, src.GetFrameInfo().Height)
 			}
 		})
 	}
@@ -387,11 +397,9 @@ func TestDifferentImageSizes(t *testing.T) {
 				}
 			}
 
-			src := &codec.PixelData{
-				Data:                      pixelData,
+			frameInfo := &types.FrameInfo{
 				Width:                     size.width,
 				Height:                    size.height,
-				NumberOfFrames:            1,
 				BitsAllocated:             8,
 				BitsStored:                8,
 				HighBit:                   7,
@@ -401,27 +409,32 @@ func TestDifferentImageSizes(t *testing.T) {
 				PhotometricInterpretation: "MONOCHROME2",
 			}
 
+			src := codecHelpers.NewTestPixelData(frameInfo)
+			src.AddFrame(pixelData)
+
 			c := NewCodec(quality)
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := c.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed: %v", err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = c.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed: %v", err)
 			}
 
-			if decoded.Width != src.Width || decoded.Height != src.Height {
+			if decoded.GetFrameInfo().Width != src.GetFrameInfo().Width || decoded.GetFrameInfo().Height != src.GetFrameInfo().Height {
 				t.Errorf("Dimensions not preserved: got %dx%d, want %dx%d",
-					decoded.Width, decoded.Height, src.Width, src.Height)
+					decoded.GetFrameInfo().Width, decoded.GetFrameInfo().Height, src.GetFrameInfo().Width, src.GetFrameInfo().Height)
 			}
 
-			psnr := calculatePSNR(src.Data, decoded.Data, 255.0)
+			encodedData, _ := encoded.GetFrame(0)
+			decodedData, _ := decoded.GetFrame(0)
+			psnr := calculatePSNR(pixelData, decodedData, 255.0)
 			t.Logf("%dx%d: PSNR=%.2f dB, Size=%d bytes",
-				size.width, size.height, psnr, len(encoded.Data))
+				size.width, size.height, psnr, len(encodedData))
 		})
 	}
 }
@@ -461,11 +474,9 @@ func TestDifferentBitDepths(t *testing.T) {
 				}
 			}
 
-			src := &codec.PixelData{
-				Data:                      pixelData,
+			frameInfo := &types.FrameInfo{
 				Width:                     width,
 				Height:                    height,
-				NumberOfFrames:            1,
 				BitsAllocated:             bd.bitsAllocated,
 				BitsStored:                bd.bitsStored,
 				HighBit:                   bd.highBit,
@@ -475,27 +486,31 @@ func TestDifferentBitDepths(t *testing.T) {
 				PhotometricInterpretation: "MONOCHROME2",
 			}
 
+			src := codecHelpers.NewTestPixelData(frameInfo)
+			src.AddFrame(pixelData)
+
 			c := NewCodec(quality)
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := c.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed for %d-bit: %v", bd.bitsStored, err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = c.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed for %d-bit: %v", bd.bitsStored, err)
 			}
 
 			// Verify metadata
-			if decoded.BitsStored != src.BitsStored {
-				t.Errorf("BitsStored changed: got %d, want %d", decoded.BitsStored, src.BitsStored)
+			if decoded.GetFrameInfo().BitsStored != src.GetFrameInfo().BitsStored {
+				t.Errorf("BitsStored changed: got %d, want %d", decoded.GetFrameInfo().BitsStored, src.GetFrameInfo().BitsStored)
 			}
 
-			ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+			encodedData, _ := encoded.GetFrame(0)
+			ratio := float64(len(pixelData)) / float64(len(encodedData))
 			t.Logf("%d-bit: Size=%d bytes, Ratio=%.2f:1",
-				bd.bitsStored, len(encoded.Data), ratio)
+				bd.bitsStored, len(encodedData), ratio)
 		})
 	}
 }
@@ -518,11 +533,9 @@ func TestRGBImages(t *testing.T) {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -532,34 +545,39 @@ func TestRGBImages(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	qualities := []int{50, 80, 95}
 
 	for _, quality := range qualities {
 		t.Run(fmt.Sprintf("Quality_%d", quality), func(t *testing.T) {
 			c := NewCodec(quality)
 
-			encoded := &codec.PixelData{}
+			encoded := codecHelpers.NewTestPixelData(frameInfo)
 			err := c.Encode(src, encoded, nil)
 			if err != nil {
 				t.Fatalf("Encode failed for RGB quality %d: %v", quality, err)
 			}
 
-			decoded := &codec.PixelData{}
+			decoded := codecHelpers.NewTestPixelData(frameInfo)
 			err = c.Decode(encoded, decoded, nil)
 			if err != nil {
 				t.Fatalf("Decode failed for RGB quality %d: %v", quality, err)
 			}
 
-			if decoded.SamplesPerPixel != src.SamplesPerPixel {
+			if decoded.GetFrameInfo().SamplesPerPixel != src.GetFrameInfo().SamplesPerPixel {
 				t.Errorf("SamplesPerPixel changed: got %d, want %d",
-					decoded.SamplesPerPixel, src.SamplesPerPixel)
+					decoded.GetFrameInfo().SamplesPerPixel, src.GetFrameInfo().SamplesPerPixel)
 			}
 
-			psnr := calculatePSNR(src.Data, decoded.Data, 255.0)
-			ratio := float64(len(src.Data)) / float64(len(encoded.Data))
+			encodedData, _ := encoded.GetFrame(0)
+			decodedData, _ := decoded.GetFrame(0)
+			psnr := calculatePSNR(pixelData, decodedData, 255.0)
+			ratio := float64(len(pixelData)) / float64(len(encodedData))
 
 			t.Logf("RGB Quality %d: Size=%d, Ratio=%.2f:1, PSNR=%.2f dB",
-				quality, len(encoded.Data), ratio, psnr)
+				quality, len(encodedData), ratio, psnr)
 		})
 	}
 }
@@ -577,11 +595,9 @@ func TestCompressionRatioMonotonicity(t *testing.T) {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -591,20 +607,24 @@ func TestCompressionRatioMonotonicity(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	qualities := []int{20, 40, 60, 80, 95}
 	var prevSize int
 
 	for i, quality := range qualities {
 		c := NewCodec(quality)
 
-		encoded := &codec.PixelData{}
+		encoded := codecHelpers.NewTestPixelData(frameInfo)
 		err := c.Encode(src, encoded, nil)
 		if err != nil {
 			t.Fatalf("Encode failed for quality %d: %v", quality, err)
 		}
 
-		currentSize := len(encoded.Data)
-		ratio := float64(len(src.Data)) / float64(currentSize)
+		encodedData, _ := encoded.GetFrame(0)
+		currentSize := len(encodedData)
+		ratio := float64(len(pixelData)) / float64(currentSize)
 		t.Logf("Quality %d: Size=%d, Ratio=%.2f:1", quality, currentSize, ratio)
 
 		// Higher quality should produce larger (or similar) file sizes

@@ -7,6 +7,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
 )
 
 var _ codec.Codec = (*Codec)(nil)
@@ -51,32 +52,38 @@ func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
+// GetDefaultParameters returns the default codec parameters
+func (c *Codec) GetDefaultParameters() codec.Parameters {
+	return NewLossyParameters()
+}
+
 // Encode encodes pixel data to JPEG 2000 Lossy format
-func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
 
 	// Get encoding parameters
 	var lossyParams *JPEG2000LossyParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if jp, ok := params.(*JPEG2000LossyParameters); ok {
+		if jp, ok := parameters.(*JPEG2000LossyParameters); ok {
 			lossyParams = jp
 		} else {
 			// Fallback: create from generic parameters
 			lossyParams = NewLossyParameters()
-			if q := params.GetParameter("quality"); q != nil {
+			if q := parameters.GetParameter("quality"); q != nil {
 				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
 					lossyParams.Quality = qInt
 				}
 			}
-			if nl := params.GetParameter("numLevels"); nl != nil {
+			if nl := parameters.GetParameter("numLevels"); nl != nil {
 				if nlInt, ok := nl.(int); ok && nlInt >= 0 && nlInt <= 6 {
 					lossyParams.NumLevels = nlInt
 				}
@@ -91,67 +98,81 @@ func (c *Codec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.
 	// Validate parameters
 	lossyParams.Validate()
 
-	// Rate control: if TargetRatio > 0, adjust quality to approach target ratio.
-	var encoded []byte
-	var err error
-	if lossyParams.TargetRatio > 0 {
-		encoded, err = c.encodeWithTargetRatio(src, lossyParams)
-	} else {
-		encoded, err = c.encodeOnce(src, lossyParams)
-	}
-	if err != nil {
-		return err
-	}
+	// Create encoding parameters
+	baseEncParams := jpeg2000.DefaultEncodeParams(
+		int(frameInfo.Width),
+		int(frameInfo.Height),
+		int(frameInfo.SamplesPerPixel),
+		int(frameInfo.BitsStored),
+		frameInfo.PixelRepresentation != 0,
+	)
 
-	// Set destination data
-	dst.Data = encoded
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = src.BitsStored
-	dst.HighBit = src.HighBit
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
+
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Rate control: if TargetRatio > 0, adjust quality to approach target ratio.
+		var encoded []byte
+		var encErr error
+		if lossyParams.TargetRatio > 0 {
+			encoded, encErr = c.encodeFrameWithTargetRatio(frameData, frameInfo, lossyParams, baseEncParams)
+		} else {
+			encoded, encErr = c.encodeFrameOnce(frameData, frameInfo, lossyParams, baseEncParams)
+		}
+		if encErr != nil {
+			return encErr
+		}
+
+		// Add encoded frame to destination
+		if err := newPixelData.AddFrame(encoded); err != nil {
+			return fmt.Errorf("failed to add encoded frame %d: %w", frameIndex, err)
+		}
+	}
 
 	return nil
 }
 
 // Decode decodes JPEG 2000 Lossy data to uncompressed pixel data
-func (c *Codec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get encoded frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
+
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Create decoder
+		decoder := jpeg2000.NewDecoder()
+
+		// Decode (decoder automatically detects lossy vs lossless from codestream)
+		if err := decoder.Decode(frameData); err != nil {
+			return fmt.Errorf("JPEG 2000 decode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add decoded frame to destination
+		if err := newPixelData.AddFrame(decoder.GetPixelData()); err != nil {
+			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
+		}
 	}
-
-	// Create decoder
-	decoder := jpeg2000.NewDecoder()
-
-	// Decode (decoder automatically detects lossy vs lossless from codestream)
-	if err := decoder.Decode(src.Data); err != nil {
-		return fmt.Errorf("JPEG 2000 decode failed: %w", err)
-	}
-
-	// Set destination data
-	dst.Data = decoder.GetPixelData()
-	dst.Width = uint16(decoder.Width())
-	dst.Height = uint16(decoder.Height())
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = src.BitsAllocated
-	dst.BitsStored = uint16(decoder.BitDepth())
-	dst.HighBit = dst.BitsStored - 1
-	dst.SamplesPerPixel = uint16(decoder.Components())
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID() // Decoded to uncompressed
 
 	return nil
 }
@@ -175,20 +196,14 @@ func init() {
 	RegisterJPEG2000MultiComponentCodec()
 }
 
-// encodeOnce performs a single encode using the provided parameters.
-func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]byte, error) {
-	encParams := jpeg2000.DefaultEncodeParams(
-		int(src.Width),
-		int(src.Height),
-		int(src.SamplesPerPixel),
-		int(src.BitsStored),
-		src.PixelRepresentation != 0,
-	)
+// encodeFrameOnce performs a single encode using the provided parameters for a single frame.
+func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *types.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
+	encParams := *baseEncParams
 	encParams.Lossless = false
-	encParams.NumLevels = clampNumLevels(p.NumLevels, int(src.Width), int(src.Height))
+	encParams.NumLevels = clampNumLevels(p.NumLevels, int(frameInfo.Width), int(frameInfo.Height))
 	encParams.NumLayers = p.NumLayers
 	encParams.Quality = effectiveQuality(p)
-	if int(src.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
+	if int(frameInfo.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
 		bump := 10
 		q := encParams.Quality + bump
 		if q > 100 {
@@ -197,11 +212,11 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 		encParams.Quality = q
 	}
 
-	minDim := int(src.Width)
-	if int(src.Height) < minDim {
-		minDim = int(src.Height)
+	minDim := int(frameInfo.Width)
+	if int(frameInfo.Height) < minDim {
+		minDim = int(frameInfo.Height)
 	}
-	if int(src.SamplesPerPixel) >= 3 && minDim <= 32 {
+	if int(frameInfo.SamplesPerPixel) >= 3 && minDim <= 32 {
 		encParams.Lossless = true
 		if encParams.NumLevels > 1 {
 			encParams.NumLevels = 1
@@ -222,36 +237,75 @@ func (c *Codec) encodeOnce(src *codec.PixelData, p *JPEG2000LossyParameters) ([]
 	encParams.TargetRatio = p.TargetRatio
 	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
 
-    if p != nil {
-        if v := p.GetParameter("mctMatrix"); v != nil { if m, ok := v.([][]float64); ok { encParams.MCTMatrix = m } }
-        if v := p.GetParameter("inverseMctMatrix"); v != nil { if m, ok := v.([][]float64); ok { encParams.InverseMCTMatrix = m } }
-        if v := p.GetParameter("mctOffsets"); v != nil { if m, ok := v.([]int32); ok { encParams.MCTOffsets = m } }
-        if v := p.GetParameter("mctNormScale"); v != nil { switch x := v.(type) { case float64: encParams.MCTNormScale = x; case float32: encParams.MCTNormScale = float64(x) } }
-        if v := p.GetParameter("mctAssocType"); v != nil { if t, ok := v.(uint8); ok { encParams.MCTAssocType = t } }
-        if v := p.GetParameter("mctMatrixElementType"); v != nil { if t, ok := v.(uint8); ok { encParams.MCTMatrixElementType = t } }
-        if v := p.GetParameter("mcoPrecision"); v != nil { if t, ok := v.(uint8); ok { encParams.MCOPrecision = t } }
-        if v := p.GetParameter("mcoRecordOrder"); v != nil { if arr, ok := v.([]uint8); ok { encParams.MCORecordOrder = arr } }
-        if v := p.GetParameter("mctBindings"); v != nil { if arr, ok := v.([]jpeg2000.MCTBindingParams); ok { encParams.MCTBindings = arr } }
-    }
-    encoder := jpeg2000.NewEncoder(encParams)
-	encoded, err := encoder.Encode(src.Data)
+	if p != nil {
+		if v := p.GetParameter("mctMatrix"); v != nil {
+			if m, ok := v.([][]float64); ok {
+				encParams.MCTMatrix = m
+			}
+		}
+		if v := p.GetParameter("inverseMctMatrix"); v != nil {
+			if m, ok := v.([][]float64); ok {
+				encParams.InverseMCTMatrix = m
+			}
+		}
+		if v := p.GetParameter("mctOffsets"); v != nil {
+			if m, ok := v.([]int32); ok {
+				encParams.MCTOffsets = m
+			}
+		}
+		if v := p.GetParameter("mctNormScale"); v != nil {
+			switch x := v.(type) {
+			case float64:
+				encParams.MCTNormScale = x
+			case float32:
+				encParams.MCTNormScale = float64(x)
+			}
+		}
+		if v := p.GetParameter("mctAssocType"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCTAssocType = t
+			}
+		}
+		if v := p.GetParameter("mctMatrixElementType"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCTMatrixElementType = t
+			}
+		}
+		if v := p.GetParameter("mcoPrecision"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCOPrecision = t
+			}
+		}
+		if v := p.GetParameter("mcoRecordOrder"); v != nil {
+			if arr, ok := v.([]uint8); ok {
+				encParams.MCORecordOrder = arr
+			}
+		}
+		if v := p.GetParameter("mctBindings"); v != nil {
+			if arr, ok := v.([]jpeg2000.MCTBindingParams); ok {
+				encParams.MCTBindings = arr
+			}
+		}
+	}
+
+	encoder := jpeg2000.NewEncoder(&encParams)
+	encoded, err := encoder.Encode(frameData)
 	if err != nil {
 		return nil, fmt.Errorf("JPEG 2000 encode failed: %w", err)
 	}
 	return encoded, nil
 }
 
-// encodeWithTargetRatio performs rate control on quality to reach target ratio.
-// 使用单次编码 + PCRD 截断，避免多次重复编码。
-func (c *Codec) encodeWithTargetRatio(src *codec.PixelData, base *JPEG2000LossyParameters) ([]byte, error) {
+// encodeFrameWithTargetRatio performs rate control on quality to reach target ratio for a single frame.
+func (c *Codec) encodeFrameWithTargetRatio(frameData []byte, frameInfo *types.FrameInfo, base *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	target := base.TargetRatio
 	if target <= 0 {
-		return c.encodeOnce(src, base)
+		return c.encodeFrameOnce(frameData, frameInfo, base, baseEncParams)
 	}
 
 	pcopy := *base
 	pcopy.TargetRatio = target
-	return c.encodeOnce(src, &pcopy)
+	return c.encodeFrameOnce(frameData, frameInfo, &pcopy, baseEncParams)
 }
 
 // clampNumLevels limits decomposition levels so the LL band remains at least 2x2.

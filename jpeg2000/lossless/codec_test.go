@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecInterface verifies the codec implements the interface
@@ -51,14 +53,23 @@ func TestCodecTransferSyntax(t *testing.T) {
 func TestDecodeNilInputs(t *testing.T) {
 	c := NewCodec()
 
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+
 	tests := []struct {
 		name string
-		src  *codec.PixelData
-		dst  *codec.PixelData
+		src  types.PixelData
+		dst  types.PixelData
 	}{
 		{"Both nil", nil, nil},
-		{"Src nil", nil, &codec.PixelData{}},
-		{"Dst nil", &codec.PixelData{}, nil},
+		{"Src nil", nil, codecHelpers.NewTestPixelData(frameInfo)},
+		{"Dst nil", codecHelpers.NewTestPixelData(frameInfo), nil},
 	}
 
 	for _, tt := range tests {
@@ -75,8 +86,16 @@ func TestDecodeNilInputs(t *testing.T) {
 func TestDecodeEmptyData(t *testing.T) {
 	c := NewCodec()
 
-	src := &codec.PixelData{Data: []byte{}}
-	dst := &codec.PixelData{}
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Decode(src, dst, nil)
 	if err == nil {
@@ -88,10 +107,17 @@ func TestDecodeEmptyData(t *testing.T) {
 func TestDecodeInvalidData(t *testing.T) {
 	c := NewCodec()
 
-	src := &codec.PixelData{
-		Data: []byte{0x00, 0x01, 0x02, 0x03}, // Invalid JPEG 2000 data
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
 	}
-	dst := &codec.PixelData{}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame([]byte{0x00, 0x01, 0x02, 0x03}) // Invalid JPEG 2000 data
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Decode(src, dst, nil)
 	if err == nil {
@@ -104,20 +130,23 @@ func TestEncodeNotImplemented(t *testing.T) {
 	c := NewCodec()
 
 	// Create simple test data
-	src := &codec.PixelData{
-		Data:            make([]byte, 64*64),
+	pixelData := make([]byte, 64*64)
+	// Fill with simple pattern
+	for i := range pixelData {
+		pixelData[i] = byte(i % 256)
+	}
+
+	frameInfo := &types.FrameInfo{
 		Width:           64,
 		Height:          64,
-		SamplesPerPixel: 1,
-		BitsStored:      8,
 		BitsAllocated:   8,
+		BitsStored:      8,
 		HighBit:         7,
+		SamplesPerPixel: 1,
 	}
-	// Fill with simple pattern
-	for i := range src.Data {
-		src.Data[i] = byte(i % 256)
-	}
-	dst := &codec.PixelData{}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Encode(src, dst, nil)
 	if err != nil {
@@ -125,14 +154,15 @@ func TestEncodeNotImplemented(t *testing.T) {
 	}
 
 	// Verify output
-	if len(dst.Data) == 0 {
+	dstData, _ := dst.GetFrame(0)
+	if len(dstData) == 0 {
 		t.Error("Encoded data is empty")
 	}
-	if dst.Width != src.Width {
-		t.Errorf("Width mismatch: got %d, want %d", dst.Width, src.Width)
+	if dst.GetFrameInfo().Width != src.GetFrameInfo().Width {
+		t.Errorf("Width mismatch: got %d, want %d", dst.GetFrameInfo().Width, src.GetFrameInfo().Width)
 	}
-	if dst.Height != src.Height {
-		t.Errorf("Height mismatch: got %d, want %d", dst.Height, src.Height)
+	if dst.GetFrameInfo().Height != src.GetFrameInfo().Height {
+		t.Errorf("Height mismatch: got %d, want %d", dst.GetFrameInfo().Height, src.GetFrameInfo().Height)
 	}
 }
 
@@ -140,14 +170,25 @@ func TestEncodeNotImplemented(t *testing.T) {
 func TestEncodeNilInputs(t *testing.T) {
 	c := NewCodec()
 
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+	dstPixel := codecHelpers.NewTestPixelData(frameInfo)
+	dstPixel.AddFrame([]byte{1})
+
 	tests := []struct {
 		name string
-		src  *codec.PixelData
-		dst  *codec.PixelData
+		src  types.PixelData
+		dst  types.PixelData
 	}{
 		{"Both nil", nil, nil},
-		{"Src nil", nil, &codec.PixelData{}},
-		{"Dst nil", &codec.PixelData{Data: []byte{1}}, nil},
+		{"Src nil", nil, codecHelpers.NewTestPixelData(frameInfo)},
+		{"Dst nil", dstPixel, nil},
 	}
 
 	for _, tt := range tests {
@@ -164,8 +205,16 @@ func TestEncodeNilInputs(t *testing.T) {
 func TestEncodeEmptyData(t *testing.T) {
 	c := NewCodec()
 
-	src := &codec.PixelData{Data: []byte{}}
-	dst := &codec.PixelData{}
+	frameInfo := &types.FrameInfo{
+		Width:           64,
+		Height:          64,
+		BitsAllocated:   8,
+		BitsStored:      8,
+		HighBit:         7,
+		SamplesPerPixel: 1,
+	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Encode(src, dst, nil)
 	if err == nil {

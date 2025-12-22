@@ -5,6 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
 )
 
 var _ codec.Codec = (*BaselineCodec)(nil)
@@ -37,32 +38,40 @@ func (c *BaselineCodec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
+// GetDefaultParameters returns the default codec parameters
+func (c *BaselineCodec) GetDefaultParameters() codec.Parameters {
+	params := NewBaselineParameters()
+	params.Quality = c.quality
+	return params
+}
+
 // Encode encodes pixel data to JPEG Baseline format
-func (c *BaselineCodec) Encode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *BaselineCodec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
 
 	// JPEG Baseline only supports 8-bit data
-	if src.BitsStored > 8 {
-		return fmt.Errorf("JPEG Baseline only supports 8-bit data, got %d bits", src.BitsStored)
+	if frameInfo.BitsStored > 8 {
+		return fmt.Errorf("JPEG Baseline only supports 8-bit data, got %d bits", frameInfo.BitsStored)
 	}
 
 	// Get encoding parameters
 	var baselineParams *JPEGBaselineParameters
-	if params != nil {
+	if parameters != nil {
 		// Try to use typed parameters if provided
-		if jp, ok := params.(*JPEGBaselineParameters); ok {
+		if jp, ok := parameters.(*JPEGBaselineParameters); ok {
 			baselineParams = jp
 		} else {
 			// Fallback: create from generic parameters
 			baselineParams = NewBaselineParameters()
-			if q := params.GetParameter("quality"); q != nil {
+			if q := parameters.GetParameter("quality"); q != nil {
 				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
 					baselineParams.Quality = qInt
 				}
@@ -78,85 +87,84 @@ func (c *BaselineCodec) Encode(src *codec.PixelData, dst *codec.PixelData, param
 	baselineParams.Validate()
 	quality := baselineParams.Quality
 
-	// Encode using the baseline encoder
-	jpegData, err := Encode(
-		src.Data,
-		int(src.Width),
-		int(src.Height),
-		int(src.SamplesPerPixel),
-		quality,
-	)
-	if err != nil {
-		return fmt.Errorf("JPEG Baseline encode failed: %w", err)
-	}
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Set destination data
-	dst.Data = jpegData
-	dst.Width = src.Width
-	dst.Height = src.Height
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = 8
-	dst.BitsStored = 8
-	dst.HighBit = 7
-	dst.SamplesPerPixel = src.SamplesPerPixel
-	dst.PixelRepresentation = src.PixelRepresentation
-	dst.PlanarConfiguration = src.PlanarConfiguration
-	dst.PhotometricInterpretation = src.PhotometricInterpretation
-	dst.TransferSyntaxUID = c.transferSyntax.UID().UID()
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
+
+		// Encode using the baseline encoder
+		jpegData, err := Encode(
+			frameData,
+			int(frameInfo.Width),
+			int(frameInfo.Height),
+			int(frameInfo.SamplesPerPixel),
+			quality,
+		)
+		if err != nil {
+			return fmt.Errorf("JPEG Baseline encode failed for frame %d: %w", frameIndex, err)
+		}
+
+		// Add encoded frame to destination
+		if err := newPixelData.AddFrame(jpegData); err != nil {
+			return fmt.Errorf("failed to add encoded frame %d: %w", frameIndex, err)
+		}
+	}
 
 	return nil
 }
 
 // Decode decodes JPEG Baseline data to uncompressed pixel data
-func (c *BaselineCodec) Decode(src *codec.PixelData, dst *codec.PixelData, params codec.Parameters) error {
-	if src == nil || dst == nil {
+func (c *BaselineCodec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
 
-	// Validate input data
-	if len(src.Data) == 0 {
-		return fmt.Errorf("source pixel data is empty")
+	// Get frame info
+	frameInfo := oldPixelData.GetFrameInfo()
+	if frameInfo == nil {
+		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
 
-	// Decode using the baseline decoder
-	pixelData, width, height, components, err := Decode(src.Data)
-	if err != nil {
-		return fmt.Errorf("JPEG Baseline decode failed: %w", err)
-	}
+	// Process all frames
+	frameCount := oldPixelData.FrameCount()
+	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {
+		// Get encoded frame data
+		frameData, err := oldPixelData.GetFrame(frameIndex)
+		if err != nil {
+			return fmt.Errorf("failed to get frame %d: %w", frameIndex, err)
+		}
 
-	// Verify dimensions match if specified
-	if src.Width > 0 && width != int(src.Width) {
-		return fmt.Errorf("decoded width (%d) doesn't match expected (%d)", width, src.Width)
-	}
-	if src.Height > 0 && height != int(src.Height) {
-		return fmt.Errorf("decoded height (%d) doesn't match expected (%d)", height, src.Height)
-	}
+		if len(frameData) == 0 {
+			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
+		}
 
-	// Set destination data
-	dst.Data = pixelData
-	dst.Width = uint16(width)
-	dst.Height = uint16(height)
-	dst.NumberOfFrames = src.NumberOfFrames
-	dst.BitsAllocated = 8
-	dst.BitsStored = 8
-	dst.HighBit = 7
-	dst.SamplesPerPixel = uint16(components)
-	dst.PixelRepresentation = 0 // Baseline is always unsigned
-	dst.PlanarConfiguration = 0 // Always interleaved after decode
+		// Decode using the baseline decoder
+		pixelData, width, height, _, err := Decode(frameData)
+		if err != nil {
+			return fmt.Errorf("JPEG Baseline decode failed for frame %d: %w", frameIndex, err)
+		}
 
-	// Preserve or infer photometric interpretation
-	if src.PhotometricInterpretation != "" {
-		dst.PhotometricInterpretation = src.PhotometricInterpretation
-	} else {
-		switch components {
-		case 1:
-			dst.PhotometricInterpretation = "MONOCHROME2"
-		case 3:
-			dst.PhotometricInterpretation = "RGB"
+		// Verify dimensions match if specified
+		if frameInfo.Width > 0 && width != int(frameInfo.Width) {
+			return fmt.Errorf("decoded width (%d) doesn't match expected (%d)", width, frameInfo.Width)
+		}
+		if frameInfo.Height > 0 && height != int(frameInfo.Height) {
+			return fmt.Errorf("decoded height (%d) doesn't match expected (%d)", height, frameInfo.Height)
+		}
+
+		// Add decoded frame to destination
+		if err := newPixelData.AddFrame(pixelData); err != nil {
+			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}
-
-	dst.TransferSyntaxUID = transfer.ExplicitVRLittleEndian.UID().UID()
 
 	return nil
 }

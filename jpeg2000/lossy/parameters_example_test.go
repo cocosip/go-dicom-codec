@@ -5,7 +5,8 @@ import (
 	"log"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // Example demonstrates the recommended type-safe way to use parameters
@@ -18,11 +19,9 @@ func Example_typeSafeParameters() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -32,20 +31,25 @@ func Example_typeSafeParameters() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	// Method 1: Type-safe parameters (RECOMMENDED)
 	c := lossy.NewCodec(80)
 	params := lossy.NewLossyParameters().
 		WithQuality(95).
 		WithNumLevels(5)
 
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, dst, params)
 	if err != nil {
 		log.Fatalf("Encoding failed: %v", err)
 	}
 
+	srcData, _ := src.GetFrame(0)
+	dstData, _ := dst.GetFrame(0)
 	fmt.Printf("Encoded with quality %d\n", params.Quality)
-	fmt.Printf("Compression ratio: %.2f:1\n", float64(len(src.Data))/float64(len(dst.Data)))
+	fmt.Printf("Compression ratio: %.2f:1\n", float64(len(srcData))/float64(len(dstData)))
 
 	// Output will vary slightly but should be close to:
 	// Encoded with quality 95
@@ -59,11 +63,9 @@ func Example_legacyParameters() {
 	height := uint16(64)
 	pixelData := make([]byte, int(width)*int(height))
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -73,6 +75,9 @@ func Example_legacyParameters() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	// Method 2: Generic parameters (for backward compatibility)
 	c := lossy.NewCodec(80)
 
@@ -81,7 +86,7 @@ func Example_legacyParameters() {
 	params.SetParameter("quality", 90)
 	params.SetParameter("numLevels", 3)
 
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, dst, params)
 	if err != nil {
 		log.Fatalf("Encoding failed: %v", err)

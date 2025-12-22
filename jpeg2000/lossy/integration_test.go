@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestTypeSafeParametersIntegration tests that type-safe parameters work with codec
@@ -16,11 +18,9 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -30,35 +30,40 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	// Test with type-safe parameters
 	c := NewCodec(80)
 	params := NewLossyParameters().WithQuality(95).WithNumLevels(5)
 
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, encoded, params)
 	if err != nil {
 		t.Fatalf("Encode with type-safe parameters failed: %v", err)
 	}
 
 	// Verify encoding worked
-	if len(encoded.Data) == 0 {
+	encodedData, _ := encoded.GetFrame(0)
+	if len(encodedData) == 0 {
 		t.Fatal("Encoded data is empty")
 	}
 
-	t.Logf("Encoded size: %d bytes", len(encoded.Data))
+	t.Logf("Encoded size: %d bytes", len(encodedData))
 	t.Logf("Quality used: %d", params.Quality)
 	t.Logf("Levels used: %d", params.NumLevels)
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = c.Decode(encoded, decoded, nil)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
 
 	// Verify decoding
-	if len(decoded.Data) != len(src.Data) {
-		t.Errorf("Decoded data length = %d, want %d", len(decoded.Data), len(src.Data))
+	decodedData, _ := decoded.GetFrame(0)
+	if len(decodedData) != len(pixelData) {
+		t.Errorf("Decoded data length = %d, want %d", len(decodedData), len(pixelData))
 	}
 }
 
@@ -68,11 +73,9 @@ func TestBackwardCompatibility(t *testing.T) {
 	height := uint16(64)
 	pixelData := make([]byte, int(width)*int(height))
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -82,6 +85,9 @@ func TestBackwardCompatibility(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	c := NewCodec(80)
 
 	// Use string-based parameters (old way)
@@ -89,7 +95,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	params.SetParameter("quality", 90)
 	params.SetParameter("numLevels", 3)
 
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, encoded, params)
 	if err != nil {
 		t.Fatalf("Encode with string-based parameters failed: %v", err)
@@ -163,11 +169,9 @@ func TestNilParameters(t *testing.T) {
 	height := uint16(64)
 	pixelData := make([]byte, int(width)*int(height))
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &types.FrameInfo{
 		Width:                     width,
 		Height:                    height,
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -177,16 +181,20 @@ func TestNilParameters(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
 	c := NewCodec(85) // Codec default quality
 
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, encoded, nil) // nil parameters
 	if err != nil {
 		t.Fatalf("Encode with nil parameters failed: %v", err)
 	}
 
 	// Should use codec's default quality (85)
-	if len(encoded.Data) == 0 {
+	encodedData, _ := encoded.GetFrame(0)
+	if len(encodedData) == 0 {
 		t.Fatal("Encoded data is empty")
 	}
 }
