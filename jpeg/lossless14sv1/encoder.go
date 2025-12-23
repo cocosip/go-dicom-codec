@@ -84,7 +84,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		return nil, err
 	}
 
-	// Write minimal JFIF APP0 to align with common decoders/fo-dicom stream
+	// Write APP0 (JFIF) marker - required for compatibility with libjpeg-based decoders
 	if err := enc.writeAPP0(writer); err != nil {
 		return nil, err
 	}
@@ -110,19 +110,6 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 	}
 
 	return buf.Bytes(), nil
-}
-
-// writeAPP0 writes a minimal JFIF APP0 segment (fo-dicom emits this; some viewers expect it).
-func (enc *Encoder) writeAPP0(writer *common.Writer) error {
-	app0 := []byte{
-		0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
-		0x01, 0x01, // version 1.01
-		0x00,       // density units: 0 (none)
-		0x00, 0x01, // X density
-		0x00, 0x01, // Y density
-		0x00, 0x00, // thumbnail width/height
-	}
-	return writer.WriteSegment(common.MarkerAPP0, app0)
 }
 
 // writeSOF3 writes Start of Frame (Lossless)
@@ -152,6 +139,19 @@ func (enc *Encoder) writeSOF3(writer *common.Writer) error {
 	}
 
 	return writer.WriteSegment(common.MarkerSOF3, data)
+}
+
+// writeAPP0 writes JFIF APP0 marker
+func (enc *Encoder) writeAPP0(writer *common.Writer) error {
+	data := []byte{
+		'J', 'F', 'I', 'F', 0, // JFIF identifier
+		1, 1,    // Version 1.1
+		0,       // Density units (0 = no units)
+		0, 1,    // X density = 1
+		0, 1,    // Y density = 1
+		0, 0,    // Thumbnail width/height = 0
+	}
+	return writer.WriteSegment(common.MarkerAPP0, data)
 }
 
 // writeDHT writes Define Huffman Table segments
@@ -233,11 +233,18 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 				sample := samples[comp][row*enc.width+col]
 
 				// First-order prediction: use left pixel (Predictor 1)
+				// Special case: first pixel of each row
 				var predicted int
 				if col == 0 {
-					// First pixel in row: use 2^(P-1)
-					predicted = 1 << uint(enc.precision-1)
+					if row == 0 {
+						// First pixel of first row: use 2^(P-1)
+						predicted = 1 << uint(enc.precision-1)
+					} else {
+						// First pixel of other rows: use pixel from row above
+						predicted = samples[comp][(row-1)*enc.width+col]
+					}
 				} else {
+					// Other pixels: use left pixel
 					predicted = preds[comp]
 				}
 

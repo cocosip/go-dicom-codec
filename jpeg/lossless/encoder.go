@@ -94,7 +94,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 		return nil, err
 	}
 
-	// Write minimal JFIF APP0 (some viewers expect it; fo-dicom emits it)
+	// Write APP0 (JFIF) marker - required for compatibility with libjpeg-based decoders
 	if err := enc.writeAPP0(writer); err != nil {
 		return nil, err
 	}
@@ -120,19 +120,6 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	}
 
 	return buf.Bytes(), nil
-}
-
-// writeAPP0 writes a minimal JFIF APP0 segment for compatibility.
-func (enc *Encoder) writeAPP0(writer *common.Writer) error {
-	app0 := []byte{
-		0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
-		0x01, 0x01, // version 1.01
-		0x00,       // density units: 0 (none)
-		0x00, 0x01, // X density
-		0x00, 0x01, // Y density
-		0x00, 0x00, // thumbnail width/height
-	}
-	return writer.WriteSegment(common.MarkerAPP0, app0)
 }
 
 // writeSOF3 writes Start of Frame (Lossless)
@@ -162,6 +149,19 @@ func (enc *Encoder) writeSOF3(writer *common.Writer) error {
 	}
 
 	return writer.WriteSegment(common.MarkerSOF3, data)
+}
+
+// writeAPP0 writes JFIF APP0 marker
+func (enc *Encoder) writeAPP0(writer *common.Writer) error {
+	data := []byte{
+		'J', 'F', 'I', 'F', 0, // JFIF identifier
+		1, 1,    // Version 1.1
+		0,       // Density units (0 = no units)
+		0, 1,    // X density = 1
+		0, 1,    // Y density = 1
+		0, 0,    // Thumbnail width/height = 0
+	}
+	return writer.WriteSegment(common.MarkerAPP0, data)
 }
 
 // writeDHT writes Define Huffman Table segments
@@ -247,7 +247,12 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 				if col > 0 {
 					ra = samples[comp][row*enc.width+(col-1)]
 				} else {
-					ra = defaultVal
+					// For Predictor 1: first pixel of rows after first row uses pixel above
+					if row > 0 && enc.predictor == 1 {
+						ra = samples[comp][(row-1)*enc.width+col]
+					} else {
+						ra = defaultVal
+					}
 				}
 
 				// Rb: above pixel

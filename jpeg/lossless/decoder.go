@@ -281,7 +281,12 @@ func (d *Decoder) decodeScan(reader *common.Reader) ([][]int, error) {
 				if col > 0 {
 					ra = samples[comp][row*d.width+(col-1)]
 				} else {
-					ra = defaultVal
+					// For Predictor 1: first pixel of rows after first row uses pixel above
+					if row > 0 && d.predictor == 1 {
+						ra = samples[comp][(row-1)*d.width+col]
+					} else {
+						ra = defaultVal
+					}
 				}
 
 				// Rb: above pixel

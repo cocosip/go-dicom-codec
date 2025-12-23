@@ -64,19 +64,15 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Shift signed samples into unsigned domain per JPEG Lossless requirements.
-		adjusted := frameData
-		if frameInfo.PixelRepresentation != 0 {
-			shifted, serr := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
-			if serr != nil {
-				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, serr)
-			}
-			adjusted = shifted
-		}
+		// JPEG Lossless encodes the raw byte representation directly.
+		// The bytes represent pixel values according to PixelRepresentation:
+		// - 0: unsigned integers
+		// - 1: signed integers (two's complement)
+		// Physical value conversion (Rescale Intercept/Slope) is handled by DICOM library.
 
 		// Encode using the lossless SV1 encoder
 		jpegData, err := Encode(
-			adjusted,
+			frameData,
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
@@ -137,18 +133,12 @@ func (c *LosslessSV1Codec) Decode(oldPixelData types.PixelData, newPixelData typ
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// Shift back to signed domain if needed.
-		decodedFrame := pixelData
-		if frameInfo.PixelRepresentation != 0 {
-			shifted, serr := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-			if serr != nil {
-				return fmt.Errorf("failed to unshift decoded frame %d: %w", frameIndex, serr)
-			}
-			decodedFrame = shifted
-		}
+		// JPEG Lossless decodes to the exact raw bytes that were encoded.
+		// The DICOM library will interpret these bytes based on PixelRepresentation
+		// and apply Rescale Intercept/Slope for physical value conversion.
 
 		// Add decoded frame to destination
-		if err := newPixelData.AddFrame(decodedFrame); err != nil {
+		if err := newPixelData.AddFrame(pixelData); err != nil {
 			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}
@@ -242,4 +232,36 @@ func signExtend(raw uint32, valueMask uint32, signMask uint32) int32 {
 		val |= ^valueMask
 	}
 	return int32(val)
+}
+
+// shiftUnsigned16 adds 32768 to each 16-bit unsigned pixel value.
+// This shifts the data into the signed 16-bit range for JPEG Lossless encoding.
+func shiftUnsigned16(data []byte) []byte {
+	if len(data)%2 != 0 {
+		return data // Invalid data, return as-is
+	}
+
+	result := make([]byte, len(data))
+	for i := 0; i < len(data); i += 2 {
+		val := binary.LittleEndian.Uint16(data[i:])
+		shifted := uint16(int32(val) + 32768)
+		binary.LittleEndian.PutUint16(result[i:], shifted)
+	}
+	return result
+}
+
+// unshiftUnsigned16 subtracts 32768 from each 16-bit value.
+// This reverses the shift done by shiftUnsigned16.
+func unshiftUnsigned16(data []byte) []byte {
+	if len(data)%2 != 0 {
+		return data // Invalid data, return as-is
+	}
+
+	result := make([]byte, len(data))
+	for i := 0; i < len(data); i += 2 {
+		val := binary.LittleEndian.Uint16(data[i:])
+		unshifted := uint16(int32(val) - 32768)
+		binary.LittleEndian.PutUint16(result[i:], unshifted)
+	}
+	return result
 }

@@ -322,12 +322,18 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 				}
 
 				// First-order prediction: use left pixel (Predictor 1)
+				// Special case: first pixel of each row
 				var predicted int
 				if col == 0 {
-					// First pixel in row: use 2^(P-1) as prediction
-					predicted = 1 << uint(d.precision-1)
+					if row == 0 {
+						// First pixel of first row: use 2^(P-1)
+						predicted = 1 << uint(d.precision-1)
+					} else {
+						// First pixel of other rows: use pixel from row above
+						predicted = comp.data[(row-1)*d.width+col]
+					}
 				} else {
-					// Use left pixel
+					// Other pixels: use left pixel
 					predicted = comp.data[row*d.width+col-1]
 				}
 
