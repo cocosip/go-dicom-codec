@@ -101,15 +101,24 @@ func (c *LosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// JPEG Lossless encodes the raw byte representation directly.
-		// The bytes represent pixel values according to PixelRepresentation:
-		// - 0: unsigned integers
-		// - 1: signed integers (two's complement)
-		// Physical value conversion (Rescale Intercept/Slope) is handled by DICOM library.
+		// Handle PixelRepresentation for signed data
+		// Per DICOM standard, for PR=1 (signed), JPEG Lossless stores unsigned values
+		// in range [0, 2^BitsStored-1] by applying offset transformation:
+		// signed_value + 2^(BitsStored-1) → unsigned_value
+		// This ensures compatibility with JPEG's unsigned representation.
+		adjustedFrame := frameData
+		if frameInfo.PixelRepresentation != 0 {
+			// Convert signed to unsigned domain for JPEG encoding
+			shifted, err := shiftSignedToUnsigned(frameData, frameInfo.BitsStored, frameInfo.BitsAllocated)
+			if err != nil {
+				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
+			}
+			adjustedFrame = shifted
+		}
 
 		// Encode using the lossless encoder
 		jpegData, err := Encode(
-			frameData,
+			adjustedFrame,
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
@@ -171,12 +180,22 @@ func (c *LosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decodes to the exact raw bytes that were encoded.
-		// The DICOM library will interpret these bytes based on PixelRepresentation
-		// and apply Rescale Intercept/Slope for physical value conversion.
+		// Handle PixelRepresentation for signed data
+		// For PR=1 (signed), JPEG decoded unsigned values, we need to apply
+		// reverse transformation to restore signed representation:
+		// unsigned_value - 2^(BitsStored-1) → signed_value
+		adjustedPixels := pixelData
+		if frameInfo.PixelRepresentation != 0 {
+			// Convert unsigned domain back to signed
+			shifted, err := shiftUnsignedToSigned(pixelData, frameInfo.BitsStored, frameInfo.BitsAllocated)
+			if err != nil {
+				return fmt.Errorf("failed to shift decoded frame %d: %w", frameIndex, err)
+			}
+			adjustedPixels = shifted
+		}
 
 		// Add decoded frame to destination
-		if err := newPixelData.AddFrame(pixelData); err != nil {
+		if err := newPixelData.AddFrame(adjustedPixels); err != nil {
 			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}
@@ -193,6 +212,87 @@ func RegisterLosslessCodec(predictor int) {
 
 func init() {
 	RegisterLosslessCodec(0)
+}
+
+// shiftSignedToUnsigned converts signed pixel data to unsigned domain for JPEG encoding
+// For PR=1: signed_value + 2^(BitsStored-1) → unsigned_value
+// Example: -2048 + 32768 = 30720
+func shiftSignedToUnsigned(data []byte, bitsStored, bitsAllocated uint16) ([]byte, error) {
+	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
+		return nil, fmt.Errorf("invalid BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
+	}
+
+	bytesPerSample := int((bitsAllocated + 7) / 8)
+	if len(data)%bytesPerSample != 0 {
+		return nil, fmt.Errorf("data length %d not aligned to %d bytes/sample", len(data), bytesPerSample)
+	}
+
+	offset := int32(1 << (bitsStored - 1)) // 2^(BitsStored-1), e.g., 32768 for 16-bit
+	result := make([]byte, len(data))
+
+	if bytesPerSample == 1 {
+		// 8-bit
+		for i := 0; i < len(data); i++ {
+			signedVal := int32(int8(data[i]))
+			unsignedVal := signedVal + offset
+			result[i] = byte(unsignedVal & 0xFF)
+		}
+	} else {
+		// 16-bit (little-endian)
+		for i := 0; i < len(data); i += 2 {
+			// Read as signed int16
+			rawBytes := binary.LittleEndian.Uint16(data[i:])
+			signedVal := int32(int16(rawBytes))
+
+			// Add offset to convert to unsigned domain
+			unsignedVal := signedVal + offset
+
+			// Write as unsigned uint16
+			binary.LittleEndian.PutUint16(result[i:], uint16(unsignedVal))
+		}
+	}
+
+	return result, nil
+}
+
+// shiftUnsignedToSigned converts unsigned pixel data back to signed domain after JPEG decoding
+// For PR=1: unsigned_value - 2^(BitsStored-1) → signed_value
+// Example: 30720 - 32768 = -2048
+func shiftUnsignedToSigned(data []byte, bitsStored, bitsAllocated uint16) ([]byte, error) {
+	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
+		return nil, fmt.Errorf("invalid BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
+	}
+
+	bytesPerSample := int((bitsAllocated + 7) / 8)
+	if len(data)%bytesPerSample != 0 {
+		return nil, fmt.Errorf("data length %d not aligned to %d bytes/sample", len(data), bytesPerSample)
+	}
+
+	offset := int32(1 << (bitsStored - 1)) // 2^(BitsStored-1), e.g., 32768 for 16-bit
+	result := make([]byte, len(data))
+
+	if bytesPerSample == 1 {
+		// 8-bit
+		for i := 0; i < len(data); i++ {
+			unsignedVal := int32(data[i])
+			signedVal := unsignedVal - offset
+			result[i] = byte(int8(signedVal))
+		}
+	} else {
+		// 16-bit (little-endian)
+		for i := 0; i < len(data); i += 2 {
+			// Read as unsigned uint16
+			unsignedVal := int32(binary.LittleEndian.Uint16(data[i:]))
+
+			// Subtract offset to convert to signed domain
+			signedVal := unsignedVal - offset
+
+			// Write as signed int16 (in two's complement form)
+			binary.LittleEndian.PutUint16(result[i:], uint16(int16(signedVal)))
+		}
+	}
+
+	return result, nil
 }
 
 // shiftSignedFrame shifts signed samples into unsigned domain (encode) or back (decode).
