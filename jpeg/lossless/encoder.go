@@ -58,8 +58,11 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 		enc.predictor = SelectBestPredictor(samples, width, height)
 	}
 
-	// Select Huffman tables: standard (<=11-bit) or extended (12-16 bit needs larger categories)
-	if bitDepth >= 12 {
+	samples := enc.pixelsToSamples(pixelData)
+	maxCat := computeMaxCategory(samples, enc.components, enc.width, enc.height, enc.precision, enc.predictor)
+
+	// Choose standard tables if categories fit 0-11; otherwise extended for high bit-depth
+	if bitDepth >= 12 && maxCat > 11 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
 			common.ExtendedDCLuminanceValues,
@@ -91,6 +94,11 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 		return nil, err
 	}
 
+	// Write minimal JFIF APP0 (some viewers expect it; fo-dicom emits it)
+	if err := enc.writeAPP0(writer); err != nil {
+		return nil, err
+	}
+
 	// Write SOF3 (Lossless)
 	if err := enc.writeSOF3(writer); err != nil {
 		return nil, err
@@ -102,7 +110,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	}
 
 	// Write SOS and scan data
-	if err := enc.writeSOS(writer, pixelData); err != nil {
+	if err := enc.writeSOS(writer, samples); err != nil {
 		return nil, err
 	}
 
@@ -112,6 +120,19 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	}
 
 	return buf.Bytes(), nil
+}
+
+// writeAPP0 writes a minimal JFIF APP0 segment for compatibility.
+func (enc *Encoder) writeAPP0(writer *common.Writer) error {
+	app0 := []byte{
+		0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
+		0x01, 0x01, // version 1.01
+		0x00,       // density units: 0 (none)
+		0x00, 0x01, // X density
+		0x00, 0x01, // Y density
+		0x00, 0x00, // thumbnail width/height
+	}
+	return writer.WriteSegment(common.MarkerAPP0, app0)
 }
 
 // writeSOF3 writes Start of Frame (Lossless)
@@ -175,7 +196,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan and scan data
-func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) writeSOS(writer *common.Writer, samples [][]int) error {
 	// Write SOS header
 	data := make([]byte, 1+enc.components*2+3)
 	data[0] = byte(enc.components)
@@ -204,16 +225,13 @@ func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
 	}
 
 	// Encode scan data
-	return enc.encodeScan(writer, pixelData)
+	return enc.encodeScan(writer, samples)
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
 	huffEnc := common.NewHuffmanEncoder(&scanBuf)
-
-	// Convert pixel data to sample array
-	samples := enc.pixelsToSamples(pixelData)
 
 	// Encode line by line, interleaved
 	for row := 0; row < enc.height; row++ {
@@ -318,4 +336,56 @@ func (enc *Encoder) pixelsToSamples(pixelData []byte) [][]int {
 	}
 
 	return samples
+}
+
+// computeMaxCategory scans differences to decide if extended Huffman tables are needed.
+func computeMaxCategory(samples [][]int, components, width, height, precision, predictor int) int {
+	maxCat := 0
+	defaultVal := 1 << uint(precision-1)
+	for comp := 0; comp < components; comp++ {
+		for row := 0; row < height; row++ {
+			for col := 0; col < width; col++ {
+				sample := samples[comp][row*width+col]
+				var ra, rb, rc int
+				ra, rb, rc = defaultVal, defaultVal, defaultVal
+				if col > 0 {
+					ra = samples[comp][row*width+col-1]
+				}
+				if row > 0 {
+					rb = samples[comp][(row-1)*width+col]
+				}
+				if row > 0 && col > 0 {
+					rc = samples[comp][(row-1)*width+col-1]
+				}
+
+				var predicted int
+				if row == 0 && col == 0 {
+					predicted = defaultVal
+				} else {
+					predicted = Predictor(predictor, ra, rb, rc)
+				}
+				diff := sample - predicted
+				cat := diffCategory(diff)
+				if cat > maxCat {
+					maxCat = cat
+				}
+			}
+		}
+	}
+	return maxCat
+}
+
+func diffCategory(val int) int {
+	if val == 0 {
+		return 0
+	}
+	if val < 0 {
+		val = -val
+	}
+	cat := 0
+	for val > 0 {
+		cat++
+		val >>= 1
+	}
+	return cat
 }

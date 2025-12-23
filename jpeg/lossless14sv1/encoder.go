@@ -45,12 +45,14 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		precision:  bitDepth,
 	}
 
-	// Use extended DC Huffman tables for bit depths >= 12, standard tables otherwise
-	// Standard tables only support category 0-11 (max value ±2047)
-	// 12-bit data needs category 12 (max value ±4095)
-	// 16-bit data needs category 16 (max value ±65535)
-	if bitDepth >= 12 {
-		// Extended tables support category 0-16 for 12-16 bit data
+	// Convert once for analysis/encoding
+	samples := enc.pixelsToSamples(pixelData)
+
+	// Pre-scan differences to decide Huffman table set. Use standard tables if categories fit 0-11,
+	// otherwise fall back to extended tables for 12-16 bit data.
+	maxCat := computeMaxCategorySV1(samples, components, width, height, bitDepth)
+
+	if bitDepth >= 12 && maxCat > 11 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
 			common.ExtendedDCLuminanceValues,
@@ -60,7 +62,6 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 			common.ExtendedDCChrominanceValues,
 		)
 	} else {
-		// Standard tables support category 0-11 for up to 11-bit data
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.StandardDCLuminanceBits,
 			common.StandardDCLuminanceValues,
@@ -83,6 +84,11 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		return nil, err
 	}
 
+	// Write minimal JFIF APP0 to align with common decoders/fo-dicom stream
+	if err := enc.writeAPP0(writer); err != nil {
+		return nil, err
+	}
+
 	// Write SOF3 (Lossless)
 	if err := enc.writeSOF3(writer); err != nil {
 		return nil, err
@@ -94,7 +100,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 	}
 
 	// Write SOS and scan data
-	if err := enc.writeSOS(writer, pixelData); err != nil {
+	if err := enc.writeSOS(writer, samples); err != nil {
 		return nil, err
 	}
 
@@ -106,16 +112,29 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 	return buf.Bytes(), nil
 }
 
+// writeAPP0 writes a minimal JFIF APP0 segment (fo-dicom emits this; some viewers expect it).
+func (enc *Encoder) writeAPP0(writer *common.Writer) error {
+	app0 := []byte{
+		0x4A, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
+		0x01, 0x01, // version 1.01
+		0x00,       // density units: 0 (none)
+		0x00, 0x01, // X density
+		0x00, 0x01, // Y density
+		0x00, 0x00, // thumbnail width/height
+	}
+	return writer.WriteSegment(common.MarkerAPP0, app0)
+}
+
 // writeSOF3 writes Start of Frame (Lossless)
 func (enc *Encoder) writeSOF3(writer *common.Writer) error {
 	data := make([]byte, 6+enc.components*3)
 
-	data[0] = byte(enc.precision)        // Precision
-	data[1] = byte(enc.height >> 8)      // Height high byte
-	data[2] = byte(enc.height)           // Height low byte
-	data[3] = byte(enc.width >> 8)       // Width high byte
-	data[4] = byte(enc.width)            // Width low byte
-	data[5] = byte(enc.components)       // Number of components
+	data[0] = byte(enc.precision)   // Precision
+	data[1] = byte(enc.height >> 8) // Height high byte
+	data[2] = byte(enc.height)      // Height low byte
+	data[3] = byte(enc.width >> 8)  // Width high byte
+	data[4] = byte(enc.width)       // Width low byte
+	data[5] = byte(enc.components)  // Number of components
 
 	if enc.components == 1 {
 		// Grayscale
@@ -167,7 +186,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan and scan data
-func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) writeSOS(writer *common.Writer, samples [][]int) error {
 	// Write SOS header
 	data := make([]byte, 1+enc.components*2+3)
 	data[0] = byte(enc.components)
@@ -187,25 +206,22 @@ func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
 	}
 
 	// Spectral selection
-	data[1+enc.components*2] = 1  // Ss: Predictor = 1 (first-order prediction)
-	data[2+enc.components*2] = 0  // Se: not used
-	data[3+enc.components*2] = 0  // Ah/Al: not used
+	data[1+enc.components*2] = 1 // Ss: Predictor = 1 (first-order prediction)
+	data[2+enc.components*2] = 0 // Se: not used
+	data[3+enc.components*2] = 0 // Ah/Al: not used
 
 	if err := writer.WriteSegment(common.MarkerSOS, data); err != nil {
 		return err
 	}
 
 	// Encode scan data
-	return enc.encodeScan(writer, pixelData)
+	return enc.encodeScan(writer, samples)
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
 	huffEnc := common.NewHuffmanEncoder(&scanBuf)
-
-	// Convert pixel data to sample array
-	samples := enc.pixelsToSamples(pixelData)
 
 	// Encode line by line, interleaved
 	for row := 0; row < enc.height; row++ {
@@ -291,4 +307,47 @@ func (enc *Encoder) pixelsToSamples(pixelData []byte) [][]int {
 	}
 
 	return samples
+}
+
+// computeMaxCategorySV1 finds the maximum Huffman category of differences for predictor 1.
+// Category is the number of bits needed to represent |diff|.
+func computeMaxCategorySV1(samples [][]int, components, width, height, precision int) int {
+	maxCat := 0
+	defaultVal := 1 << uint(precision-1)
+	for comp := 0; comp < components; comp++ {
+		for row := 0; row < height; row++ {
+			pred := defaultVal
+			for col := 0; col < width; col++ {
+				sample := samples[comp][row*width+col]
+				var predicted int
+				if col == 0 {
+					predicted = defaultVal
+				} else {
+					predicted = pred
+				}
+				diff := sample - predicted
+				cat := diffCategory(diff)
+				if cat > maxCat {
+					maxCat = cat
+				}
+				pred = sample
+			}
+		}
+	}
+	return maxCat
+}
+
+func diffCategory(val int) int {
+	if val == 0 {
+		return 0
+	}
+	if val < 0 {
+		val = -val
+	}
+	cat := 0
+	for val > 0 {
+		cat++
+		val >>= 1
+	}
+	return cat
 }
