@@ -65,27 +65,18 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Detect if pixel data contains actual negative values when interpreted per PR tag
-		// This determines if we need to shift for JPEG encoding
-		hasNegatives, minVal, maxVal := common.DetectActualPixelRepresentation(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
+		// Determine if shift is needed based on pixel data range
 		adjustedFrame := frameData
+		needsShift := common.ShouldShiftPixelData(frameData, int(frameInfo.BitsStored))
 
-		// Only shift if PR=1 AND data actually has negative values
-		// If PR=1 but no negatives (tag error), don't shift - encode as unsigned
-		if frameInfo.PixelRepresentation != 0 && hasNegatives {
-			// Data is truly signed with negative values: apply shift to unsigned range
-			// This converts signed [-2^(n-1), 2^(n-1)-1] to unsigned [0, 2^n-1]
+		if needsShift {
+			// Pixel values exceed threshold - shift to unsigned range for JPEG
 			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
 			adjustedFrame = shifted
 		}
-		// If PR=1 but !hasNegatives, values are all positive - encode as unsigned (no shift)
-		// If PR=0, encode as-is (already unsigned)
-
-		_ = minVal // unused but useful for debugging
-		_ = maxVal
 
 		// Encode using the lossless SV1 encoder
 		jpegData, err := Encode(
@@ -150,23 +141,10 @@ func (c *LosslessSV1Codec) Decode(oldPixelData types.PixelData, newPixelData typ
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// Check if decoded values need reverse shift
-		// This must match encoding logic: only reverse if encoding shifted
-		// Encoding shifted if: PR=1 AND original data had negatives
-		// Since we can't know original here, we check if decoded values look shifted:
-		// - If decoded values are in upper half [2^(n-1), 2^n-1], they were likely shifted
-		hasNegatives, _, _ := common.DetectActualPixelRepresentation(pixelData, int(frameInfo.BitsStored), 0)
+		// JPEG Lossless decode: keep the decoded values as-is
+		// Do NOT reverse shift - the JPEG stream contains the shifted values
+		// Viewer will interpret based on PixelRepresentation tag
 		adjustedPixels := pixelData
-
-		if frameInfo.PixelRepresentation != 0 && hasNegatives {
-			// PR=1 AND decoded values use upper range -> they were shifted, reverse it
-			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-			if err != nil {
-				return fmt.Errorf("failed to shift decoded frame %d: %w", frameIndex, err)
-			}
-			adjustedPixels = shifted
-		}
-		// If PR=1 but !hasNegatives (decoded values all in [0, 2^(n-1)-1]), no shift was done
 
 		// Add decoded frame to destination
 		if err := newPixelData.AddFrame(adjustedPixels); err != nil {

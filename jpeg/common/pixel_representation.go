@@ -117,6 +117,60 @@ func ConvertSignedToUnsigned(pixelData []byte, bitsStored int) {
 	}
 }
 
+// ShouldShiftPixelData determines if pixel data needs to be shifted based ONLY on pixel value range.
+// This does NOT rely on the PixelRepresentation tag (which may be unreliable).
+//
+// Logic:
+//   - Calculate threshold = 2^(bitsStored-1)
+//   - Find maximum raw pixel value
+//   - If maxRaw >= threshold: values may represent signed negatives, shift needed
+//   - If maxRaw < threshold: all values in positive range, no shift needed
+//
+// Examples:
+//   - 8-bit:  threshold = 128, if maxRaw >= 128 → shift
+//   - 12-bit: threshold = 2048, if maxRaw >= 2048 → shift
+//   - 16-bit: threshold = 32768, if maxRaw >= 32768 → shift
+//
+// Parameters:
+//   - pixelData: raw pixel bytes (little-endian for 16-bit)
+//   - bitsStored: number of significant bits (8, 12, 16, etc.)
+//
+// Returns:
+//   - true if shift is needed, false otherwise
+func ShouldShiftPixelData(pixelData []byte, bitsStored int) bool {
+	if bitsStored <= 0 || bitsStored > 16 || len(pixelData) == 0 {
+		return false
+	}
+
+	signBit := uint32(1) << (bitsStored - 1)
+
+	// For 8-bit data
+	if bitsStored <= 8 {
+		var maxRaw uint8 = 0
+		for _, b := range pixelData {
+			if b > maxRaw {
+				maxRaw = b
+			}
+		}
+		return uint32(maxRaw) >= signBit
+	}
+
+	// For 9-16 bit data (stored in 2 bytes)
+	if len(pixelData) < 2 {
+		return false
+	}
+
+	var maxRaw uint16 = 0
+	for i := 0; i < len(pixelData)/2; i++ {
+		raw := uint16(pixelData[i*2]) | uint16(pixelData[i*2+1])<<8
+		if raw > maxRaw {
+			maxRaw = raw
+		}
+	}
+
+	return uint32(maxRaw) >= signBit
+}
+
 // ConvertUnsignedToSigned converts pixel data from unsigned to signed representation.
 // For unsigned data in range [0, 2^n-1], converts to signed [-2^(n-1), 2^(n-1)-1].
 //
