@@ -9,6 +9,7 @@ import (
 
 	// Register all codecs by importing them
 	_ "github.com/cocosip/go-dicom-codec/jpeg/baseline"
+	_ "github.com/cocosip/go-dicom-codec/jpeg/extended"
 	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless"
 	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
 	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
@@ -30,6 +31,9 @@ func main() {
 	fmt.Println("Converts DICOM files between compression formats")
 	fmt.Println(strings.Repeat("-", 70))
 	fmt.Println()
+
+	// Compatibility: allow forcing unsigned output for viewers that ignore PR=1 shift
+	forceUnsigned := os.Getenv("DICOM_FORCE_UNSIGNED") == "1"
 
 	// Get input file path
 	inputPath := getInputFilePath()
@@ -87,6 +91,7 @@ func main() {
 		isLossless bool
 	}{
 		{"JPEG Baseline (Lossy 8-bit)", transfer.JPEGBaseline8Bit, "jpeg_baseline", false},
+		{"JPEG JPEGProcess2_4", transfer.JPEGProcess2_4, "jpeg_process2_4", true},
 		{"JPEG Lossless", transfer.JPEGLossless, "jpeg_lossless", true},
 		{"JPEG Lossless SV1", transfer.JPEGLosslessSV1, "jpeg_lossless_sv1", true},
 		{"JPEG-LS Lossless", transfer.JPEGLSLossless, "jpegls_lossless", true},
@@ -123,7 +128,7 @@ func main() {
 		outputPath := filepath.Join(outputDir, fmt.Sprintf("%s_%s.dcm", baseName, format.suffix))
 
 		// Perform transcoding
-		if err := transcodeDICOMFile(ds, outputPath, sourceTS, format.ts, registry); err != nil {
+		if err := transcodeDICOMFile(ds, outputPath, sourceTS, format.ts, registry, forceUnsigned); err != nil {
 			fmt.Printf("      Failed: %v\n", err)
 			failCount++
 			continue
@@ -227,7 +232,7 @@ func displayImageInfo(ds *dataset.Dataset) {
 }
 
 // transcodeDICOMFile converts a DICOM dataset from one transfer syntax to another
-func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, targetTS *transfer.Syntax, registry *codec.Registry) error {
+func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, targetTS *transfer.Syntax, registry *codec.Registry, forceUnsigned bool) error {
 	// Skip if already in target format
 	if sourceTS.UID().UID() == targetTS.UID().UID() {
 		clone := ds.Clone()
@@ -249,6 +254,14 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 
 	if err := fixEncapsulatedPadding(newDS, targetTS); err != nil {
 		return fmt.Errorf("fix padding: %w", err)
+	}
+	if forceUnsigned {
+		if err := forceUnsignedPixelData(newDS); err != nil {
+			return fmt.Errorf("force unsigned: %w", err)
+		}
+	}
+	if err := forceEncapsulatedOB(newDS, targetTS); err != nil {
+		return fmt.Errorf("fix VR: %w", err)
 	}
 
 	// Write with correct transfer syntax (also ensures File Meta includes TSUID)
@@ -317,6 +330,70 @@ func fixEncapsulatedPadding(ds *dataset.Dataset, ts *transfer.Syntax) error {
 	default:
 		// Uncompressed or unexpected type; nothing to fix.
 	}
+	return nil
+}
+
+// forceEncapsulatedOB ensures encapsulated PixelData uses OB VR (per DICOM PS3.5).
+// Some encoders emit OW for bits>8; a few viewers mis-handle that and show black images.
+func forceEncapsulatedOB(ds *dataset.Dataset, ts *transfer.Syntax) error {
+	if ts == nil || !ts.IsEncapsulated() {
+		return nil
+	}
+	pd, ok := ds.Get(tag.PixelData)
+	if !ok {
+		return nil
+	}
+	switch v := pd.(type) {
+	case *element.OtherByteFragment:
+		// Already OB, nothing to do.
+		return nil
+	case *element.OtherWordFragment:
+		frags := v.Fragments()
+		ob := element.NewOtherByteFragment(tag.PixelData)
+		for _, f := range frags {
+			ob.AddFragment(buffer.NewMemory(f.Data()))
+		}
+		if ot := v.OffsetTable(); len(ot) > 0 {
+			ob.SetOffsetTable(ot)
+		}
+		ds.Remove(tag.PixelData)
+		_ = ds.Add(ob)
+		return nil
+	default:
+		return nil
+	}
+}
+
+// forceUnsignedPixelData rewrites PixelRepresentation to unsigned and adjusts RescaleIntercept
+// so that modality values (HU) remain consistent. This is a compatibility path for viewers
+// that fail to apply the signed offset defined by JPEG Lossless for PR=1.
+func forceUnsignedPixelData(ds *dataset.Dataset) error {
+	pr := ds.TryGetUInt16(tag.PixelRepresentation, 0)
+	if pr == 0 {
+		return nil
+	}
+
+	// Update PixelRepresentation to unsigned.
+	_ = ds.Remove(tag.PixelRepresentation)
+	_ = ds.Add(element.NewUnsignedShort(tag.PixelRepresentation, []uint16{0}))
+
+	// Adjust RescaleIntercept if present: I' = I - 2^(BitsStored-1) * Slope
+	bitsStored := ds.TryGetUInt16(tag.BitsStored, 0)
+	if bitsStored == 0 {
+		bitsStored = ds.TryGetUInt16(tag.BitsAllocated, 0)
+	}
+	offset := float64(uint32(1) << (bitsStored - 1))
+
+	slope := 1.0
+	if v, err := ds.GetFloat64(tag.RescaleSlope, 0); err == nil {
+		slope = v
+	}
+	if intercept, err := ds.GetFloat64(tag.RescaleIntercept, 0); err == nil {
+		newIntercept := intercept - offset*slope
+		_ = ds.Remove(tag.RescaleIntercept)
+		_ = ds.Add(element.NewDouble(tag.RescaleIntercept, []float64{newIntercept}))
+	}
+
 	return nil
 }
 

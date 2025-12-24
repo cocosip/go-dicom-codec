@@ -159,7 +159,7 @@ func (c *ExtendedCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 func RegisterExtendedCodec(bitDepth int, quality int) {
 	c := NewExtendedCodec(bitDepth, quality)
 	registry := codec.GetGlobalRegistry()
-	registry.RegisterCodec(transfer.JPEGExtended12Bit, c)
+	registry.RegisterCodec(transfer.JPEGProcess2_4, c)
 }
 
 func init() {

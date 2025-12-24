@@ -108,8 +108,8 @@ func (c *LosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 		// This ensures compatibility with JPEG's unsigned representation.
 		adjustedFrame := frameData
 		if frameInfo.PixelRepresentation != 0 {
-			// Convert signed to unsigned domain for JPEG encoding
-			shifted, err := shiftSignedToUnsigned(frameData, frameInfo.BitsStored, frameInfo.BitsAllocated)
+			// Convert signed to unsigned domain for JPEG encoding (respect HighBit)
+			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
@@ -186,8 +186,8 @@ func (c *LosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 		// unsigned_value - 2^(BitsStored-1) → signed_value
 		adjustedPixels := pixelData
 		if frameInfo.PixelRepresentation != 0 {
-			// Convert unsigned domain back to signed
-			shifted, err := shiftUnsignedToSigned(pixelData, frameInfo.BitsStored, frameInfo.BitsAllocated)
+			// Convert unsigned domain back to signed (respect HighBit)
+			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
 			if err != nil {
 				return fmt.Errorf("failed to shift decoded frame %d: %w", frameIndex, err)
 			}
