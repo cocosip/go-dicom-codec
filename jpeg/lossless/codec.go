@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/types"
@@ -101,20 +102,32 @@ func (c *LosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Handle PixelRepresentation for signed data
-		// Per DICOM standard, for PR=1 (signed), JPEG Lossless stores unsigned values
-		// in range [0, 2^BitsStored-1] by applying offset transformation:
-		// signed_value + 2^(BitsStored-1) → unsigned_value
-		// This ensures compatibility with JPEG's unsigned representation.
+		// Detect actual pixel representation from pixel values (don't trust the tag)
+		// If all values are < 2^(bitsStored-1), they fit in unsigned range without shift
+		// If values >= 2^(bitsStored-1), we encode using full unsigned range
+		needsFullRange, minVal, maxVal := common.DetectActualPixelRepresentation(frameData, int(frameInfo.BitsStored))
 		adjustedFrame := frameData
-		if frameInfo.PixelRepresentation != 0 {
-			// Convert signed to unsigned domain for JPEG encoding (respect HighBit)
+
+		// Only shift if:
+		// 1. The tag says signed (PR=1) AND
+		// 2. Values don't use full range (i.e., all < 2^(bitsStored-1)) AND
+		// 3. We need to preserve the signed interpretation
+		// However, if the tag says signed but values are small, it's likely a tag error
+		// In that case, encode as-is (unsigned) to avoid unnecessary shift
+		if frameInfo.PixelRepresentation != 0 && needsFullRange {
+			// Tag says signed AND values use full range: apply shift
+			// This converts signed [-2^(n-1), 2^(n-1)-1] to unsigned [0, 2^n-1]
 			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
 			adjustedFrame = shifted
 		}
+		// If PR=1 but !needsFullRange, values are in [0, 2^(n-1)-1], treat as unsigned
+		// If PR=0, encode as-is (already unsigned)
+
+		_ = minVal // unused but useful for debugging
+		_ = maxVal
 
 		// Encode using the lossless encoder
 		jpegData, err := Encode(
@@ -180,19 +193,23 @@ func (c *LosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// Handle PixelRepresentation for signed data
-		// For PR=1 (signed), JPEG decoded unsigned values, we need to apply
-		// reverse transformation to restore signed representation:
-		// unsigned_value - 2^(BitsStored-1) → signed_value
+		// Detect decoded pixel range to determine if reverse shift is needed
+		// This must match the encoding logic:
+		// - If encoded values were shifted (PR=1 && needsFullRange), reverse the shift
+		// - If encoded values were not shifted (PR=1 && !needsFullRange), keep as-is
+		needsFullRange, _, _ := common.DetectActualPixelRepresentation(pixelData, int(frameInfo.BitsStored))
 		adjustedPixels := pixelData
-		if frameInfo.PixelRepresentation != 0 {
-			// Convert unsigned domain back to signed (respect HighBit)
+
+		if frameInfo.PixelRepresentation != 0 && needsFullRange {
+			// Tag says signed AND decoded values are in upper range [2^(n-1), 2^n-1]
+			// This means encoding applied shift, so reverse it
 			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
 			if err != nil {
 				return fmt.Errorf("failed to shift decoded frame %d: %w", frameIndex, err)
 			}
 			adjustedPixels = shifted
 		}
+		// If PR=1 but !needsFullRange, decoded values are in [0, 2^(n-1)-1], no shift was applied
 
 		// Add decoded frame to destination
 		if err := newPixelData.AddFrame(adjustedPixels); err != nil {
