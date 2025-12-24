@@ -1,44 +1,49 @@
 package common
 
-// DetectActualPixelRepresentation analyzes actual pixel values to determine if signed representation is needed.
-// This is more reliable than trusting the DICOM PixelRepresentation tag, which may be incorrect.
+// DetectActualPixelRepresentation analyzes pixel values considering the current PixelRepresentation tag.
+// Returns whether the data actually contains negative values when interpreted as signed.
 //
-// Logic:
-//   - If all raw values are < 2^(bitsStored-1), data fits in unsigned range [0, 2^(n-1)-1], no sign bit needed
-//   - If any raw values >= 2^(bitsStored-1), data needs the full range (either unsigned [0, 2^n-1] or signed with negatives)
-//     For JPEG encoding, we treat this as needing full unsigned range
+// This is critical for JPEG encoding:
+//   - If data is tagged PR=1 but all values are positive when interpreted, NO shift needed
+//   - If data is tagged PR=1 and has negative values when interpreted, shift IS needed
+//   - If data is tagged PR=0, never shift
 //
 // Parameters:
 //   - pixelData: raw pixel bytes (little-endian for 16-bit)
 //   - bitsStored: number of significant bits (8, 12, 16, etc.)
+//   - currentPR: current PixelRepresentation tag value (0=unsigned, 1=signed)
 //
 // Returns:
-//   - needsFullRange: true if data uses values >= 2^(bitsStored-1), requiring full range encoding
-//   - minVal, maxVal: value range when interpreted as raw unsigned values
-func DetectActualPixelRepresentation(pixelData []byte, bitsStored int) (needsFullRange bool, minVal, maxVal uint32) {
+//   - hasNegatives: true if data contains negative values when interpreted per currentPR
+//   - minVal, maxVal: value range when interpreted as signed (if PR=1) or unsigned (if PR=0)
+func DetectActualPixelRepresentation(pixelData []byte, bitsStored int, currentPR int) (hasNegatives bool, minVal, maxVal int32) {
 	if bitsStored <= 0 || bitsStored > 16 || len(pixelData) == 0 {
 		return false, 0, 0
 	}
 
-	signBitThreshold := uint32(1) << (bitsStored - 1)
+	signBit := int32(1) << (bitsStored - 1)
 
 	// For 8-bit data
 	if bitsStored <= 8 {
-		var min, max uint8 = 255, 0
+		minVal, maxVal = 255, -128
 
 		for _, b := range pixelData {
-			if b < min {
-				min = b
+			val := int32(b)
+
+			// Interpret according to currentPR
+			if currentPR == 1 && val >= signBit {
+				val -= (1 << bitsStored) // Convert to signed
 			}
-			if b > max {
-				max = b
+
+			if val < minVal {
+				minVal = val
+			}
+			if val > maxVal {
+				maxVal = val
 			}
 		}
 
-		minVal, maxVal = uint32(min), uint32(max)
-
-		// If max value >= sign bit threshold, needs full range
-		return maxVal >= signBitThreshold, minVal, maxVal
+		return minVal < 0, minVal, maxVal
 	}
 
 	// For 9-16 bit data (stored in 2 bytes)
@@ -46,22 +51,27 @@ func DetectActualPixelRepresentation(pixelData []byte, bitsStored int) (needsFul
 		return false, 0, 0
 	}
 
-	var min, max uint16 = 65535, 0
+	minVal, maxVal = 65535, -32768
 
 	for i := 0; i < len(pixelData)/2; i++ {
-		val := uint16(pixelData[i*2]) | uint16(pixelData[i*2+1])<<8
-		if val < min {
-			min = val
+		raw := uint16(pixelData[i*2]) | uint16(pixelData[i*2+1])<<8
+		val := int32(raw)
+
+		// Interpret according to currentPR
+		if currentPR == 1 && val >= signBit {
+			val -= (1 << bitsStored) // Convert to signed
 		}
-		if val > max {
-			max = val
+
+		if val < minVal {
+			minVal = val
+		}
+		if val > maxVal {
+			maxVal = val
 		}
 	}
 
-	minVal, maxVal = uint32(min), uint32(max)
-
-	// If max value >= sign bit threshold, needs full range
-	return maxVal >= signBitThreshold, minVal, maxVal
+	// Has negatives if interpreted value goes below 0
+	return minVal < 0, minVal, maxVal
 }
 
 // ConvertSignedToUnsigned converts pixel data from signed to unsigned representation.

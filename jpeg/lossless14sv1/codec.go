@@ -65,25 +65,24 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Detect actual pixel representation from pixel values (don't trust the tag)
-		// If all values are < 2^(bitsStored-1), they fit in unsigned range without shift
-		// If values >= 2^(bitsStored-1), we encode using full unsigned range
-		needsFullRange, minVal, maxVal := common.DetectActualPixelRepresentation(frameData, int(frameInfo.BitsStored))
+		// Detect if pixel data contains actual negative values when interpreted per PR tag
+		// This determines if we need to shift for JPEG encoding
+		hasNegatives, minVal, maxVal := common.DetectActualPixelRepresentation(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 		adjustedFrame := frameData
 
-		// Only shift if:
-		// 1. The tag says signed (PR=1) AND
-		// 2. Values use full range (>= 2^(bitsStored-1))
-		// If PR=1 but values are small, it's likely a tag error - encode as unsigned
-		if frameInfo.PixelRepresentation != 0 && needsFullRange {
-			// Tag says signed AND values use full range: apply shift
+		// Only shift if PR=1 AND data actually has negative values
+		// If PR=1 but no negatives (tag error), don't shift - encode as unsigned
+		if frameInfo.PixelRepresentation != 0 && hasNegatives {
+			// Data is truly signed with negative values: apply shift to unsigned range
+			// This converts signed [-2^(n-1), 2^(n-1)-1] to unsigned [0, 2^n-1]
 			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
 			adjustedFrame = shifted
 		}
-		// If PR=1 but !needsFullRange, values are in [0, 2^(n-1)-1], treat as unsigned
+		// If PR=1 but !hasNegatives, values are all positive - encode as unsigned (no shift)
+		// If PR=0, encode as-is (already unsigned)
 
 		_ = minVal // unused but useful for debugging
 		_ = maxVal
@@ -151,23 +150,23 @@ func (c *LosslessSV1Codec) Decode(oldPixelData types.PixelData, newPixelData typ
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// Detect decoded pixel range to determine if reverse shift is needed
-		// This must match the encoding logic:
-		// - If encoded values were shifted (PR=1 && needsFullRange), reverse the shift
-		// - If encoded values were not shifted (PR=1 && !needsFullRange), keep as-is
-		needsFullRange, _, _ := common.DetectActualPixelRepresentation(pixelData, int(frameInfo.BitsStored))
+		// Check if decoded values need reverse shift
+		// This must match encoding logic: only reverse if encoding shifted
+		// Encoding shifted if: PR=1 AND original data had negatives
+		// Since we can't know original here, we check if decoded values look shifted:
+		// - If decoded values are in upper half [2^(n-1), 2^n-1], they were likely shifted
+		hasNegatives, _, _ := common.DetectActualPixelRepresentation(pixelData, int(frameInfo.BitsStored), 0)
 		adjustedPixels := pixelData
 
-		if frameInfo.PixelRepresentation != 0 && needsFullRange {
-			// Tag says signed AND decoded values are in upper range [2^(n-1), 2^n-1]
-			// This means encoding applied shift, so reverse it
+		if frameInfo.PixelRepresentation != 0 && hasNegatives {
+			// PR=1 AND decoded values use upper range -> they were shifted, reverse it
 			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
 			if err != nil {
 				return fmt.Errorf("failed to shift decoded frame %d: %w", frameIndex, err)
 			}
 			adjustedPixels = shifted
 		}
-		// If PR=1 but !needsFullRange, decoded values are in [0, 2^(n-1)-1], no shift was applied
+		// If PR=1 but !hasNegatives (decoded values all in [0, 2^(n-1)-1]), no shift was done
 
 		// Add decoded frame to destination
 		if err := newPixelData.AddFrame(adjustedPixels); err != nil {

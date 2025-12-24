@@ -7,77 +7,85 @@ import (
 
 func TestDetectActualPixelRepresentation(t *testing.T) {
 	tests := []struct {
-		name             string
-		pixelData        []byte
-		bitsStored       int
-		wantFullRange    bool
-		wantMin          uint32
-		wantMax          uint32
+		name          string
+		pixelData     []byte
+		bitsStored    int
+		currentPR     int
+		wantNegatives bool
+		wantMin       int32
+		wantMax       int32
 	}{
 		{
-			name:          "16-bit unsigned [286, 1781] - no full range needed",
+			name:          "16-bit PR=1 with positive values only [286, 1781]",
 			pixelData:     make16BitData([]uint16{286, 590, 1781, 500, 1000}),
 			bitsStored:    16,
-			wantFullRange: false, // max=1781 < 32768
+			currentPR:     1,
+			wantNegatives: false, // all values < 32768, interpreted as positive
 			wantMin:       286,
 			wantMax:       1781,
 		},
 		{
-			name:          "16-bit with values >= 32768 - full range needed",
-			pixelData:     make16BitData([]uint16{32768, 40000, 50000}),
+			name:          "16-bit PR=1 with actual negatives [-2048, 255]",
+			pixelData:     make16BitData([]uint16{63488, 0, 100, 255}), // 63488 = -2048 in signed
 			bitsStored:    16,
-			wantFullRange: true, // max >= 32768
-			wantMin:       32768,
-			wantMax:       50000,
+			currentPR:     1,
+			wantNegatives: true, // 63488 >= 32768, interpreted as -2048
+			wantMin:       -2048,
+			wantMax:       255,
 		},
 		{
-			name:          "16-bit all positive (small range)",
-			pixelData:     make16BitData([]uint16{0, 100, 500, 1000, 32767}),
+			name:          "16-bit PR=0 unsigned [0, 65535]",
+			pixelData:     make16BitData([]uint16{0, 32768, 40000, 65535}),
 			bitsStored:    16,
-			wantFullRange: false, // max=32767 < 32768
+			currentPR:     0,
+			wantNegatives: false, // all unsigned, no negatives
 			wantMin:       0,
-			wantMax:       32767,
+			wantMax:       65535,
 		},
 		{
-			name:          "12-bit unsigned in 16-bit container [0, 2047]",
-			pixelData:     make16BitData([]uint16{0, 500, 1000, 2000, 2047}),
+			name:          "12-bit PR=1 with positives [0, 2047]",
+			pixelData:     make16BitData([]uint16{0, 500, 1000, 2047}),
 			bitsStored:    12,
-			wantFullRange: false, // max=2047 < 2048
+			currentPR:     1,
+			wantNegatives: false, // all < 2048
 			wantMin:       0,
 			wantMax:       2047,
 		},
 		{
-			name:          "12-bit using full range [0, 4095]",
-			pixelData:     make16BitData([]uint16{0, 2048, 3000, 4095}),
+			name:          "12-bit PR=1 with negatives [-2048, 2047]",
+			pixelData:     make16BitData([]uint16{2048, 2100, 4000, 100}), // 2048+ becomes negative
 			bitsStored:    12,
-			wantFullRange: true, // max=4095 >= 2048
-			wantMin:       0,
-			wantMax:       4095,
+			currentPR:     1,
+			wantNegatives: true,
+			wantMin:       -2048,
+			wantMax:       100,
 		},
 		{
-			name:          "8-bit unsigned [0, 127]",
-			pixelData:     []byte{0, 50, 100, 127},
+			name:          "8-bit PR=0 unsigned [0, 255]",
+			pixelData:     []byte{0, 50, 100, 200, 255},
 			bitsStored:    8,
-			wantFullRange: false, // max=127 < 128
-			wantMin:       0,
-			wantMax:       127,
-		},
-		{
-			name:          "8-bit using full range [0, 255]",
-			pixelData:     []byte{0, 128, 200, 255},
-			bitsStored:    8,
-			wantFullRange: true, // max=255 >= 128
+			currentPR:     0,
+			wantNegatives: false,
 			wantMin:       0,
 			wantMax:       255,
+		},
+		{
+			name:          "8-bit PR=1 with negatives [-128, 127]",
+			pixelData:     []byte{128, 200, 255, 0, 50, 127}, // 128+ becomes negative
+			bitsStored:    8,
+			currentPR:     1,
+			wantNegatives: true,
+			wantMin:       -128,
+			wantMax:       127,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotFullRange, gotMin, gotMax := DetectActualPixelRepresentation(tt.pixelData, tt.bitsStored)
+			gotNegatives, gotMin, gotMax := DetectActualPixelRepresentation(tt.pixelData, tt.bitsStored, tt.currentPR)
 
-			if gotFullRange != tt.wantFullRange {
-				t.Errorf("DetectActualPixelRepresentation() gotFullRange = %v, want %v", gotFullRange, tt.wantFullRange)
+			if gotNegatives != tt.wantNegatives {
+				t.Errorf("DetectActualPixelRepresentation() gotNegatives = %v, want %v", gotNegatives, tt.wantNegatives)
 			}
 			if gotMin != tt.wantMin {
 				t.Errorf("DetectActualPixelRepresentation() gotMin = %v, want %v", gotMin, tt.wantMin)
