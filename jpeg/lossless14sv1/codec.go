@@ -65,9 +65,9 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Determine if shift is needed based on pixel data range
+		// Determine if shift is needed; only when PR=1 and values cross sign bit.
 		adjustedFrame := frameData
-		needsShift := common.ShouldShiftPixelData(frameData, int(frameInfo.BitsStored))
+		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 
 		if needsShift {
 			// Pixel values exceed threshold - shift to unsigned range for JPEG

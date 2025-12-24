@@ -171,6 +171,14 @@ func ShouldShiftPixelData(pixelData []byte, bitsStored int) bool {
 	return uint32(maxRaw) >= signBit
 }
 
+// ShouldShiftPixelDataWithPR returns true only when PR=1 and value range indicates sign bit usage.
+func ShouldShiftPixelDataWithPR(pixelData []byte, bitsStored int, currentPR int) bool {
+	if currentPR == 0 {
+		return false
+	}
+	return ShouldShiftPixelData(pixelData, bitsStored)
+}
+
 // ConvertUnsignedToSigned converts pixel data from unsigned to signed representation.
 // For unsigned data in range [0, 2^n-1], converts to signed [-2^(n-1), 2^(n-1)-1].
 //
