@@ -23,7 +23,6 @@ import (
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/dicom/writer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/io/buffer"
 )
 
 func main() {
@@ -236,9 +235,6 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 	// Skip if already in target format
 	if sourceTS.UID().UID() == targetTS.UID().UID() {
 		clone := ds.Clone()
-		if err := fixEncapsulatedPadding(clone, sourceTS); err != nil {
-			return fmt.Errorf("fix padding: %w", err)
-		}
 		if err := writer.WriteFile(outputPath, clone, writer.WithTransferSyntax(sourceTS)); err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
@@ -252,16 +248,10 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return fmt.Errorf("transcode failed: %w", err)
 	}
 
-	if err := fixEncapsulatedPadding(newDS, targetTS); err != nil {
-		return fmt.Errorf("fix padding: %w", err)
-	}
 	if forceUnsigned {
 		if err := forceUnsignedPixelData(newDS); err != nil {
 			return fmt.Errorf("force unsigned: %w", err)
 		}
-	}
-	if err := forceEncapsulatedOB(newDS, targetTS); err != nil {
-		return fmt.Errorf("fix VR: %w", err)
 	}
 
 	// Write with correct transfer syntax (also ensures File Meta includes TSUID)
@@ -270,98 +260,6 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 	}
 
 	return nil
-}
-
-// fixEncapsulatedPadding ensures each fragment is even-length and BOT offsets match padded sizes.
-func fixEncapsulatedPadding(ds *dataset.Dataset, ts *transfer.Syntax) error {
-	if ts == nil || !ts.IsEncapsulated() {
-		return nil
-	}
-	pd, ok := ds.Get(tag.PixelData)
-	if !ok {
-		return nil
-	}
-
-	switch v := pd.(type) {
-	case *element.OtherByteFragment:
-		frags := v.Fragments()
-		if len(frags) == 0 {
-			return nil
-		}
-		var offsets []uint32
-		var run uint32
-		newFrag := element.NewOtherByteFragment(tag.PixelData)
-		for _, frag := range frags {
-			data := frag.Data()
-			if len(data)%2 != 0 {
-				data = append(data, 0x00)
-			}
-			offsets = append(offsets, run)
-			run += uint32(len(data))
-			newFrag.AddFragment(buffer.NewMemory(data))
-		}
-		if len(frags) > 1 {
-			newFrag.SetOffsetTable(offsets)
-		}
-		ds.Remove(tag.PixelData)
-		_ = ds.Add(newFrag)
-	case *element.OtherWordFragment:
-		frags := v.Fragments()
-		if len(frags) == 0 {
-			return nil
-		}
-		var offsets []uint32
-		var run uint32
-		newFrag := element.NewOtherWordFragment(tag.PixelData)
-		for _, frag := range frags {
-			data := frag.Data()
-			if len(data)%2 != 0 {
-				data = append(data, 0x00)
-			}
-			offsets = append(offsets, run)
-			run += uint32(len(data))
-			newFrag.AddFragment(buffer.NewMemory(data))
-		}
-		if len(frags) > 1 {
-			newFrag.SetOffsetTable(offsets)
-		}
-		ds.Remove(tag.PixelData)
-		_ = ds.Add(newFrag)
-	default:
-		// Uncompressed or unexpected type; nothing to fix.
-	}
-	return nil
-}
-
-// forceEncapsulatedOB ensures encapsulated PixelData uses OB VR (per DICOM PS3.5).
-// Some encoders emit OW for bits>8; a few viewers mis-handle that and show black images.
-func forceEncapsulatedOB(ds *dataset.Dataset, ts *transfer.Syntax) error {
-	if ts == nil || !ts.IsEncapsulated() {
-		return nil
-	}
-	pd, ok := ds.Get(tag.PixelData)
-	if !ok {
-		return nil
-	}
-	switch v := pd.(type) {
-	case *element.OtherByteFragment:
-		// Already OB, nothing to do.
-		return nil
-	case *element.OtherWordFragment:
-		frags := v.Fragments()
-		ob := element.NewOtherByteFragment(tag.PixelData)
-		for _, f := range frags {
-			ob.AddFragment(buffer.NewMemory(f.Data()))
-		}
-		if ot := v.OffsetTable(); len(ot) > 0 {
-			ob.SetOffsetTable(ot)
-		}
-		ds.Remove(tag.PixelData)
-		_ = ds.Add(ob)
-		return nil
-	default:
-		return nil
-	}
 }
 
 // forceUnsignedPixelData rewrites PixelRepresentation to unsigned and adjusts RescaleIntercept
