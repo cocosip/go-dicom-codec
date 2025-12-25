@@ -33,3 +33,5 @@ Thumbs.db
 # Test data
 testdata/output/
 /.claude
+
+/fo-dicom-codec-code
