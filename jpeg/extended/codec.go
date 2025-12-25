@@ -57,6 +57,9 @@ func (c *ExtendedCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 	if frameInfo == nil {
 		return fmt.Errorf("failed to get frame info from source pixel data")
 	}
+	if frameInfo.BitsStored > 12 {
+		return fmt.Errorf("JPEG Extended only supports up to 12-bit data, got %d bits", frameInfo.BitsStored)
+	}
 
 	// Extract parameters
 	width := int(frameInfo.Width)

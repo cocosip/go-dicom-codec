@@ -522,3 +522,41 @@ func TestExtendedCodecRegistry(t *testing.T) {
 	decodedInfo := decoded.GetFrameInfo()
 	t.Logf("Registry codec test passed: %dx%d image", decodedInfo.Width, decodedInfo.Height)
 }
+
+func TestExtendedCodecRejects16Bit(t *testing.T) {
+	width, height := 16, 16
+	pixelData := make([]byte, width*height*2)
+
+	frameInfo := &types.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		BitsAllocated:             16,
+		BitsStored:                16,
+		HighBit:                   15,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
+
+	encodedFrameInfo := &types.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		BitsAllocated:             16,
+		BitsStored:                16,
+		HighBit:                   15,
+		SamplesPerPixel:           1,
+		PixelRepresentation:       0,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: "MONOCHROME2",
+	}
+	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
+
+	extCodec := NewExtendedCodec(12, 85)
+	if err := extCodec.Encode(src, encoded, nil); err == nil {
+		t.Fatalf("expected error when encoding 16-bit data with JPEG Extended")
+	}
+}
