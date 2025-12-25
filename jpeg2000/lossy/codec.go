@@ -7,7 +7,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*Codec)(nil)
@@ -58,7 +58,7 @@ func (c *Codec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG 2000 Lossy format
-func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -142,7 +142,7 @@ func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelDat
 }
 
 // Decode decodes JPEG 2000 Lossy data to uncompressed pixel data
-func (c *Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -197,7 +197,7 @@ func init() {
 }
 
 // encodeFrameOnce performs a single encode using the provided parameters for a single frame.
-func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *types.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
+func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	encParams := *baseEncParams
 	encParams.Lossless = false
 	encParams.NumLevels = clampNumLevels(p.NumLevels, int(frameInfo.Width), int(frameInfo.Height))
@@ -297,7 +297,7 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *types.FrameInfo, p 
 }
 
 // encodeFrameWithTargetRatio performs rate control on quality to reach target ratio for a single frame.
-func (c *Codec) encodeFrameWithTargetRatio(frameData []byte, frameInfo *types.FrameInfo, base *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
+func (c *Codec) encodeFrameWithTargetRatio(frameData []byte, frameInfo *imagetypes.FrameInfo, base *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	target := base.TargetRatio
 	if target <= 0 {
 		return c.encodeFrameOnce(frameData, frameInfo, base, baseEncParams)

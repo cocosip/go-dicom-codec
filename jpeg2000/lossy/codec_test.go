@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -48,7 +48,7 @@ func TestBasicEncodeDecode(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -162,7 +162,7 @@ func TestLargerImage(t *testing.T) {
 		}
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -232,7 +232,7 @@ func TestRGBImage(t *testing.T) {
 		pixelData[i*3+2] = byte((i * 5) % 256) // B
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -304,7 +304,7 @@ func TestRateControlAndLayers(t *testing.T) {
 		pixelData[i] = byte((i * 7) % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,

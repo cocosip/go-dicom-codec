@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
@@ -92,7 +92,7 @@ func TestHTJ2KCodec_EncodeDecodeRoundTrip(t *testing.T) {
 		18, 28, 38, 48,
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -179,7 +179,7 @@ func TestHTJ2KCodec_EncodeDecodeRoundTrip(t *testing.T) {
 func TestHTJ2KCodec_InvalidInput(t *testing.T) {
 	htj2kCodec := NewLosslessCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     8,
 		Height:                    8,
 		BitsAllocated:             8,
@@ -196,8 +196,8 @@ func TestHTJ2KCodec_InvalidInput(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		src     types.PixelData
-		dst     types.PixelData
+		src     imagetypes.PixelData
+		dst     imagetypes.PixelData
 		wantErr bool
 	}{
 		{

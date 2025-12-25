@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 func main() {
@@ -53,12 +55,9 @@ func registryUsageExample() {
 	fmt.Println()
 
 	// Example structure (with placeholder data)
-	src := &codec.PixelData{
-		// Data would contain actual JPEG 2000 codestream
-		// Data: j2kCompressedData,
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     512,
 		Height:                    512,
-		NumberOfFrames:            1,
 		BitsAllocated:             16,
 		BitsStored:                12,
 		HighBit:                   11,
@@ -66,22 +65,25 @@ func registryUsageExample() {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.JPEG2000Lossless.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	// Data would contain actual JPEG 2000 codestream
+	// src.AddFrame(j2kCompressedData)
+	_ = src // Placeholder for example
 
 	fmt.Printf("Example source metadata:\n")
-	fmt.Printf("  Dimensions: %dx%d\n", src.Width, src.Height)
-	fmt.Printf("  Bit depth: %d bits (allocated: %d)\n", src.BitsStored, src.BitsAllocated)
-	fmt.Printf("  Components: %d\n", src.SamplesPerPixel)
-	fmt.Printf("  Photometric: %s\n", src.PhotometricInterpretation)
+	fmt.Printf("  Dimensions: %dx%d\n", frameInfo.Width, frameInfo.Height)
+	fmt.Printf("  Bit depth: %d bits (allocated: %d)\n", frameInfo.BitsStored, frameInfo.BitsAllocated)
+	fmt.Printf("  Components: %d\n", frameInfo.SamplesPerPixel)
+	fmt.Printf("  Photometric: %s\n", frameInfo.PhotometricInterpretation)
 	fmt.Println()
 
 	fmt.Println("To decode:")
-	fmt.Println("  dst := &codec.PixelData{}")
+	fmt.Println("  dst := codecHelpers.NewTestPixelData(frameInfo)")
 	fmt.Println("  err := j2kCodec.Decode(src, dst, nil)")
 	fmt.Println("  if err == nil {")
-	fmt.Println("    // dst.Data contains uncompressed pixel data")
-	fmt.Println("    // dst.TransferSyntaxUID is ExplicitVRLittleEndian")
+	fmt.Println("    data, _ := dst.GetFrame(0)")
+	fmt.Println("    // data contains uncompressed pixel data")
 	fmt.Println("  }")
 }
 

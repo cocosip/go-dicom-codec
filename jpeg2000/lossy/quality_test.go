@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -24,7 +24,7 @@ func TestQualityParameter(t *testing.T) {
 		}
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -173,7 +173,7 @@ func TestQualityRange(t *testing.T) {
 		}
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -326,7 +326,7 @@ func TestDifferentImagePatterns(t *testing.T) {
 				}
 			}
 
-			frameInfo := &types.FrameInfo{
+			frameInfo := &imagetypes.FrameInfo{
 				Width:                     width,
 				Height:                    height,
 				BitsAllocated:             8,
@@ -397,7 +397,7 @@ func TestDifferentImageSizes(t *testing.T) {
 				}
 			}
 
-			frameInfo := &types.FrameInfo{
+			frameInfo := &imagetypes.FrameInfo{
 				Width:                     size.width,
 				Height:                    size.height,
 				BitsAllocated:             8,
@@ -474,7 +474,7 @@ func TestDifferentBitDepths(t *testing.T) {
 				}
 			}
 
-			frameInfo := &types.FrameInfo{
+			frameInfo := &imagetypes.FrameInfo{
 				Width:                     width,
 				Height:                    height,
 				BitsAllocated:             bd.bitsAllocated,
@@ -533,7 +533,7 @@ func TestRGBImages(t *testing.T) {
 		}
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -595,7 +595,7 @@ func TestCompressionRatioMonotonicity(t *testing.T) {
 		}
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,

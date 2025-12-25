@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*JPEGLSNearLosslessCodec)(nil)
@@ -46,7 +46,7 @@ func (c *JPEGLSNearLosslessCodec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG-LS Near-Lossless format
-func (c *JPEGLSNearLosslessCodec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *JPEGLSNearLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -123,7 +123,7 @@ func (c *JPEGLSNearLosslessCodec) Encode(oldPixelData types.PixelData, newPixelD
 }
 
 // Decode decodes JPEG-LS Near-Lossless data to uncompressed pixel data
-func (c *JPEGLSNearLosslessCodec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *JPEGLSNearLosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

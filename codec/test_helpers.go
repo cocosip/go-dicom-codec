@@ -1,17 +1,17 @@
 package codec
 
 import (
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
-// TestPixelData is a simple implementation of types.PixelData for testing
+// TestPixelData is a simple implementation of imagetypes.PixelData for testing
 type TestPixelData struct {
 	frames    [][]byte
-	frameInfo *types.FrameInfo
+	frameInfo *imagetypes.FrameInfo
 }
 
 // NewTestPixelData creates a new TestPixelData with the given frame info
-func NewTestPixelData(frameInfo *types.FrameInfo) *TestPixelData {
+func NewTestPixelData(frameInfo *imagetypes.FrameInfo) *TestPixelData {
 	return &TestPixelData{
 		frames:    make([][]byte, 0),
 		frameInfo: frameInfo,
@@ -38,7 +38,7 @@ func (p *TestPixelData) FrameCount() int {
 }
 
 // GetFrameInfo returns frame metadata for codec operations
-func (p *TestPixelData) GetFrameInfo() *types.FrameInfo {
+func (p *TestPixelData) GetFrameInfo() *imagetypes.FrameInfo {
 	return p.frameInfo
 }
 

@@ -6,7 +6,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -46,7 +46,7 @@ func TestBaselineCodecEncodeDecode(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -160,7 +160,7 @@ func TestBaselineCodecRGB(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -242,7 +242,7 @@ func TestBaselineCodecWithParameters(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -327,7 +327,7 @@ func TestBaselineCodecRegistry(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -366,7 +366,7 @@ func TestBaselineQualityLevels(t *testing.T) {
 	}
 
 	// Create source PixelData
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,

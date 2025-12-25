@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"math/rand"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 // This example demonstrates basic JPEG 2000 lossless and lossy compression
@@ -36,22 +37,25 @@ func main() {
 // losslessExample demonstrates lossless JPEG 2000 compression
 func losslessExample(pixelData []byte, width, height int) {
 	// Create source pixel data
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create parameters (default NumLevels=5)
 	params := lossless.NewLosslessParameters().WithNumLevels(5)
 
 	// Create codec and encode
 	encoder := lossless.NewCodec()
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
 	if err != nil {
@@ -60,13 +64,15 @@ func losslessExample(pixelData []byte, width, height int) {
 	}
 
 	// Report compression
-	ratio := float64(len(src.Data)) / float64(len(dst.Data))
-	fmt.Printf("   Original size: %d bytes\n", len(src.Data))
-	fmt.Printf("   Compressed size: %d bytes\n", len(dst.Data))
+	srcData, _ := src.GetFrame(0)
+	dstData, _ := dst.GetFrame(0)
+	ratio := float64(len(srcData)) / float64(len(dstData))
+	fmt.Printf("   Original size: %d bytes\n", len(srcData))
+	fmt.Printf("   Compressed size: %d bytes\n", len(dstData))
 	fmt.Printf("   Compression ratio: %.2fx\n", ratio)
 
 	// Decode back
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = encoder.Decode(dst, decoded, nil)
 	if err != nil {
 		fmt.Printf("   ERROR: Decode failed: %v\n", err)
@@ -74,7 +80,8 @@ func losslessExample(pixelData []byte, width, height int) {
 	}
 
 	// Verify perfect reconstruction
-	errors := countPixelErrors(src.Data, decoded.Data)
+	decodedData, _ := decoded.GetFrame(0)
+	errors := countPixelErrors(srcData, decodedData)
 	fmt.Printf("   Pixel errors: %d (should be 0 for lossless)\n", errors)
 	if errors == 0 {
 		fmt.Println("   ✅ Perfect reconstruction!")
@@ -85,15 +92,18 @@ func losslessExample(pixelData []byte, width, height int) {
 
 // lossyQualityExample demonstrates lossy compression with different quality levels
 func lossyQualityExample(pixelData []byte, width, height int) {
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Try different quality levels
 	qualities := []int{95, 85, 70, 50}
@@ -106,7 +116,7 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 
 		// Create codec and encode
 		encoder := lossy.NewCodec(quality)
-		dst := &codec.PixelData{}
+		dst := codecHelpers.NewTestPixelData(frameInfo)
 
 		err := encoder.Encode(src, dst, params)
 		if err != nil {
@@ -115,7 +125,7 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 		}
 
 		// Decode
-		decoded := &codec.PixelData{}
+		decoded := codecHelpers.NewTestPixelData(frameInfo)
 		err = encoder.Decode(dst, decoded, nil)
 		if err != nil {
 			fmt.Printf("   Quality %d: Decode ERROR: %v\n", quality, err)
@@ -123,9 +133,12 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 		}
 
 		// Calculate metrics
-		ratio := float64(len(src.Data)) / float64(len(dst.Data))
-		maxError := calculateMaxError(src.Data, decoded.Data)
-		avgError := calculateAvgError(src.Data, decoded.Data)
+		srcData, _ := src.GetFrame(0)
+		dstData, _ := dst.GetFrame(0)
+		decodedData, _ := decoded.GetFrame(0)
+		ratio := float64(len(srcData)) / float64(len(dstData))
+		maxError := calculateMaxError(srcData, decodedData)
+		avgError := calculateAvgError(srcData, decodedData)
 
 		fmt.Printf("   Quality %d: %.2fx compression, max error=%d, avg error=%.2f\n",
 			quality, ratio, maxError, avgError)
@@ -134,15 +147,18 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 
 // lossyRatioExample demonstrates target compression ratio
 func lossyRatioExample(pixelData []byte, width, height int) {
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Try different target ratios
 	targetRatios := []float64{5.0, 8.0, 10.0}
@@ -155,7 +171,7 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 
 		// Create codec
 		encoder := lossy.NewCodec(80) // Default quality
-		dst := &codec.PixelData{}
+		dst := codecHelpers.NewTestPixelData(frameInfo)
 
 		err := encoder.Encode(src, dst, params)
 		if err != nil {
@@ -164,7 +180,9 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 		}
 
 		// Calculate actual ratio
-		actualRatio := float64(len(src.Data)) / float64(len(dst.Data))
+		srcData, _ := src.GetFrame(0)
+		dstData, _ := dst.GetFrame(0)
+		actualRatio := float64(len(srcData)) / float64(len(dstData))
 		deviation := (actualRatio - targetRatio) / targetRatio * 100
 
 		fmt.Printf("   Target %.1fx: Actual %.2fx (%.1f%% deviation)\n",

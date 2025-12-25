@@ -3,7 +3,7 @@ package htj2k
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -32,7 +32,7 @@ func TestHTJ2KLosslessRoundTrip(t *testing.T) {
 			}
 
 			// Create source PixelData
-			frameInfo := &types.FrameInfo{
+			frameInfo := &imagetypes.FrameInfo{
 				Width:                     tt.width,
 				Height:                    tt.height,
 				BitsAllocated:             8,
@@ -111,7 +111,7 @@ func TestHTJ2KLosslessRPCLRoundTrip(t *testing.T) {
 		testData[i] = byte(i % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -181,7 +181,7 @@ func TestHTJ2KLossyRoundTrip(t *testing.T) {
 				testData[i] = byte(i % 256)
 			}
 
-			frameInfo := &types.FrameInfo{
+			frameInfo := &imagetypes.FrameInfo{
 				Width:                     tt.width,
 				Height:                    tt.height,
 				BitsAllocated:             8,
@@ -259,7 +259,7 @@ func TestHTJ2KRGBRoundTrip(t *testing.T) {
 		testData[i*3+2] = byte((i * 3) % 256) // B
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -322,7 +322,7 @@ func TestHTJ2K12BitRoundTrip(t *testing.T) {
 		testData[i*2+1] = byte((val >> 8) & 0xFF)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             16,

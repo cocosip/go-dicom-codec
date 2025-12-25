@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -45,7 +45,7 @@ func TestLosslessCodecEncodeDecode(t *testing.T) {
 	}
 
 	// Create frame info
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -155,7 +155,7 @@ func TestLosslessCodecRGB(t *testing.T) {
 	}
 
 	// Create frame info
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -225,7 +225,7 @@ func TestLosslessCodecWithParameters(t *testing.T) {
 	}
 
 	// Create frame info
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -309,7 +309,7 @@ func TestCodecRegistry(t *testing.T) {
 	}
 
 	// Create frame info
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,

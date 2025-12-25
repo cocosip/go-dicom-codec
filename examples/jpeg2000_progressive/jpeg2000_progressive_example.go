@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"math/rand"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 // This example demonstrates progressive/multi-layer JPEG 2000 encoding
@@ -36,15 +38,18 @@ func main() {
 
 // basicMultiLayerExample demonstrates basic multi-layer encoding
 func basicMultiLayerExample(pixelData []byte, width, height int) {
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create parameters with 5 quality layers
 	params := lossy.NewLossyParameters().
@@ -54,7 +59,7 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 
 	// Encode
 	encoder := lossy.NewCodec(85)
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
 	if err != nil {
@@ -63,12 +68,14 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 	}
 
 	// Report results
-	ratio := float64(len(src.Data)) / float64(len(dst.Data))
+	srcData, _ := src.GetFrame(0)
+	dstData, _ := dst.GetFrame(0)
+	ratio := float64(len(srcData)) / float64(len(dstData))
 
 	fmt.Printf("   Image size: %dx%d\n", width, height)
 	fmt.Printf("   Number of layers: %d\n", params.NumLayers)
 	fmt.Printf("   Quality: %d\n", params.Quality)
-	fmt.Printf("   Compressed size: %d bytes\n", len(dst.Data))
+	fmt.Printf("   Compressed size: %d bytes\n", len(dstData))
 	fmt.Printf("   Compression ratio: %.2fx\n", ratio)
 	fmt.Println()
 	fmt.Println("   Layer distribution (approximate):")
@@ -80,28 +87,32 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 	fmt.Println("   💡 Decoder can stop at any layer for progressive display")
 
 	// Decode (all layers)
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = encoder.Decode(dst, decoded, nil)
 	if err != nil {
 		fmt.Printf("   Decode ERROR: %v\n", err)
 		return
 	}
 
+	decodedFrameInfo := decoded.GetFrameInfo()
 	fmt.Printf("   Decoded (full quality): %dx%d\n",
-		decoded.Width, decoded.Height)
+		decodedFrameInfo.Width, decodedFrameInfo.Height)
 }
 
 // multiLayerWithRatioExample combines multi-layer with target ratio
 func multiLayerWithRatioExample(pixelData []byte, width, height int) {
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create parameters with layers + target ratio
 	params := lossy.NewLossyParameters().
@@ -111,7 +122,7 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 
 	// Encode
 	encoder := lossy.NewCodec(80)
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
 	if err != nil {
@@ -120,14 +131,16 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 	}
 
 	// Report results
-	targetBytes := len(src.Data) / 8
-	actualRatio := float64(len(src.Data)) / float64(len(dst.Data))
+	srcData, _ := src.GetFrame(0)
+	dstData, _ := dst.GetFrame(0)
+	targetBytes := len(srcData) / 8
+	actualRatio := float64(len(srcData)) / float64(len(dstData))
 	deviation := (actualRatio - 8.0) / 8.0 * 100
 
 	fmt.Printf("   Target ratio: %.1fx (target size: ~%d bytes)\n",
 		8.0, targetBytes)
 	fmt.Printf("   Actual ratio: %.2fx (actual size: %d bytes)\n",
-		actualRatio, len(dst.Data))
+		actualRatio, len(dstData))
 	fmt.Printf("   Deviation: %.1f%%\n", deviation)
 	fmt.Printf("   Number of layers: %d\n", params.NumLayers)
 	fmt.Println()
@@ -141,15 +154,18 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 
 // progressiveDecodingExample simulates progressive decoding
 func progressiveDecodingExample(pixelData []byte, width, height int) {
-	src := &codec.PixelData{
-		Data:                     pixelData,
-		Width:                    uint16(width),
-		Height:                   uint16(height),
-		SamplesPerPixel:          1,
-		BitsStored:               8,
-		PixelRepresentation:      0,
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     uint16(width),
+		Height:                    uint16(height),
+		SamplesPerPixel:           1,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		PixelRepresentation:       0,
 		PhotometricInterpretation: "MONOCHROME2",
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Encode with 5 layers
 	params := lossy.NewLossyParameters().
@@ -158,7 +174,7 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 		WithNumLevels(5)
 
 	encoder := lossy.NewCodec(85)
-	dst := &codec.PixelData{}
+	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
 	if err != nil {
@@ -173,7 +189,8 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 	// Note: This is a simulation. Actual layer-by-layer decoding
 	// requires using the lower-level decoder API (t2/tile_decoder.go)
 
-	totalBytes := len(dst.Data)
+	dstData, _ := dst.GetFrame(0)
+	totalBytes := len(dstData)
 	layerSizes := []int{
 		totalBytes / 10,      // Layer 0: ~10% (fast preview)
 		totalBytes * 3 / 10,  // Layer 1: ~30% cumulative
@@ -209,15 +226,17 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 	fmt.Println("      the lower-level tile decoder API for maximum control")
 
 	// Full decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = encoder.Decode(dst, decoded, nil)
 	if err != nil {
 		fmt.Printf("   Decode ERROR: %v\n", err)
 		return
 	}
 
-	maxError := calculateMaxError(src.Data, decoded.Data)
-	avgError := calculateAvgError(src.Data, decoded.Data)
+	srcData, _ := src.GetFrame(0)
+	decodedData, _ := decoded.GetFrame(0)
+	maxError := calculateMaxError(srcData, decodedData)
+	avgError := calculateAvgError(srcData, decodedData)
 
 	fmt.Println()
 	fmt.Printf("   Full quality decode:\n")

@@ -6,7 +6,7 @@ import (
 
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
-    "github.com/cocosip/go-dicom/pkg/imaging/types"
+    "github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
     codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -65,7 +65,7 @@ func TestParameterNearValues(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,
@@ -117,7 +117,7 @@ func TestCodecEncode(t *testing.T) {
     }
 
     // Base frameInfo
-    baseFrameInfo := &types.FrameInfo{
+    baseFrameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,
@@ -131,26 +131,26 @@ func TestCodecEncode(t *testing.T) {
 
     tests := []struct {
         name    string
-        mutate  func(*types.FrameInfo) (*types.FrameInfo, codec.Parameters)
+        mutate  func(*imagetypes.FrameInfo) (*imagetypes.FrameInfo, codec.Parameters)
         wantErr bool
     }{
         {
             name: "Valid NEAR=0 (lossless)",
-            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+            mutate: func(fi *imagetypes.FrameInfo) (*imagetypes.FrameInfo, codec.Parameters) {
                 p := codec.NewBaseParameters(); p.SetParameter("near", 0); return fi, p
             },
             wantErr: false,
         },
         {
             name: "Valid NEAR=3",
-            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+            mutate: func(fi *imagetypes.FrameInfo) (*imagetypes.FrameInfo, codec.Parameters) {
                 p := codec.NewBaseParameters(); p.SetParameter("near", 3); return fi, p
             },
             wantErr: false,
         },
         {
             name: "Invalid width",
-            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+            mutate: func(fi *imagetypes.FrameInfo) (*imagetypes.FrameInfo, codec.Parameters) {
                 newFi := *fi
                 newFi.Width = 0; return &newFi, nil
             },
@@ -158,7 +158,7 @@ func TestCodecEncode(t *testing.T) {
         },
         {
             name: "Invalid components",
-            mutate: func(fi *types.FrameInfo) (*types.FrameInfo, codec.Parameters) {
+            mutate: func(fi *imagetypes.FrameInfo) (*imagetypes.FrameInfo, codec.Parameters) {
                 newFi := *fi
                 newFi.SamplesPerPixel = 2; return &newFi, nil
             },
@@ -197,7 +197,7 @@ func TestCodecDecode(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,
@@ -266,7 +266,7 @@ func TestCodecDecodeInvalid(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            frameInfo := &types.FrameInfo{
+            frameInfo := &imagetypes.FrameInfo{
                 Width:                     32,
                 Height:                    32,
                 BitsAllocated:             8,
@@ -315,7 +315,7 @@ func TestCodecRoundTrip(t *testing.T) {
             }
 
             // Create source PixelData
-            frameInfo := &types.FrameInfo{
+            frameInfo := &imagetypes.FrameInfo{
                 Width:                     uint16(tt.width),
                 Height:                    uint16(tt.height),
                 BitsAllocated:             8,

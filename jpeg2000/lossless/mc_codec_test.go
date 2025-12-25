@@ -4,7 +4,7 @@ import (
     "testing"
     "github.com/cocosip/go-dicom-codec/jpeg2000"
     "github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
-    "github.com/cocosip/go-dicom/pkg/imaging/types"
+    "github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
     codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -14,7 +14,7 @@ func TestLosslessCodecWithMCTBindingsWritesMarkers(t *testing.T) {
     src := make([]byte, n*comps)
     for i := 0; i < n; i++ { src[2*i] = byte(i%256); src[2*i+1] = byte((i*3)%256) }
 
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:           uint16(w),
         Height:          uint16(h),
         BitsAllocated:   8,

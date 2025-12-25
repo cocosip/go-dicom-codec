@@ -5,7 +5,7 @@ import (
 
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
-    "github.com/cocosip/go-dicom/pkg/imaging/types"
+    "github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
     codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -39,7 +39,7 @@ func TestCodecEncodeDecode8Bit(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,
@@ -108,7 +108,7 @@ func TestCodecEncodeDecode12Bit(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             16,
@@ -166,7 +166,7 @@ func TestCodecRGB(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,
@@ -225,7 +225,7 @@ func TestCodecRegistry(t *testing.T) {
     }
 
     // Create source PixelData
-    frameInfo := &types.FrameInfo{
+    frameInfo := &imagetypes.FrameInfo{
         Width:                     uint16(width),
         Height:                    uint16(height),
         BitsAllocated:             8,

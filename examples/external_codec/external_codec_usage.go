@@ -3,13 +3,15 @@ package main
 import (
 	"fmt"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom-codec/jpeg/lossless"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 func main() {
-	fmt.Println("=== JPEG Lossless Codec Usage Example (External Interface) ===\n")
+	fmt.Println("=== JPEG Lossless Codec Usage Example (External Interface) ===")
 
 	// Example 1: Direct codec usage
 	fmt.Println("Example 1: Direct codec usage")
@@ -38,11 +40,9 @@ func directUsage() {
 	}
 
 	// Create source PixelData
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -50,27 +50,30 @@ func directUsage() {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create codec with predictor 4 (Ra + Rb - Rc)
 	losslessCodec := lossless.NewLosslessCodec(4)
 	fmt.Printf("Codec: %s\n", losslessCodec.Name())
 
 	// Encode
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := losslessCodec.Encode(src, encoded, nil)
 	if err != nil {
 		fmt.Printf("Encode error: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Original size: %d bytes\n", len(src.Data))
-	fmt.Printf("Compressed size: %d bytes\n", len(encoded.Data))
-	fmt.Printf("Compression ratio: %.2fx\n", float64(len(src.Data))/float64(len(encoded.Data)))
+	srcData, _ := src.GetFrame(0)
+	encodedData, _ := encoded.GetFrame(0)
+	fmt.Printf("Original size: %d bytes\n", len(srcData))
+	fmt.Printf("Compressed size: %d bytes\n", len(encodedData))
+	fmt.Printf("Compression ratio: %.2fx\n", float64(len(srcData))/float64(len(encodedData)))
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = losslessCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		fmt.Printf("Decode error: %v\n", err)
@@ -78,15 +81,16 @@ func directUsage() {
 	}
 
 	// Verify lossless reconstruction
+	decodedData, _ := decoded.GetFrame(0)
 	errors := 0
-	for i := 0; i < len(src.Data); i++ {
-		if decoded.Data[i] != src.Data[i] {
+	for i := 0; i < len(srcData); i++ {
+		if decodedData[i] != srcData[i] {
 			errors++
 		}
 	}
 
 	if errors == 0 {
-		fmt.Printf("✓ Perfect lossless reconstruction: all %d pixels match\n", len(src.Data))
+		fmt.Printf("✓ Perfect lossless reconstruction: all %d pixels match\n", len(srcData))
 	} else {
 		fmt.Printf("✗ Reconstruction errors: %d pixels differ\n", errors)
 	}
@@ -113,11 +117,9 @@ func registryUsage() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -125,22 +127,25 @@ func registryUsage() {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Encode using retrieved codec
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)
 	if err != nil {
 		fmt.Printf("Encode error: %v\n", err)
 		return
 	}
 
+	srcData, _ := src.GetFrame(0)
+	encodedData, _ := encoded.GetFrame(0)
 	fmt.Printf("Compressed size: %d bytes (%.2fx)\n",
-		len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)))
+		len(encodedData), float64(len(srcData))/float64(len(encodedData)))
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = retrievedCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		fmt.Printf("Decode error: %v\n", err)
@@ -148,9 +153,10 @@ func registryUsage() {
 	}
 
 	// Verify
+	decodedData, _ := decoded.GetFrame(0)
 	errors := 0
-	for i := 0; i < len(src.Data); i++ {
-		if decoded.Data[i] != src.Data[i] {
+	for i := 0; i < len(srcData); i++ {
+		if decodedData[i] != srcData[i] {
 			errors++
 		}
 	}
@@ -175,11 +181,9 @@ func parametersUsage() {
 		}
 	}
 
-	src := &codec.PixelData{
-		Data:                      pixelData,
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
-		NumberOfFrames:            1,
 		BitsAllocated:             8,
 		BitsStored:                8,
 		HighBit:                   7,
@@ -187,28 +191,31 @@ func parametersUsage() {
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
 		PhotometricInterpretation: "MONOCHROME2",
-		TransferSyntaxUID:         transfer.ExplicitVRLittleEndian.UID().UID(),
 	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	src.AddFrame(pixelData)
 
 	// Create parameters and override predictor
 	params := codec.NewBaseParameters()
 	params.SetParameter("predictor", 5) // Use predictor 5
 
 	// Encode with parameters
-	encoded := &codec.PixelData{}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := losslessCodec.Encode(src, encoded, params)
 	if err != nil {
 		fmt.Printf("Encode error: %v\n", err)
 		return
 	}
 
+	srcData, _ := src.GetFrame(0)
+	encodedData, _ := encoded.GetFrame(0)
 	fmt.Printf("Codec default: %s\n", losslessCodec.Name())
 	fmt.Printf("Using predictor from parameters: 5 (Ra + ((Rb - Rc) >> 1))\n")
 	fmt.Printf("Compressed size: %d bytes (%.2fx)\n",
-		len(encoded.Data), float64(len(src.Data))/float64(len(encoded.Data)))
+		len(encodedData), float64(len(srcData))/float64(len(encodedData)))
 
 	// Decode
-	decoded := &codec.PixelData{}
+	decoded := codecHelpers.NewTestPixelData(frameInfo)
 	err = losslessCodec.Decode(encoded, decoded, nil)
 	if err != nil {
 		fmt.Printf("Decode error: %v\n", err)
@@ -216,9 +223,10 @@ func parametersUsage() {
 	}
 
 	// Verify
+	decodedData, _ := decoded.GetFrame(0)
 	errors := 0
-	for i := 0; i < len(src.Data); i++ {
-		if decoded.Data[i] != src.Data[i] {
+	for i := 0; i < len(srcData); i++ {
+		if decodedData[i] != srcData[i] {
 			errors++
 		}
 	}

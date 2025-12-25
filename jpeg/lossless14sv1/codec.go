@@ -7,7 +7,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*LosslessSV1Codec)(nil)
@@ -41,7 +41,7 @@ func (c *LosslessSV1Codec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG Lossless SV1 format
-func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -101,7 +101,7 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 }
 
 // Decode decodes JPEG Lossless SV1 data to uncompressed pixel data
-func (c *LosslessSV1Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

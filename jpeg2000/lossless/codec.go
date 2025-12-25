@@ -6,7 +6,7 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*Codec)(nil)
@@ -50,7 +50,7 @@ func (c *Codec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG 2000 Lossless format
-func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -159,7 +159,7 @@ func (c *Codec) Encode(oldPixelData types.PixelData, newPixelData types.PixelDat
 }
 
 // Decode decodes JPEG 2000 Lossless data to uncompressed pixel data
-func (c *Codec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

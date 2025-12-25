@@ -5,7 +5,7 @@ import (
 	"log"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -20,7 +20,7 @@ func ExampleCodec_Encode() {
 	}
 
 	// Prepare source pixel data
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -61,7 +61,7 @@ func ExampleCodec_Encode_withQualityParameter() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -139,7 +139,7 @@ func ExampleCodec_Decode() {
 		pixelData[i] = byte(i % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,

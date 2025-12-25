@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*ExtendedCodec)(nil)
@@ -51,7 +51,7 @@ func (c *ExtendedCodec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data using JPEG Extended
-func (c *ExtendedCodec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *ExtendedCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	// Get frame info
 	frameInfo := oldPixelData.GetFrameInfo()
 	if frameInfo == nil {
@@ -131,7 +131,7 @@ func (c *ExtendedCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 }
 
 // Decode decodes JPEG Extended data
-func (c *ExtendedCodec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *ExtendedCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()
 	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {

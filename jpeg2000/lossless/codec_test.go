@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -53,7 +53,7 @@ func TestCodecTransferSyntax(t *testing.T) {
 func TestDecodeNilInputs(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -64,8 +64,8 @@ func TestDecodeNilInputs(t *testing.T) {
 
 	tests := []struct {
 		name string
-		src  types.PixelData
-		dst  types.PixelData
+		src  imagetypes.PixelData
+		dst  imagetypes.PixelData
 	}{
 		{"Both nil", nil, nil},
 		{"Src nil", nil, codecHelpers.NewTestPixelData(frameInfo)},
@@ -86,7 +86,7 @@ func TestDecodeNilInputs(t *testing.T) {
 func TestDecodeEmptyData(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -107,7 +107,7 @@ func TestDecodeEmptyData(t *testing.T) {
 func TestDecodeInvalidData(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -136,7 +136,7 @@ func TestEncodeNotImplemented(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -170,7 +170,7 @@ func TestEncodeNotImplemented(t *testing.T) {
 func TestEncodeNilInputs(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -183,8 +183,8 @@ func TestEncodeNilInputs(t *testing.T) {
 
 	tests := []struct {
 		name string
-		src  types.PixelData
-		dst  types.PixelData
+		src  imagetypes.PixelData
+		dst  imagetypes.PixelData
 	}{
 		{"Both nil", nil, nil},
 		{"Src nil", nil, codecHelpers.NewTestPixelData(frameInfo)},
@@ -205,7 +205,7 @@ func TestEncodeNilInputs(t *testing.T) {
 func TestEncodeEmptyData(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,

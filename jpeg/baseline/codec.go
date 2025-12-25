@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 var _ codec.Codec = (*BaselineCodec)(nil)
@@ -46,7 +46,7 @@ func (c *BaselineCodec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG Baseline format
-func (c *BaselineCodec) Encode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *BaselineCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -122,7 +122,7 @@ func (c *BaselineCodec) Encode(oldPixelData types.PixelData, newPixelData types.
 }
 
 // Decode decodes JPEG Baseline data to uncompressed pixel data
-func (c *BaselineCodec) Decode(oldPixelData types.PixelData, newPixelData types.PixelData, parameters codec.Parameters) error {
+func (c *BaselineCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

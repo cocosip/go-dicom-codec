@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -53,7 +53,7 @@ func TestCodecInterfaceCompliance(t *testing.T) {
 	}
 
 	// Test Encode method exists and works
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           1,
 		Height:          1,
 		BitsAllocated:   8,
@@ -118,7 +118,7 @@ func TestCodecMetadata(t *testing.T) {
 func TestDecodeErrorHandling(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -135,8 +135,8 @@ func TestDecodeErrorHandling(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		src         types.PixelData
-		dst         types.PixelData
+		src         imagetypes.PixelData
+		dst         imagetypes.PixelData
 		expectError bool
 		errorContains string
 	}{
@@ -205,7 +205,7 @@ func TestDecodeErrorHandling(t *testing.T) {
 func TestEncodeErrorHandling(t *testing.T) {
 	c := NewCodec()
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:           64,
 		Height:          64,
 		BitsAllocated:   8,
@@ -217,7 +217,7 @@ func TestEncodeErrorHandling(t *testing.T) {
 	srcWithData := codecHelpers.NewTestPixelData(frameInfo)
 	srcWithData.AddFrame([]byte{1})
 
-	frameInfoSmall := &types.FrameInfo{
+	frameInfoSmall := &imagetypes.FrameInfo{
 		Width:           8,
 		Height:          8,
 		BitsAllocated:   8,
@@ -230,8 +230,8 @@ func TestEncodeErrorHandling(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		src         types.PixelData
-		dst         types.PixelData
+		src         imagetypes.PixelData
+		dst         imagetypes.PixelData
 		expectError bool
 	}{
 		{

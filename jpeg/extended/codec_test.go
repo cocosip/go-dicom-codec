@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -33,7 +33,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 	}
 
 	// Create frame info with metadata
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -52,7 +52,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 	extCodec := NewExtendedCodec(8, 85)
 
 	// Create encoded PixelData
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -79,7 +79,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 	t.Logf("Compression ratio: %.2fx", float64(len(srcData))/float64(len(encodedData)))
 
 	// Create decoded PixelData
-	decodedFrameInfo := &types.FrameInfo{
+	decodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -143,7 +143,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 	}
 
 	// Create frame info with metadata
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -162,7 +162,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 	extCodec := NewExtendedCodec(12, 85)
 
 	// Create encoded PixelData
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -189,7 +189,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 	t.Logf("12-bit Compression ratio: %.2fx", float64(len(srcData))/float64(len(encodedData)))
 
 	// Create decoded PixelData
-	decodedFrameInfo := &types.FrameInfo{
+	decodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -259,7 +259,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 	}
 
 	// Create frame info with metadata
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -278,7 +278,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 	extCodec := NewExtendedCodec(8, 85)
 
 	// Create encoded PixelData
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -305,7 +305,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 	t.Logf("RGB Compression ratio: %.2fx", float64(len(srcData))/float64(len(encodedData)))
 
 	// Create decoded PixelData
-	decodedFrameInfo := &types.FrameInfo{
+	decodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -362,7 +362,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 	}
 
 	// Create frame info with metadata
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -385,7 +385,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 	params.SetParameter("quality", 95)
 
 	// Create encoded PixelData
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -408,7 +408,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 	t.Logf("Compressed with quality 95: %d bytes", len(encodedData))
 
 	// Create decoded PixelData
-	decodedFrameInfo := &types.FrameInfo{
+	decodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -467,7 +467,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 	}
 
 	// Create frame info with metadata
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -484,7 +484,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 	src.AddFrame(pixelData)
 
 	// Create encoded PixelData
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -502,7 +502,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 	}
 
 	// Create decoded PixelData
-	decodedFrameInfo := &types.FrameInfo{
+	decodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -527,7 +527,7 @@ func TestExtendedCodecRejects16Bit(t *testing.T) {
 	width, height := 16, 16
 	pixelData := make([]byte, width*height*2)
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
@@ -542,7 +542,7 @@ func TestExtendedCodecRejects16Bit(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	encodedFrameInfo := &types.FrameInfo{
+	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,

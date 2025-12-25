@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -18,7 +18,7 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 		pixelData[i] = byte(i % 256)
 	}
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -73,7 +73,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	height := uint16(64)
 	pixelData := make([]byte, int(width)*int(height))
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,
@@ -169,7 +169,7 @@ func TestNilParameters(t *testing.T) {
 	height := uint16(64)
 	pixelData := make([]byte, int(width)*int(height))
 
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     width,
 		Height:                    height,
 		BitsAllocated:             8,

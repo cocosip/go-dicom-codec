@@ -5,7 +5,7 @@ import (
 
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
-	"github.com/cocosip/go-dicom/pkg/imaging/types"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
@@ -45,7 +45,7 @@ func TestLosslessSV1CodecEncodeDecode(t *testing.T) {
 	}
 
 	// Create source PixelData using test helper
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -140,7 +140,7 @@ func TestLosslessSV1CodecRGB(t *testing.T) {
 	}
 
 	// Create source PixelData using test helper
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -237,7 +237,7 @@ func TestLosslessSV1CodecRegistry(t *testing.T) {
 	}
 
 	// Create source PixelData using test helper
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             8,
@@ -299,7 +299,7 @@ func TestLosslessSV116Bit(t *testing.T) {
 	}
 
 	// Create source PixelData using test helper
-	frameInfo := &types.FrameInfo{
+	frameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),
 		Height:                    uint16(height),
 		BitsAllocated:             16,
