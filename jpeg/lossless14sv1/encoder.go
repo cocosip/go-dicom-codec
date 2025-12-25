@@ -48,10 +48,9 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 	// Convert once for analysis/encoding
 	samples := enc.pixelsToSamples(pixelData)
 
-	// Pre-scan differences to decide Huffman table set. Use standard tables if categories fit 0-11,
-	// otherwise fall back to extended tables for 12-16 bit data.
+	// Prefer the standard lossless DC tables; fall back to extended only when the category exceeds table coverage.
+	// For SV1 predictor=1, this should usually stay within the default table used by libjpeg/fo-dicom.
 	maxCat := computeMaxCategorySV1(samples, components, width, height, bitDepth)
-
 	if bitDepth >= 12 && maxCat > 11 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
@@ -63,12 +62,12 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		)
 	} else {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
-			common.StandardDCLuminanceBits,
-			common.StandardDCLuminanceValues,
+			common.LosslessDCLuminanceBits,
+			common.LosslessDCLuminanceValues,
 		)
 		enc.dcTables[1] = common.BuildStandardHuffmanTable(
-			common.StandardDCChrominanceBits,
-			common.StandardDCChrominanceValues,
+			common.LosslessDCChrominanceBits,
+			common.LosslessDCChrominanceValues,
 		)
 	}
 

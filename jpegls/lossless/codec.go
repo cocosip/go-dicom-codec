@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/types"
@@ -68,9 +69,9 @@ func (c *JPEGLSLosslessCodec) Encode(oldPixelData types.PixelData, newPixelData 
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// If pixel data is signed, shift samples into unsigned range before encoding.
+		// For PR=1, shift only when pixel values actually跨过符号位；避免无符号数据被多余偏移。
 		adjustedFrame := frameData
-		if frameInfo.PixelRepresentation != 0 {
+		if common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
 			shifted, serr := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if serr != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, serr)

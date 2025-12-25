@@ -67,6 +67,7 @@ func (c *LosslessSV1Codec) Encode(oldPixelData types.PixelData, newPixelData typ
 
 		// Determine if shift is needed; only when PR=1 and values cross sign bit.
 		adjustedFrame := frameData
+		// For PR=1, shift only when pixel values actually cross sign bit; avoids disturbing unsigned-but-tagged data.
 		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 
 		if needsShift {

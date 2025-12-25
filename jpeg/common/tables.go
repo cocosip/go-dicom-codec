@@ -58,14 +58,12 @@ func ScaleQuantTable(baseTable [64]int32, quality int) [64]int32 {
 // Standard Huffman tables for baseline JPEG
 
 // StandardDCLuminanceBits contains the number of codes for each length (DC luminance)
-// This is the standard table used by libjpeg for lossless JPEG
+// This is the standard table used by libjpeg for baseline JPEG
 var StandardDCLuminanceBits = [16]int{
 	0, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
 }
 
 // StandardDCLuminanceValues contains the Huffman values (DC luminance)
-// Note: This table includes categories 0-10 and 15, skipping 11-14
-// This matches the libjpeg/fo-dicom implementation for lossless JPEG
 var StandardDCLuminanceValues = []byte{
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15,
 }
@@ -163,6 +161,23 @@ var ExtendedDCChrominanceBits = [16]int{
 // ExtendedDCChrominanceValues contains the Huffman values (DC chrominance, extended)
 var ExtendedDCChrominanceValues = []byte{
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+}
+
+// Default lossless DC Huffman tables used by libjpeg/fo-dicom (categories 0-12-ish)
+var LosslessDCLuminanceBits = [16]int{
+	0, 2, 3, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+}
+
+var LosslessDCLuminanceValues = []byte{
+	0x00, 0x04, 0x02, 0x03, 0x05, 0x01, 0x06, 0x07, 0x0C, 0x0B, 0x08, 0x0F,
+}
+
+var LosslessDCChrominanceBits = [16]int{
+	0, 2, 3, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
+}
+
+var LosslessDCChrominanceValues = []byte{
+	0x00, 0x04, 0x02, 0x03, 0x05, 0x01, 0x06, 0x07, 0x0C, 0x0B, 0x08, 0x0F,
 }
 
 // BuildStandardHuffmanTable builds a standard Huffman table

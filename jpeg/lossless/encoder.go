@@ -61,7 +61,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	samples := enc.pixelsToSamples(pixelData)
 	maxCat := computeMaxCategory(samples, enc.components, enc.width, enc.height, enc.precision, enc.predictor)
 
-	// Choose standard tables if categories fit 0-11; otherwise extended for high bit-depth
+	// Prefer the standard lossless DC tables; fall back to extended only when the category exceeds table coverage.
 	if bitDepth >= 12 && maxCat > 11 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
@@ -73,12 +73,12 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 		)
 	} else {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
-			common.StandardDCLuminanceBits,
-			common.StandardDCLuminanceValues,
+			common.LosslessDCLuminanceBits,
+			common.LosslessDCLuminanceValues,
 		)
 		enc.dcTables[1] = common.BuildStandardHuffmanTable(
-			common.StandardDCChrominanceBits,
-			common.StandardDCChrominanceValues,
+			common.LosslessDCChrominanceBits,
+			common.LosslessDCChrominanceValues,
 		)
 	}
 
