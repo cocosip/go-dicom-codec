@@ -142,10 +142,24 @@ func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelDat
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decode: keep the decoded values as-is
-		// Do NOT reverse shift - the JPEG stream contains the shifted values
-		// Viewer will interpret based on PixelRepresentation tag
+		// JPEG Lossless decode: check if we need to reverse shift
+		// If PR=1 and data was shifted during encoding, reverse it for lossless roundtrip
 		adjustedPixels := pixelData
+
+		if frameInfo.PixelRepresentation == 1 {
+			// Check if decoded data looks like shifted signed data
+			// (i.e., values are in unsigned range that would indicate shift was applied)
+			needsReverseShift := common.ShouldShiftPixelData(pixelData, int(frameInfo.BitsStored))
+
+			if needsReverseShift {
+				// Reverse the shift: unsigned → signed
+				shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
+				if err != nil {
+					return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
+				}
+				adjustedPixels = shifted
+			}
+		}
 
 		// Add decoded frame to destination
 		if err := newPixelData.AddFrame(adjustedPixels); err != nil {

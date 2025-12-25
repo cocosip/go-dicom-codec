@@ -17,9 +17,9 @@ func main() {
 
 	// Register all codecs
 	fmt.Println("Registering all JPEG codecs...")
-	baseline.RegisterBaselineCodec(85)          // Quality 85
-	lossless14sv1.RegisterLosslessSV1Codec()    // Predictor 1 only
-	lossless.RegisterLosslessCodec(4)           // Predictor 4
+	baseline.RegisterBaselineCodec(85)       // Quality 85
+	lossless14sv1.RegisterLosslessSV1Codec() // Predictor 1 only
+	lossless.RegisterLosslessCodec(4)        // Predictor 4
 	fmt.Println("✓ All codecs registered\n")
 
 	// Create test image data (64x64 grayscale)
