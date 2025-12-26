@@ -172,11 +172,65 @@ func ShouldShiftPixelData(pixelData []byte, bitsStored int) bool {
 }
 
 // ShouldShiftPixelDataWithPR returns true only when PR=1 and value range indicates sign bit usage.
+// Used for ENCODING: determines if signed data needs to be shifted to unsigned range.
 func ShouldShiftPixelDataWithPR(pixelData []byte, bitsStored int, currentPR int) bool {
 	if currentPR == 0 {
 		return false
 	}
 	return ShouldShiftPixelData(pixelData, bitsStored)
+}
+
+// ShouldReverseShiftPixelData determines if decoded pixel data needs reverse shift.
+// Used for DECODING: checks if data is in shifted unsigned range.
+//
+// Logic:
+//   - If PR==1 and minRaw < signBit: data appears to be in shifted range [0, 2^n-1] → needs reverse shift
+//   - If PR==1 and minRaw >= signBit: data has original signed pattern (negatives in high range) → no reverse shift
+//   - If PR==0: never reverse shift
+//
+// Key difference from ShouldShiftPixelData: checks MINIMUM value instead of maximum.
+// This is because shifted data will have minRaw in [0, signBit), while
+// original signed data with negatives will have minRaw >= signBit (two's complement).
+//
+// Returns:
+//   - true if reverse shift is needed, false otherwise
+func ShouldReverseShiftPixelData(pixelData []byte, bitsStored int, currentPR int) bool {
+	if currentPR == 0 {
+		return false
+	}
+	if bitsStored <= 0 || bitsStored > 16 || len(pixelData) == 0 {
+		return false
+	}
+
+	signBit := uint32(1) << (bitsStored - 1)
+
+	// For 8-bit data
+	if bitsStored <= 8 {
+		var minRaw uint8 = 255
+		for _, b := range pixelData {
+			if b < minRaw {
+				minRaw = b
+			}
+		}
+		// If minRaw < signBit, data looks shifted (all values in lower half)
+		return uint32(minRaw) < signBit
+	}
+
+	// For 9-16 bit data (stored in 2 bytes)
+	if len(pixelData) < 2 {
+		return false
+	}
+
+	var minRaw uint16 = 65535
+	for i := 0; i < len(pixelData)/2; i++ {
+		raw := uint16(pixelData[i*2]) | uint16(pixelData[i*2+1])<<8
+		if raw < minRaw {
+			minRaw = raw
+		}
+	}
+
+	// If minRaw < signBit, data appears shifted (no negatives in two's complement form)
+	return uint32(minRaw) < signBit
 }
 
 // ConvertUnsignedToSigned converts pixel data from unsigned to signed representation.

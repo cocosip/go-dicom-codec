@@ -108,12 +108,12 @@ func (c *LosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 
 		if needsShift {
-			// Pixel values exceed threshold - shift to unsigned range for JPEG
-			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
+			// Pixel values exceed threshold - shift to unsigned range for JPEG (toUnsigned=true)
+			shiftedData, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
-			adjustedFrame = shifted
+			adjustedFrame = shiftedData
 		}
 
 		// Encode using the lossless encoder
@@ -180,23 +180,17 @@ func (c *LosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData i
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decode: check if we need to reverse shift
-		// If PR=1 and data was shifted during encoding, reverse it for lossless roundtrip
+		// JPEG Lossless decode: reverse shift if needed
+		// Use opposite logic of encoding (ShouldReverseShiftPixelData)
 		adjustedPixels := pixelData
 
-		if frameInfo.PixelRepresentation == 1 {
-			// Check if decoded data looks like shifted signed data
-			// (i.e., values are in unsigned range that would indicate shift was applied)
-			needsReverseShift := common.ShouldShiftPixelData(pixelData, int(frameInfo.BitsStored))
-
-			if needsReverseShift {
-				// Reverse the shift: unsigned → signed
-				shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-				if err != nil {
-					return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
-				}
-				adjustedPixels = shifted
+		if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
+			// Data was shifted during encoding, reverse it now (toUnsigned=false)
+			reversedData, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
+			if err != nil {
+				return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
 			}
+			adjustedPixels = reversedData
 		}
 
 		// Add decoded frame to destination

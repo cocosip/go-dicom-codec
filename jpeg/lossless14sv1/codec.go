@@ -71,12 +71,12 @@ func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelDat
 		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 
 		if needsShift {
-			// Pixel values exceed threshold - shift to unsigned range for JPEG
-			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
+			// Pixel values exceed threshold - shift to unsigned range for JPEG (toUnsigned=true)
+			shiftedData, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
 			if err != nil {
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
-			adjustedFrame = shifted
+			adjustedFrame = shiftedData
 		}
 
 		// Encode using the lossless SV1 encoder
@@ -142,23 +142,17 @@ func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelDat
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decode: check if we need to reverse shift
-		// If PR=1 and data was shifted during encoding, reverse it for lossless roundtrip
+		// JPEG Lossless decode: reverse shift if needed
+		// Use opposite logic of encoding (ShouldReverseShiftPixelData)
 		adjustedPixels := pixelData
 
-		if frameInfo.PixelRepresentation == 1 {
-			// Check if decoded data looks like shifted signed data
-			// (i.e., values are in unsigned range that would indicate shift was applied)
-			needsReverseShift := common.ShouldShiftPixelData(pixelData, int(frameInfo.BitsStored))
-
-			if needsReverseShift {
-				// Reverse the shift: unsigned → signed
-				shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-				if err != nil {
-					return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
-				}
-				adjustedPixels = shifted
+		if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
+			// Data was shifted during encoding, reverse it now (toUnsigned=false)
+			reversedData, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
+			if err != nil {
+				return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
 			}
+			adjustedPixels = reversedData
 		}
 
 		// Add decoded frame to destination
@@ -179,89 +173,6 @@ func RegisterLosslessSV1Codec() {
 
 func init() {
 	RegisterLosslessSV1Codec()
-}
-
-// shiftSignedToUnsigned converts signed pixel data to unsigned domain for JPEG encoding
-// For PR=1 (signed): signed_value + 2^(BitsStored-1) → unsigned_value
-// Example: -2048 + 32768 = 30720
-// This transformation ensures JPEG stores values in the range [0, 2^BitsStored-1]
-func shiftSignedToUnsigned(data []byte, bitsStored, bitsAllocated uint16) ([]byte, error) {
-	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
-		return nil, fmt.Errorf("invalid BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
-	}
-
-	bytesPerSample := int((bitsAllocated + 7) / 8)
-	if len(data)%bytesPerSample != 0 {
-		return nil, fmt.Errorf("data length %d not aligned to %d bytes/sample", len(data), bytesPerSample)
-	}
-
-	offset := int32(1 << (bitsStored - 1)) // 2^(BitsStored-1), e.g., 32768 for 16-bit
-	result := make([]byte, len(data))
-
-	if bytesPerSample == 1 {
-		// 8-bit
-		for i := 0; i < len(data); i++ {
-			signedVal := int32(int8(data[i]))
-			unsignedVal := signedVal + offset
-			result[i] = byte(unsignedVal & 0xFF)
-		}
-	} else {
-		// 16-bit (little-endian)
-		for i := 0; i < len(data); i += 2 {
-			// Read as signed int16
-			rawBytes := binary.LittleEndian.Uint16(data[i:])
-			signedVal := int32(int16(rawBytes))
-
-			// Add offset to convert to unsigned domain
-			unsignedVal := signedVal + offset
-
-			// Write as unsigned uint16
-			binary.LittleEndian.PutUint16(result[i:], uint16(unsignedVal))
-		}
-	}
-
-	return result, nil
-}
-
-// shiftUnsignedToSigned converts unsigned pixel data back to signed domain after JPEG decoding
-// For PR=1 (signed): unsigned_value - 2^(BitsStored-1) → signed_value
-// Example: 30720 - 32768 = -2048
-// This reverses the transformation done during encoding
-func shiftUnsignedToSigned(data []byte, bitsStored, bitsAllocated uint16) ([]byte, error) {
-	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
-		return nil, fmt.Errorf("invalid BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
-	}
-
-	bytesPerSample := int((bitsAllocated + 7) / 8)
-	if len(data)%bytesPerSample != 0 {
-		return nil, fmt.Errorf("data length %d not aligned to %d bytes/sample", len(data), bytesPerSample)
-	}
-
-	offset := int32(1 << (bitsStored - 1)) // 2^(BitsStored-1), e.g., 32768 for 16-bit
-	result := make([]byte, len(data))
-
-	if bytesPerSample == 1 {
-		// 8-bit
-		for i := 0; i < len(data); i++ {
-			unsignedVal := int32(data[i])
-			signedVal := unsignedVal - offset
-			result[i] = byte(int8(signedVal))
-		}
-	} else {
-		// 16-bit (little-endian)
-		for i := 0; i < len(data); i += 2 {
-			// Read as unsigned uint16
-			unsignedVal := int32(binary.LittleEndian.Uint16(data[i:]))
-
-			// Subtract offset to convert to signed domain
-			signedVal := unsignedVal - offset
-
-			// Write as signed int16 (in two's complement form)
-			binary.LittleEndian.PutUint16(result[i:], uint16(int16(signedVal)))
-		}
-	}
-
-	return result, nil
 }
 
 // shiftSignedFrame shifts signed samples into unsigned domain (encode) or back (decode).
@@ -339,36 +250,4 @@ func signExtend(raw uint32, valueMask uint32, signMask uint32) int32 {
 		val |= ^valueMask
 	}
 	return int32(val)
-}
-
-// shiftUnsigned16 adds 32768 to each 16-bit unsigned pixel value.
-// This shifts the data into the signed 16-bit range for JPEG Lossless encoding.
-func shiftUnsigned16(data []byte) []byte {
-	if len(data)%2 != 0 {
-		return data // Invalid data, return as-is
-	}
-
-	result := make([]byte, len(data))
-	for i := 0; i < len(data); i += 2 {
-		val := binary.LittleEndian.Uint16(data[i:])
-		shifted := uint16(int32(val) + 32768)
-		binary.LittleEndian.PutUint16(result[i:], shifted)
-	}
-	return result
-}
-
-// unshiftUnsigned16 subtracts 32768 from each 16-bit value.
-// This reverses the shift done by shiftUnsigned16.
-func unshiftUnsigned16(data []byte) []byte {
-	if len(data)%2 != 0 {
-		return data // Invalid data, return as-is
-	}
-
-	result := make([]byte, len(data))
-	for i := 0; i < len(data); i += 2 {
-		val := binary.LittleEndian.Uint16(data[i:])
-		unshifted := uint16(int32(val) - 32768)
-		binary.LittleEndian.PutUint16(result[i:], unshifted)
-	}
-	return result
 }

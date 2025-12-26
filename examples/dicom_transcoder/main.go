@@ -17,7 +17,6 @@ import (
 	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
 
 	"github.com/cocosip/go-dicom/pkg/dicom/dataset"
-	"github.com/cocosip/go-dicom/pkg/dicom/element"
 	"github.com/cocosip/go-dicom/pkg/dicom/parser"
 	"github.com/cocosip/go-dicom/pkg/dicom/tag"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
@@ -30,9 +29,6 @@ func main() {
 	fmt.Println("Converts DICOM files between compression formats")
 	fmt.Println(strings.Repeat("-", 70))
 	fmt.Println()
-
-	// Compatibility: allow forcing unsigned output for viewers that ignore PR=1 shift
-	forceUnsigned := os.Getenv("DICOM_FORCE_UNSIGNED") == "1"
 
 	// Get input file path
 	inputPath := getInputFilePath()
@@ -127,7 +123,7 @@ func main() {
 		outputPath := filepath.Join(outputDir, fmt.Sprintf("%s_%s.dcm", baseName, format.suffix))
 
 		// Perform transcoding
-		if err := transcodeDICOMFile(ds, outputPath, sourceTS, format.ts, registry, forceUnsigned); err != nil {
+		if err := transcodeDICOMFile(ds, outputPath, sourceTS, format.ts, registry); err != nil {
 			fmt.Printf("      Failed: %v\n", err)
 			failCount++
 			continue
@@ -231,7 +227,7 @@ func displayImageInfo(ds *dataset.Dataset) {
 }
 
 // transcodeDICOMFile converts a DICOM dataset from one transfer syntax to another
-func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, targetTS *transfer.Syntax, registry *codec.Registry, forceUnsigned bool) error {
+func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, targetTS *transfer.Syntax, registry *codec.Registry) error {
 	// Skip if already in target format
 	if sourceTS.UID().UID() == targetTS.UID().UID() {
 		clone := ds.Clone()
@@ -248,53 +244,15 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return fmt.Errorf("transcode failed: %w", err)
 	}
 
-	// For lossless JPEG variants with PR=1, update metadata to unsigned with intercept shift
-	if isLosslessJPEG(targetTS) && newDS.TryGetUInt16(tag.PixelRepresentation, 0) == 1 {
-		if err := forceUnsignedPixelData(newDS); err != nil {
-			return fmt.Errorf("force unsigned (lossless auto): %w", err)
-		}
-	}
-
-	// Compatibility: remove preset window width/center so viewers auto-window on new pixel range
-	_ = newDS.Remove(tag.WindowCenter)
-	_ = newDS.Remove(tag.WindowWidth)
+	// Note: Codec layer automatically handles signed pixel data (PR=1) correctly:
+	// - During encoding: adds offset for signed data if needed
+	// - During decoding: reverses offset to restore signed data
+	// - PixelRepresentation metadata is preserved unchanged
+	// DO NOT modify PixelRepresentation or RescaleIntercept here!
 
 	// Write with correct transfer syntax (also ensures File Meta includes TSUID)
 	if err := writer.WriteFile(outputPath, newDS, writer.WithTransferSyntax(targetTS)); err != nil {
 		return fmt.Errorf("failed to write output file: %w", err)
-	}
-
-	return nil
-}
-
-// forceUnsignedPixelData rewrites PixelRepresentation to unsigned and adjusts RescaleIntercept
-// so that modality values (HU) remain consistent. This is a compatibility path for viewers
-// that fail to apply the signed offset defined by JPEG Lossless for PR=1.
-func forceUnsignedPixelData(ds *dataset.Dataset) error {
-	pr := ds.TryGetUInt16(tag.PixelRepresentation, 0)
-	if pr == 0 {
-		return nil
-	}
-
-	// Update PixelRepresentation to unsigned.
-	_ = ds.Remove(tag.PixelRepresentation)
-	_ = ds.Add(element.NewUnsignedShort(tag.PixelRepresentation, []uint16{0}))
-
-	// Adjust RescaleIntercept if present: I' = I - 2^(BitsStored-1) * Slope
-	bitsStored := ds.TryGetUInt16(tag.BitsStored, 0)
-	if bitsStored == 0 {
-		bitsStored = ds.TryGetUInt16(tag.BitsAllocated, 0)
-	}
-	offset := float64(uint32(1) << (bitsStored - 1))
-
-	slope := 1.0
-	if v, err := ds.GetFloat64(tag.RescaleSlope, 0); err == nil {
-		slope = v
-	}
-	if intercept, err := ds.GetFloat64(tag.RescaleIntercept, 0); err == nil {
-		newIntercept := intercept - offset*slope
-		_ = ds.Remove(tag.RescaleIntercept)
-		_ = ds.Add(element.NewDouble(tag.RescaleIntercept, []float64{newIntercept}))
 	}
 
 	return nil
@@ -328,11 +286,4 @@ func waitForExit() {
 	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Print("Press Enter to exit...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
-}
-
-// isLosslessJPEG reports whether the target TS is one of the lossless JPEG/L JPEG-LS variants
-func isLosslessJPEG(ts *transfer.Syntax) bool {
-	return ts == transfer.JPEGLosslessSV1 ||
-		ts == transfer.JPEGLossless ||
-		ts == transfer.JPEGLSLossless
 }
