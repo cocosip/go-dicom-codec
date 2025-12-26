@@ -15,8 +15,8 @@ type Component struct {
 	width           int
 	height          int
 	dcTableSelector int
-	pred            int    // Prediction value for current row
-	data            []int  // Decoded component data (signed integers for lossless)
+	pred            int   // Prediction value for current row
+	data            []int // Decoded component data (signed integers for lossless)
 }
 
 // Decoder represents a JPEG Lossless decoder
@@ -229,8 +229,8 @@ func (d *Decoder) parseSOS(reader *common.Reader) error {
 
 	// Parse component selectors
 	for i := 0; i < ns; i++ {
-		cs := data[1+i*2]     // Component selector
-		td := data[1+i*2+1]   // Table selector (only DC table for lossless)
+		cs := data[1+i*2]   // Component selector
+		td := data[1+i*2+1] // Table selector (only DC table for lossless)
 
 		// Find the component
 		var comp *Component
@@ -361,13 +361,6 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 			for x := 0; x < d.width; x++ {
 				for i, comp := range d.components {
 					val := comp.data[y*d.width+x]
-					// Clamp to valid range
-					if val < 0 {
-						val = 0
-					}
-					if val > (1<<uint(d.precision))-1 {
-						val = (1 << uint(d.precision)) - 1
-					}
 					pixelData[(y*d.width+x)*numComponents+i] = byte(val)
 				}
 			}
@@ -379,13 +372,6 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 			for x := 0; x < d.width; x++ {
 				for _, comp := range d.components {
 					val := comp.data[y*d.width+x]
-					// Clamp to valid range
-					if val < 0 {
-						val = 0
-					}
-					if val > (1<<uint(d.precision))-1 {
-						val = (1 << uint(d.precision)) - 1
-					}
 					// Little-endian
 					pixelData[offset] = byte(val & 0xFF)
 					pixelData[offset+1] = byte((val >> 8) & 0xFF)

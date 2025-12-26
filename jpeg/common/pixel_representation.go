@@ -177,7 +177,8 @@ func ShouldShiftPixelDataWithPR(pixelData []byte, bitsStored int, currentPR int)
 	if currentPR == 0 {
 		return false
 	}
-	return ShouldShiftPixelData(pixelData, bitsStored)
+	hasNeg, _, _ := DetectActualPixelRepresentation(pixelData, bitsStored, currentPR)
+	return hasNeg
 }
 
 // ShouldReverseShiftPixelData determines if decoded pixel data needs reverse shift.
@@ -207,13 +208,17 @@ func ShouldReverseShiftPixelData(pixelData []byte, bitsStored int, currentPR int
 	// For 8-bit data
 	if bitsStored <= 8 {
 		var minRaw uint8 = 255
+		var maxRaw uint8 = 0
 		for _, b := range pixelData {
 			if b < minRaw {
 				minRaw = b
 			}
+			if b > maxRaw {
+				maxRaw = b
+			}
 		}
-		// If minRaw < signBit, data looks shifted (all values in lower half)
-		return uint32(minRaw) < signBit
+		// 需要同时看到低半区和高半区的值，才认为被平移过
+		return uint32(minRaw) >= signBit && uint32(maxRaw) >= signBit
 	}
 
 	// For 9-16 bit data (stored in 2 bytes)
@@ -222,15 +227,19 @@ func ShouldReverseShiftPixelData(pixelData []byte, bitsStored int, currentPR int
 	}
 
 	var minRaw uint16 = 65535
+	var maxRaw uint16 = 0
 	for i := 0; i < len(pixelData)/2; i++ {
 		raw := uint16(pixelData[i*2]) | uint16(pixelData[i*2+1])<<8
 		if raw < minRaw {
 			minRaw = raw
 		}
+		if raw > maxRaw {
+			maxRaw = raw
+		}
 	}
 
-	// If minRaw < signBit, data appears shifted (no negatives in two's complement form)
-	return uint32(minRaw) < signBit
+	// 需要同时看到低半区和高半区的值，才认为被平移过
+	return uint32(minRaw) >= signBit && uint32(maxRaw) >= signBit
 }
 
 // ConvertUnsignedToSigned converts pixel data from unsigned to signed representation.
