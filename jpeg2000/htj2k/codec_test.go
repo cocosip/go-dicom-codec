@@ -192,7 +192,9 @@ func TestHTJ2KCodec_InvalidInput(t *testing.T) {
 	}
 
 	emptyPixelData := codecHelpers.NewTestPixelData(frameInfo)
-	emptyPixelData.AddFrame([]byte{})
+	if err := emptyPixelData.AddFrame([]byte{}); err != nil {
+		t.Fatalf("failed to add empty frame: %v", err)
+	}
 
 	tests := []struct {
 		name    string

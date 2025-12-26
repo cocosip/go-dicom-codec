@@ -42,9 +42,15 @@ func main() {
 			SamplesPerPixel: uint16(comps),
 		}
 		pdIn := codecHelpers.NewTestPixelData(frameInfo)
-		pdIn.AddFrame(src)
+		if err := pdIn.AddFrame(src); err != nil {
+			fmt.Println("add frame error:", err)
+			return
+		}
 		pdOut := codecHelpers.NewTestPixelData(frameInfo)
-		_ = enc.Encode(pdIn, pdOut, p)
+		if err := enc.Encode(pdIn, pdOut, p); err != nil {
+			fmt.Println("encode error:", err)
+			return
+		}
 		fmt.Println("Lossy encode with Part 2 bindings completed (markers written)")
 	}
 
@@ -66,9 +72,15 @@ func main() {
 			SamplesPerPixel: uint16(comps),
 		}
 		pdIn := codecHelpers.NewTestPixelData(frameInfo)
-		pdIn.AddFrame(src)
+		if err := pdIn.AddFrame(src); err != nil {
+			fmt.Println("add frame error:", err)
+			return
+		}
 		pdOut := codecHelpers.NewTestPixelData(frameInfo)
-		_ = enc.Encode(pdIn, pdOut, p)
+		if err := enc.Encode(pdIn, pdOut, p); err != nil {
+			fmt.Println("encode error:", err)
+			return
+		}
 		fmt.Println("Lossless encode with Part 2 bindings completed (markers written)")
 	}
 }

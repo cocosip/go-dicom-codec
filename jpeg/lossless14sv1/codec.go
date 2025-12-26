@@ -77,8 +77,6 @@ func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelDat
 				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
 			}
 			adjustedFrame = shifted
-			// Clamp after shift to stay below sign bit, matching fo-dicom-style positive range
-			clampToSignBitMinusOne(adjustedFrame, frameInfo.BitsStored)
 		}
 
 		// Encode using the lossless SV1 encoder
@@ -373,19 +371,4 @@ func unshiftUnsigned16(data []byte) []byte {
 		binary.LittleEndian.PutUint16(result[i:], unshifted)
 	}
 	return result
-}
-
-// clampToSignBitMinusOne limits samples to below the sign bit after shifting signed data.
-// This keeps values in [0, 2^(BitsStored-1)-1], reducing viewers misinterpreting data as signed.
-func clampToSignBitMinusOne(frame []byte, bitsStored uint16) {
-	if bitsStored == 0 || bitsStored > 16 {
-		return
-	}
-	limit := uint16((1 << (bitsStored - 1)) - 1)
-	for i := 0; i+1 < len(frame); i += 2 {
-		val := binary.LittleEndian.Uint16(frame[i:])
-		if val > limit {
-			binary.LittleEndian.PutUint16(frame[i:], limit)
-		}
-	}
 }

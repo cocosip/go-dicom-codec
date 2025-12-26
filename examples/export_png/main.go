@@ -88,7 +88,9 @@ func savePNG(raw []byte, rows, cols int, signed bool, out string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	return png.Encode(f, img)
 }
 func main() {

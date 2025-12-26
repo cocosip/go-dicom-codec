@@ -132,7 +132,9 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Validate parameters
-	htj2kParams.Validate()
+	if err := htj2kParams.Validate(); err != nil {
+		return fmt.Errorf("invalid HTJ2K parameters: %w", err)
+	}
 
 	// Create JPEG 2000 encoding parameters with HTJ2K enabled
 	encParams := jpeg2000.DefaultEncodeParams(
@@ -235,7 +237,9 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Validate parameters
-	htj2kParams.Validate()
+	if err := htj2kParams.Validate(); err != nil {
+		return fmt.Errorf("invalid HTJ2K parameters: %w", err)
+	}
 
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()

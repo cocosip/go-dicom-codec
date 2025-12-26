@@ -82,7 +82,9 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Validate parameters
-	losslessParams.Validate()
+	if err := losslessParams.Validate(); err != nil {
+		return fmt.Errorf("invalid JPEG2000 lossless parameters: %w", err)
+	}
 
 	// Create encoding parameters
 	encParams := jpeg2000.DefaultEncodeParams(

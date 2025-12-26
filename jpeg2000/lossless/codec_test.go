@@ -116,7 +116,9 @@ func TestDecodeInvalidData(t *testing.T) {
 		SamplesPerPixel: 1,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame([]byte{0x00, 0x01, 0x02, 0x03}) // Invalid JPEG 2000 data
+	if err := src.AddFrame([]byte{0x00, 0x01, 0x02, 0x03}); err != nil {
+		t.Fatalf("failed to add invalid frame: %v", err)
+	}
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Decode(src, dst, nil)
@@ -145,7 +147,9 @@ func TestEncodeNotImplemented(t *testing.T) {
 		SamplesPerPixel: 1,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("failed to add frame: %v", err)
+	}
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Encode(src, dst, nil)
@@ -179,7 +183,9 @@ func TestEncodeNilInputs(t *testing.T) {
 		SamplesPerPixel: 1,
 	}
 	dstPixel := codecHelpers.NewTestPixelData(frameInfo)
-	dstPixel.AddFrame([]byte{1})
+	if err := dstPixel.AddFrame([]byte{1}); err != nil {
+		t.Fatalf("failed to add frame: %v", err)
+	}
 
 	tests := []struct {
 		name string
@@ -216,6 +222,9 @@ func TestEncodeEmptyData(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
+	if err := src.AddFrame([]byte{}); err != nil {
+		t.Fatalf("failed to add frame to src: %v", err)
+	}
 	err := c.Encode(src, dst, nil)
 	if err == nil {
 		t.Error("Expected error for empty data, got nil")

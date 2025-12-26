@@ -248,11 +248,16 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 		return fmt.Errorf("transcode failed: %w", err)
 	}
 
-	if forceUnsigned {
+	// For lossless JPEG variants with PR=1, update metadata to unsigned with intercept shift
+	if isLosslessJPEG(targetTS) && newDS.TryGetUInt16(tag.PixelRepresentation, 0) == 1 {
 		if err := forceUnsignedPixelData(newDS); err != nil {
-			return fmt.Errorf("force unsigned: %w", err)
+			return fmt.Errorf("force unsigned (lossless auto): %w", err)
 		}
 	}
+
+	// Compatibility: remove preset window width/center so viewers auto-window on new pixel range
+	_ = newDS.Remove(tag.WindowCenter)
+	_ = newDS.Remove(tag.WindowWidth)
 
 	// Write with correct transfer syntax (also ensures File Meta includes TSUID)
 	if err := writer.WriteFile(outputPath, newDS, writer.WithTransferSyntax(targetTS)); err != nil {
@@ -323,4 +328,11 @@ func waitForExit() {
 	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Print("Press Enter to exit...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+// isLosslessJPEG reports whether the target TS is one of the lossless JPEG/L JPEG-LS variants
+func isLosslessJPEG(ts *transfer.Syntax) bool {
+	return ts == transfer.JPEGLosslessSV1 ||
+		ts == transfer.JPEGLossless ||
+		ts == transfer.JPEGLSLossless
 }
