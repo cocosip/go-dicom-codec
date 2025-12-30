@@ -163,11 +163,15 @@ var ExtendedDCChrominanceValues = []byte{
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 }
 
-// Default lossless DC Huffman tables used by libjpeg/fo-dicom (categories 0-12-ish)
+// Default lossless DC Huffman tables used by libjpeg/fo-dicom (categories 0-15)
+// These EXACTLY match the tables used by fo-dicom for JPEG Lossless SV1 encoding.
+// Bits array defines how many codes exist at each bit length (1-16).
 var LosslessDCLuminanceBits = [16]int{
 	0, 2, 3, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0,
 }
 
+// Values array lists the category values in the order they appear in the Huffman tree.
+// Total values: 2+3+1+1+1+1+1+1+1 = 12 values
 var LosslessDCLuminanceValues = []byte{
 	0x00, 0x04, 0x02, 0x03, 0x05, 0x01, 0x06, 0x07, 0x0C, 0x0B, 0x08, 0x0F,
 }

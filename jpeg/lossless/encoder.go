@@ -61,8 +61,10 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	samples := enc.pixelsToSamples(pixelData)
 	maxCat := computeMaxCategory(samples, enc.components, enc.width, enc.height, enc.precision, enc.predictor)
 
-	// Prefer the standard lossless DC tables; fall back to extended only when the category exceeds table coverage.
-	if bitDepth >= 12 && maxCat > 11 {
+	// Prefer the standard lossless DC tables; fall back to extended when needed.
+	// NOTE: The standard lossless table only has codes for categories: 0,1,2,3,4,5,6,7,8,11,12,15
+	// It's missing categories 9,10,13,14, so we need the Extended table if maxCat >= 9
+	if bitDepth >= 12 && maxCat >= 9 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
 			common.ExtendedDCLuminanceValues,
@@ -233,6 +235,10 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
 	huffEnc := common.NewHuffmanEncoder(&scanBuf)
 
+	// Compute modulus for wrapping differences to signed P-bit range
+	modulus := 1 << uint(enc.precision)
+	halfModulus := modulus / 2
+
 	// Encode line by line, interleaved
 	for row := 0; row < enc.height; row++ {
 		for col := 0; col < enc.width; col++ {
@@ -278,8 +284,14 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 					predicted = Predictor(enc.predictor, ra, rb, rc)
 				}
 
-				// Calculate difference
+				// Calculate difference with wrapping to signed P-bit range
 				diff := sample - predicted
+				// Wrap to range [-2^(P-1), 2^(P-1)-1]
+				if diff >= halfModulus {
+					diff -= modulus
+				} else if diff < -halfModulus {
+					diff += modulus
+				}
 
 				// Encode difference
 				tableIdx := 0
@@ -344,9 +356,15 @@ func (enc *Encoder) pixelsToSamples(pixelData []byte) [][]int {
 }
 
 // computeMaxCategory scans differences to decide if extended Huffman tables are needed.
+// IMPORTANT: For P-bit precision, differences wrap around in the range of signed P-bit integers.
 func computeMaxCategory(samples [][]int, components, width, height, precision, predictor int) int {
 	maxCat := 0
 	defaultVal := 1 << uint(precision-1)
+
+	// Compute modulus for wrapping (2^precision)
+	modulus := 1 << uint(precision)
+	halfModulus := modulus / 2
+
 	for comp := 0; comp < components; comp++ {
 		for row := 0; row < height; row++ {
 			for col := 0; col < width; col++ {
@@ -369,7 +387,16 @@ func computeMaxCategory(samples [][]int, components, width, height, precision, p
 				} else {
 					predicted = Predictor(predictor, ra, rb, rc)
 				}
+
+				// Compute difference with wrapping to signed P-bit range
 				diff := sample - predicted
+				// Wrap to range [-2^(P-1), 2^(P-1)-1]
+				if diff >= halfModulus {
+					diff -= modulus
+				} else if diff < -halfModulus {
+					diff += modulus
+				}
+
 				cat := diffCategory(diff)
 				if cat > maxCat {
 					maxCat = cat

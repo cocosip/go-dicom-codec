@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
@@ -102,23 +101,14 @@ func (c *LosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Determine if shift is needed; only when PR=1 and values cross sign bit.
-		adjustedFrame := frameData
-		// For PR=1, shift only when pixel values actually cross sign bit; avoids disturbing unsigned-but-tagged data.
-		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
-
-		if needsShift {
-			// Pixel values exceed threshold - shift to unsigned range for JPEG
-			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
-			if err != nil {
-				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
-			}
-			adjustedFrame = shifted
-		}
+		// JPEG Lossless uses predictive coding with differences, which naturally handles
+		// both signed and unsigned data without needing pixel value shifting.
+		// The predictor works with raw byte values regardless of pixel representation.
+		// DO NOT shift pixel data for lossless JPEG encoding.
 
 		// Encode using the lossless encoder
 		jpegData, err := Encode(
-			adjustedFrame,
+			frameData, // No adjustment needed
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
@@ -180,19 +170,11 @@ func (c *LosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData i
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decode: reverse shift if needed
-		// Use opposite logic of encoding (ShouldReverseShiftPixelData)
-		adjustedPixels := pixelData
-		if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
-			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-			if err != nil {
-				return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
-			}
-			adjustedPixels = shifted
-		}
+		// JPEG Lossless decodes directly to the original pixel representation.
+		// No pixel value shifting needed - the codec preserves the original two's complement encoding.
 
 		// Add decoded frame to destination
-		if err := newPixelData.AddFrame(adjustedPixels); err != nil {
+		if err := newPixelData.AddFrame(pixelData); err != nil {
 			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}

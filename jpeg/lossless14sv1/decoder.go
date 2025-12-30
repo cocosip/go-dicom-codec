@@ -259,6 +259,9 @@ func (d *Decoder) parseSOS(reader *common.Reader) error {
 
 // decodeScan decodes the scan data
 func (d *Decoder) decodeScan(reader *common.Reader) error {
+	// Compute modulus for wrapping reconstructed samples to P-bit range
+	modulus := 1 << uint(d.precision)
+
 	// Collect scan data
 	var scanData bytes.Buffer
 	for {
@@ -326,7 +329,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 				var predicted int
 				if col == 0 {
 					if row == 0 {
-						// First pixel of first row: use 2^(P-1)
+						// First pixel of first row: use 2^(P-1) per JPEG spec
 						predicted = 1 << uint(d.precision-1)
 					} else {
 						// First pixel of other rows: use pixel from row above
@@ -337,8 +340,14 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 					predicted = comp.data[row*d.width+col-1]
 				}
 
-				// Reconstruct sample
+				// Reconstruct sample with wrapping to unsigned P-bit range
 				sample := predicted + diff
+				// Wrap to range [0, 2^P-1]
+				if sample < 0 {
+					sample += modulus
+				} else if sample >= modulus {
+					sample -= modulus
+				}
 
 				// Store
 				comp.data[row*d.width+col] = sample

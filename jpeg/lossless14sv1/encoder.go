@@ -48,10 +48,11 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 	// Convert once for analysis/encoding
 	samples := enc.pixelsToSamples(pixelData)
 
-	// Prefer the standard lossless DC tables; fall back to extended only when the category exceeds table coverage.
-	// For SV1 predictor=1, this should usually stay within the default table used by libjpeg/fo-dicom.
+	// Prefer the standard lossless DC tables; fall back to extended when needed.
+	// NOTE: The standard lossless table only has codes for categories: 0,1,2,3,4,5,6,7,8,11,12,15
+	// It's missing categories 9,10,13,14, so we need the Extended table if maxCat >= 9
 	maxCat := computeMaxCategorySV1(samples, components, width, height, bitDepth)
-	if bitDepth >= 12 && maxCat > 11 {
+	if bitDepth >= 12 && maxCat >= 9 {
 		enc.dcTables[0] = common.BuildStandardHuffmanTable(
 			common.ExtendedDCLuminanceBits,
 			common.ExtendedDCLuminanceValues,
@@ -222,6 +223,10 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
 	huffEnc := common.NewHuffmanEncoder(&scanBuf)
 
+	// Compute modulus for wrapping differences to signed P-bit range
+	modulus := 1 << uint(enc.precision)
+	halfModulus := modulus / 2
+
 	// Encode line by line, interleaved
 	for row := 0; row < enc.height; row++ {
 		// Predictor values for each component
@@ -236,7 +241,7 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 				var predicted int
 				if col == 0 {
 					if row == 0 {
-						// First pixel of first row: use 2^(P-1)
+						// First pixel of first row: use 2^(P-1) per JPEG spec
 						predicted = 1 << uint(enc.precision-1)
 					} else {
 						// First pixel of other rows: use pixel from row above
@@ -247,8 +252,14 @@ func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
 					predicted = preds[comp]
 				}
 
-				// Calculate difference
+				// Calculate difference with wrapping to signed P-bit range
 				diff := sample - predicted
+				// Wrap to range [-2^(P-1), 2^(P-1)-1]
+				if diff >= halfModulus {
+					diff -= modulus
+				} else if diff < -halfModulus {
+					diff += modulus
+				}
 
 				// Encode difference
 				tableIdx := 0
@@ -317,26 +328,46 @@ func (enc *Encoder) pixelsToSamples(pixelData []byte) [][]int {
 
 // computeMaxCategorySV1 finds the maximum Huffman category of differences for predictor 1.
 // Category is the number of bits needed to represent |diff|.
+// IMPORTANT: For P-bit precision, differences wrap around in the range of signed P-bit integers.
 func computeMaxCategorySV1(samples [][]int, components, width, height, precision int) int {
 	maxCat := 0
 	defaultVal := 1 << uint(precision-1)
+
+	// Compute modulus for wrapping (2^precision)
+	modulus := 1 << uint(precision)
+	halfModulus := modulus / 2
+
 	for comp := 0; comp < components; comp++ {
 		for row := 0; row < height; row++ {
-			pred := defaultVal
 			for col := 0; col < width; col++ {
 				sample := samples[comp][row*width+col]
 				var predicted int
 				if col == 0 {
-					predicted = defaultVal
+					if row == 0 {
+						// First pixel of first row: use 2^(P-1) per JPEG spec
+						predicted = defaultVal
+					} else {
+						// First pixel of other rows: use pixel from row above
+						predicted = samples[comp][(row-1)*width+col]
+					}
 				} else {
-					predicted = pred
+					// Other pixels: use left pixel
+					predicted = samples[comp][row*width+col-1]
 				}
+
+				// Compute difference with wrapping to signed P-bit range
 				diff := sample - predicted
+				// Wrap to range [-2^(P-1), 2^(P-1)-1]
+				if diff >= halfModulus {
+					diff -= modulus
+				} else if diff < -halfModulus {
+					diff += modulus
+				}
+
 				cat := diffCategory(diff)
 				if cat > maxCat {
 					maxCat = cat
 				}
-				pred = sample
 			}
 		}
 	}

@@ -312,16 +312,15 @@ func (d *Decoder) decodeScan(reader *common.Reader) ([][]int, error) {
 					predicted = Predictor(d.predictor, ra, rb, rc)
 				}
 
-				// Reconstruct sample
+				// Reconstruct sample with wrapping to unsigned P-bit range
 				sample := predicted + diff
 
-				// Clamp to valid range
-				maxVal := (1 << uint(d.precision)) - 1
+				// Wrap to range [0, 2^P-1]
+				modulus := 1 << uint(d.precision)
 				if sample < 0 {
-					sample = 0
-				}
-				if sample > maxVal {
-					sample = maxVal
+					sample += modulus
+				} else if sample >= modulus {
+					sample -= modulus
 				}
 
 				samples[comp][row*d.width+col] = sample

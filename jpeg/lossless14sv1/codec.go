@@ -1,10 +1,8 @@
 package lossless14sv1
 
 import (
-	"encoding/binary"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
@@ -65,23 +63,14 @@ func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelDat
 			return fmt.Errorf("frame %d pixel data is empty", frameIndex)
 		}
 
-		// Determine if shift is needed; only when PR=1 and values cross sign bit.
-		adjustedFrame := frameData
-		// For PR=1, shift only when pixel values actually cross sign bit; avoids disturbing unsigned-but-tagged data.
-		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
-
-		if needsShift {
-			// Pixel values exceed threshold - shift to unsigned range for JPEG
-			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
-			if err != nil {
-				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
-			}
-			adjustedFrame = shifted
-		}
+		// JPEG Lossless uses predictive coding with differences, which naturally handles
+		// both signed and unsigned data without needing pixel value shifting.
+		// The predictor works with raw byte values regardless of pixel representation.
+		// DO NOT shift pixel data for lossless JPEG encoding.
 
 		// Encode using the lossless SV1 encoder
 		jpegData, err := Encode(
-			adjustedFrame,
+			frameData,
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
@@ -142,18 +131,11 @@ func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelDat
 				components, frameInfo.SamplesPerPixel)
 		}
 
-		// JPEG Lossless decode: reverse shift only when数据明显处于“已平移的无符号域”
-		adjustedPixels := pixelData
-		if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
-			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-			if err != nil {
-				return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
-			}
-			adjustedPixels = shifted
-		}
+		// JPEG Lossless decoder outputs raw pixel values as encoded.
+		// No reverse shifting needed - pixel representation is preserved in raw bytes.
 
 		// Add decoded frame to destination
-		if err := newPixelData.AddFrame(adjustedPixels); err != nil {
+		if err := newPixelData.AddFrame(pixelData); err != nil {
 			return fmt.Errorf("failed to add decoded frame %d: %w", frameIndex, err)
 		}
 	}
@@ -170,81 +152,4 @@ func RegisterLosslessSV1Codec() {
 
 func init() {
 	RegisterLosslessSV1Codec()
-}
-
-// shiftSignedFrame shifts signed samples into unsigned domain (encode) or back (decode).
-// It respects BitsStored/HighBit and BitsAllocated for correct two's-complement handling.
-func shiftSignedFrame(frame []byte, bitsStored, highBit, bitsAllocated uint16, toUnsigned bool) ([]byte, error) {
-	if bitsStored == 0 || bitsStored > bitsAllocated || bitsAllocated > 16 {
-		return nil, fmt.Errorf("unsupported BitsStored=%d BitsAllocated=%d", bitsStored, bitsAllocated)
-	}
-	if highBit >= bitsAllocated {
-		return nil, fmt.Errorf("invalid HighBit=%d for BitsAllocated=%d", highBit, bitsAllocated)
-	}
-
-	bytesPerSample := int((bitsAllocated + 7) / 8)
-	if len(frame)%bytesPerSample != 0 {
-		return nil, fmt.Errorf("frame length %d is not aligned to %d bytes/sample", len(frame), bytesPerSample)
-	}
-
-	offset := int32(1) << (bitsStored - 1)
-	maxUnsigned := int32((1 << bitsStored) - 1)
-	minSigned := -offset
-	maxSigned := offset - 1
-	signMask := uint32(1) << highBit
-	valueMask := uint32((uint64(1) << (highBit + 1)) - 1)
-
-	out := make([]byte, len(frame))
-	for i := 0; i < len(frame); i += bytesPerSample {
-		var raw uint32
-		if bytesPerSample == 1 {
-			raw = uint32(frame[i])
-		} else {
-			raw = uint32(binary.LittleEndian.Uint16(frame[i:]))
-		}
-
-		if toUnsigned {
-			signedVal := signExtend(raw, valueMask, signMask)
-			unsignedVal := signedVal + offset
-			if unsignedVal < 0 {
-				unsignedVal = 0
-			}
-			if unsignedVal > maxUnsigned {
-				unsignedVal = maxUnsigned
-			}
-			if bytesPerSample == 1 {
-				out[i] = byte(unsignedVal)
-			} else {
-				binary.LittleEndian.PutUint16(out[i:], uint16(unsignedVal))
-			}
-		} else {
-			signedVal := int32(raw) - offset
-			if signedVal < minSigned {
-				signedVal = minSigned
-			}
-			if signedVal > maxSigned {
-				signedVal = maxSigned
-			}
-			stored := uint32(uint64(signedVal) & uint64((1<<bitsStored)-1))
-			if (stored & signMask) != 0 {
-				upperMask := ^uint32((uint64(1) << (highBit + 1)) - 1)
-				stored |= upperMask
-			}
-			if bytesPerSample == 1 {
-				out[i] = byte(stored & 0xFF)
-			} else {
-				binary.LittleEndian.PutUint16(out[i:], uint16(stored))
-			}
-		}
-	}
-
-	return out, nil
-}
-
-func signExtend(raw uint32, valueMask uint32, signMask uint32) int32 {
-	val := raw & valueMask
-	if (val & signMask) != 0 {
-		val |= ^valueMask
-	}
-	return int32(val)
 }
