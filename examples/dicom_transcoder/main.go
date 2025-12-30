@@ -238,7 +238,7 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 	}
 
 	// Use go-dicom transcoder which handles encapsulated data, BOT/padding, etc.
-	transcoder := codec.NewTranscoder(sourceTS, targetTS, codec.WithCodecRegistry(registry))
+	transcoder := codec.NewTranscoder(sourceTS, targetTS, codec.WithCodecRegistry(registry), codec.WithStrictDICOMVR(false))
 	newDS, err := transcoder.Transcode(ds)
 	if err != nil {
 		return fmt.Errorf("transcode failed: %w", err)
