@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"github.com/cocosip/go-dicom-codec/jpeg/common"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
@@ -66,17 +67,17 @@ func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelDat
 
 		// Determine if shift is needed; only when PR=1 and values cross sign bit.
 		adjustedFrame := frameData
-		// // For PR=1, shift only when pixel values actually cross sign bit; avoids disturbing unsigned-but-tagged data.
-		// needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
+		// For PR=1, shift only when pixel values actually cross sign bit; avoids disturbing unsigned-but-tagged data.
+		needsShift := common.ShouldShiftPixelDataWithPR(frameData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation))
 
-		// if needsShift {
-		// 	// Pixel values exceed threshold - shift to unsigned range for JPEG
-		// 	shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
-		// 	if err != nil {
-		// 		return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
-		// 	}
-		// 	adjustedFrame = shifted
-		// }
+		if needsShift {
+			// Pixel values exceed threshold - shift to unsigned range for JPEG
+			shifted, err := shiftSignedFrame(frameData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, true)
+			if err != nil {
+				return fmt.Errorf("failed to shift signed frame %d: %w", frameIndex, err)
+			}
+			adjustedFrame = shifted
+		}
 
 		// Encode using the lossless SV1 encoder
 		jpegData, err := Encode(
@@ -143,13 +144,13 @@ func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelDat
 
 		// JPEG Lossless decode: reverse shift only when数据明显处于“已平移的无符号域”
 		adjustedPixels := pixelData
-		// if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
-		// 	shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
-		// 	if err != nil {
-		// 		return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
-		// 	}
-		// 	adjustedPixels = shifted
-		// }
+		if common.ShouldReverseShiftPixelData(pixelData, int(frameInfo.BitsStored), int(frameInfo.PixelRepresentation)) {
+			shifted, err := shiftSignedFrame(pixelData, frameInfo.BitsStored, frameInfo.HighBit, frameInfo.BitsAllocated, false)
+			if err != nil {
+				return fmt.Errorf("failed to reverse shift for frame %d: %w", frameIndex, err)
+			}
+			adjustedPixels = shifted
+		}
 
 		// Add decoded frame to destination
 		if err := newPixelData.AddFrame(adjustedPixels); err != nil {
