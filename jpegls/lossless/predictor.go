@@ -100,17 +100,26 @@ func quantizeGradient(d int) int {
 	}
 }
 
-// ContextID converts (Q1, Q2, Q3) to a single context ID
-// Total contexts = 9 * 9 * 9 = 729, but many are redundant due to symmetry
-// The standard uses 365 contexts
-func ContextID(q1, q2, q3 int) int {
-	// Map to positive indices: q in [-4, 4] -> index in [0, 8]
-	i1 := q1 + 4
-	i2 := q2 + 4
-	i3 := q3 + 4
+// ComputeContextID converts (Q1, Q2, Q3) to a single context ID
+// This matches CharLS: compute_context_id(q1, q2, q3) = (q1 * 9 + q2) * 9 + q3
+// The result can be negative (uses sign symmetry to reduce contexts)
+func ComputeContextID(q1, q2, q3 int) int {
+	return (q1*9 + q2) * 9 + q3
+}
 
-	// Simple linear mapping for now (can be optimized with symmetry reduction)
-	return i1*81 + i2*9 + i3
+// BitwiseSign returns the sign bit of an integer
+// Matches CharLS: bit_wise_sign(i) = i >> 31
+// Returns -1 if i < 0, else 0
+func BitwiseSign(i int) int {
+	// Arithmetic right shift propagates sign bit
+	return i >> 31
+}
+
+// ApplySign applies sign symmetry
+// Matches CharLS: apply_sign(i, sign) = (sign ^ i) - sign
+// This maps negative context IDs to positive ones
+func ApplySign(i, sign int) int {
+	return (sign ^ i) - sign
 }
 
 // EdgeDetection determines if there's a horizontal or vertical edge

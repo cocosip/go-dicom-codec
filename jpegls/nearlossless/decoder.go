@@ -258,14 +258,9 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			// Compute prediction on quantized values
 			prediction := lossless.Predict(qa, qb, qc)
 
-			// Apply bias correction (only for lossless mode)
-			// In near-lossless mode, bias correction causes encoder/decoder desync
-			// because quantized errors don't match the gradient-based context selection
-			bias := 0
-			if dec.near == 0 {
-				bias = ctx.GetBias()
-			}
-			correctedPred := dec.correctPrediction(prediction, bias)
+			// Apply prediction correction using C value
+			correctionC := ctx.GetPredictionCorrection()
+			correctedPred := dec.correctPrediction(prediction, correctionC)
 
 			// Reconstruct prediction to original range
 			reconstructedPred := dec.dequantize(correctedPred)

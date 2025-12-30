@@ -15,6 +15,7 @@ import (
 	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
 	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+	_ "github.com/cocosip/go-dicom-codec/jpegls/nearlossless"
 
 	"github.com/cocosip/go-dicom/pkg/dicom/dataset"
 	"github.com/cocosip/go-dicom/pkg/dicom/parser"
@@ -90,6 +91,7 @@ func main() {
 		{"JPEG Lossless", transfer.JPEGLossless, "jpeg_lossless", true},
 		{"JPEG Lossless SV1", transfer.JPEGLosslessSV1, "jpeg_lossless_sv1", true},
 		{"JPEG-LS Lossless", transfer.JPEGLSLossless, "jpegls_lossless", true},
+		{"JPEG-LS NearLossless", transfer.JPEGLSNearLossless, "jpegls_near_lossless", true},
 		{"RLE", transfer.RLELossless, "rle", false},
 		{"JPEG 2000 Lossless", transfer.JPEG2000Lossless, "j2k_lossless", true},
 		{"JPEG 2000 Lossy", transfer.JPEG2000, "j2k_lossy", false},

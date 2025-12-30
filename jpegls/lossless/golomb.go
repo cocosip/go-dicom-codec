@@ -1,6 +1,7 @@
 package lossless
 
 import (
+	"fmt"
 	"io"
 )
 
@@ -118,21 +119,124 @@ func (gw *GolombWriter) Flush() error {
 	return nil
 }
 
+// EncodeMappedValue encodes a mapped error value with limit handling
+// This matches CharLS encode_mapped_value (scan.h)
+func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPerPixel int) error {
+	highBits := mappedError >> uint(k)
+
+	// Normal case: high_bits < limit - qbpp - 1
+	if highBits < limit-quantizedBitsPerPixel-1 {
+		// Write unary code for high_bits (high_bits 0's followed by 1)
+		// If highBits + 1 > 31, split into two writes to avoid overflow
+		if highBits+1 > 31 {
+			// Write half as 0's
+			if err := gw.WriteBits(0, highBits/2); err != nil {
+				return err
+			}
+			highBits = highBits - highBits/2
+		}
+
+		// Write (highBits + 1) bits with value 1 at the end
+		// This is: highBits 0's followed by one 1
+		if err := gw.WriteBits(1, highBits+1); err != nil {
+			return err
+		}
+
+		// Write remainder (k bits)
+		if k > 0 {
+			remainder := mappedError & ((1 << uint(k)) - 1)
+			if err := gw.WriteBits(uint32(remainder), k); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
+	// Overflow case: high_bits >= limit - qbpp - 1
+	// Write (limit - qbpp) bits as unary code: (limit-qbpp-1) 0's followed by one 1
+	limitBits := limit - quantizedBitsPerPixel
+	if limitBits > 31 {
+		// Split into two writes
+		if err := gw.WriteBits(0, 31); err != nil {
+			return err
+		}
+		if err := gw.WriteBits(1, limitBits-31); err != nil {
+			return err
+		}
+	} else {
+		// Write all at once: (limitBits-1) 0's followed by one 1
+		// This is equivalent to writing value 1 with limitBits bits
+		if err := gw.WriteBits(1, limitBits); err != nil {
+			return err
+		}
+	}
+
+	// Write (mappedError - 1) masked to qbpp bits
+	value := (mappedError - 1) & ((1 << uint(quantizedBitsPerPixel)) - 1)
+	if err := gw.WriteBits(uint32(value), quantizedBitsPerPixel); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // GolombReader reads Golomb-Rice encoded data
 type GolombReader struct {
 	r          io.Reader
 	buffer     uint32 // bit buffer
 	bufferSize int    // number of bits in buffer
-	prevByte   byte   // previous byte read (for byte-stuffing detection)
 }
 
 // NewGolombReader creates a new Golomb-Rice reader
 func NewGolombReader(r io.Reader) *GolombReader {
 	return &GolombReader{
 		r:          r,
-		prevByte:   0,
 		bufferSize: 0,
 	}
+}
+
+// DecodeValue reads a Golomb-encoded value with limit handling
+// This matches CharLS decode_value (scan.h)
+func (gr *GolombReader) DecodeValue(k, limit, quantizedBitsPerPixel int) (int, error) {
+	// Read high bits (unary code - count of 0's before the 1)
+	highBits := 0
+	for {
+		bit, err := gr.ReadBit()
+		if err != nil {
+			return 0, err
+		}
+		if bit == 1 {
+			break
+		}
+		highBits++
+		if highBits > 1000 {  // Safety check
+			return 0, fmt.Errorf("highBits exceeded safety limit")
+		}
+	}
+
+	// CharLS: if (high_bits >= limit - (quantized_bits_per_pixel + 1))
+	//             return Strategy::read_value(quantized_bits_per_pixel) + 1;
+	if highBits >= limit-(quantizedBitsPerPixel+1) {
+		val, err := gr.ReadBits(quantizedBitsPerPixel)
+		if err != nil {
+			return 0, err
+		}
+		return int(val) + 1, nil
+	}
+
+	// CharLS: if (k == 0) return high_bits;
+	if k == 0 {
+		return highBits, nil
+	}
+
+	// CharLS: return (high_bits << k) + Strategy::read_value(k);
+	remainder, err := gr.ReadBits(k)
+	if err != nil {
+		return 0, err
+	}
+
+	return (highBits << uint(k)) + int(remainder), nil
 }
 
 // ReadGolomb reads a value using Golomb-Rice coding with parameter k
@@ -203,6 +307,8 @@ func (gr *GolombReader) ReadBits(n int) (uint32, error) {
 }
 
 // fillBuffer reads next byte into buffer
+// Note: byte-stuffing (0xFF 0x00 -> 0xFF) is already handled by the decoder
+// before passing data to GolombReader, so we don't need to handle it here.
 func (gr *GolombReader) fillBuffer() error {
 	buf := make([]byte, 1)
 	_, err := io.ReadFull(gr.r, buf)
@@ -210,21 +316,8 @@ func (gr *GolombReader) fillBuffer() error {
 		return err
 	}
 
-	b := buf[0]
-
-	// Handle byte-stuffing: 0xFF 0x00 -> 0xFF
-	if gr.prevByte == 0xFF && b == 0x00 {
-		// Skip the 0x00, read next byte
-		_, err := io.ReadFull(gr.r, buf)
-		if err != nil {
-			return err
-		}
-		b = buf[0]
-	}
-
-	gr.buffer = uint32(b)
+	gr.buffer = uint32(buf[0])
 	gr.bufferSize = 8
-	gr.prevByte = b
 
 	return nil
 }

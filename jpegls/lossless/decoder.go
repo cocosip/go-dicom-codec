@@ -16,8 +16,12 @@ type Decoder struct {
 	bitDepth   int
 	maxVal     int
 
-	contextTable *ContextTable
-	runDecoder   *RunModeDecoder
+	contextTable      *ContextTable
+	runModeContexts   [2]*RunModeContext
+	runIndex          int
+	resetThreshold    int
+	limit             int
+	quantizedBitsPerPixel int
 }
 
 // NewDecoder creates a new JPEG-LS decoder
@@ -122,8 +126,30 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	}
 
 	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
+	range_ := dec.maxVal + 1
 	dec.contextTable = NewContextTable(dec.maxVal)
-	dec.runDecoder = NewRunModeDecoder()
+
+	// Initialize RUN mode contexts
+	dec.runModeContexts = [2]*RunModeContext{
+		NewRunModeContext(0, range_),
+		NewRunModeContext(1, range_),
+	}
+	dec.runIndex = 0
+	dec.resetThreshold = 64
+
+	// Compute LIMIT parameter
+	dec.limit = 2 * (dec.bitDepth + max(8, dec.bitDepth))
+
+	// Compute quantized bits per pixel
+	qbpp := dec.bitDepth
+	if dec.bitDepth > 12 {
+		qbpp = 16
+	} else if dec.bitDepth > 8 {
+		qbpp = 12
+	} else {
+		qbpp = 8
+	}
+	dec.quantizedBitsPerPixel = qbpp
 
 	return nil
 }
@@ -144,7 +170,8 @@ func (dec *Decoder) parseLSE(reader *common.Reader) error {
 
 	if id == 1 {
 		// Preset parameters
-		if len(data) < 13 {
+		// Expected: 11 bytes of data (ID + MAXVAL + T1 + T2 + T3 + RESET)
+		if len(data) < 11 {
 			return fmt.Errorf("invalid LSE preset parameters")
 		}
 
@@ -154,9 +181,10 @@ func (dec *Decoder) parseLSE(reader *common.Reader) error {
 			dec.maxVal = maxVal
 		}
 
-		// T1, T2, T3 thresholds are at data[3:8]
-		// RESET interval at data[9:12]
-		// For now, we use standard values
+		// T1, T2, T3 thresholds are at data[3:9]
+		// RESET interval at data[9:11]
+		// The context table uses these thresholds internally
+		// For now, we use the standard context update mechanism
 	}
 
 	return nil
@@ -238,60 +266,259 @@ func (dec *Decoder) decodeScan(reader *common.Reader) ([]byte, error) {
 	return dec.integersToPixels(pixels), nil
 }
 
-// decodeComponent decodes a single component
+// decodeComponent decodes a single component with RUN mode support
 func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) error {
 	stride := dec.components
 	offset := comp
 
 	// Process line by line
 	for y := 0; y < dec.height; y++ {
-		for x := 0; x < dec.width; x++ {
+		// Reset run index at start of each line (JPEG-LS standard)
+		dec.runIndex = 0
+
+		x := 0
+		for x < dec.width {
 			idx := (y*dec.width + x) * stride + offset
 
-			// Get neighboring pixels
-			a, b, c, d := dec.getNeighbors(pixels, x, y, comp)
+			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
+			ra, rb, rc, rd := dec.getNeighbors(pixels, x, y, comp)
 
 			// Compute prediction
-			prediction := Predict(a, b, c)
+			predicted := Predict(ra, rb, rc)
 
-			// Compute context
-			q1, q2, q3 := ComputeContext(a, b, c, d)
-			ctx := dec.contextTable.GetContext(q1, q2, q3)
+			// Compute context ID with sign symmetry
+			q1, q2, q3 := ComputeContext(ra, rb, rc, rd)
+			qs := ComputeContextID(q1, q2, q3)
 
-			// Apply bias correction
-			bias := ctx.GetBias()
-			correctedPred := CorrectPrediction(prediction, bias, dec.maxVal+1)
+			// Check if we should use RUN mode (qs == 0 means flat region)
+			if qs != 0 {
+				// Regular mode
 
-			// Get Golomb parameter
-			k := ctx.ComputeGolombParameter()
+				// Extract sign and apply sign symmetry
+				sign := BitwiseSign(qs)
+				contextIdx := ApplySign(qs, sign)
 
-			// Decode error
-			mappedError, err := gr.ReadGolomb(k)
-			if err != nil {
-				return err
+				// Get context with bounds check
+				if contextIdx < 0 || contextIdx >= len(dec.contextTable.contexts) {
+					return fmt.Errorf("context index %d out of bounds [0, %d)", contextIdx, len(dec.contextTable.contexts))
+				}
+				ctx := dec.contextTable.contexts[contextIdx]
+
+				// Get Golomb parameter
+				k := ctx.ComputeGolombParameter()
+
+				// Apply prediction correction with sign
+				correctionC := ApplySign(ctx.C, sign)
+				predicted_value := CorrectPrediction(predicted, correctionC, dec.maxVal+1)
+
+				// Decode mapped error using CharLS decode_value with limit
+				mapped_error, err := gr.DecodeValue(k, dec.limit, dec.quantizedBitsPerPixel)
+				if err != nil {
+					return err
+				}
+
+				// Unmap error
+				corrected_error := UnmapErrorValue(mapped_error)
+
+				// Apply error correction (XOR) - must ALWAYS be done, not just when k==0
+				errorCorrection := ctx.GetErrorCorrection(k, 0)
+				error_value := errorCorrection ^ corrected_error
+
+				// Update context
+				ctx.UpdateContext(error_value)
+
+				// Apply sign to error and reconstruct
+				error_value = ApplySign(error_value, sign)
+				reconstructed := predicted_value + error_value
+
+				// Clamp to valid range
+				if reconstructed < 0 {
+					reconstructed += (dec.maxVal + 1)
+				} else if reconstructed > dec.maxVal {
+					reconstructed -= (dec.maxVal + 1)
+				}
+
+				pixels[idx] = reconstructed
+				x++
+			} else {
+				// RUN mode (qs == 0, flat region)
+				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
+				if err != nil {
+					return err
+				}
+				x += pixelsProcessed
 			}
-
-			// Unmap error
-			errValue := UnmapErrorValue(mappedError)
-
-			// Reconstruct sample
-			sample := correctedPred + errValue
-
-			// Clamp to valid range
-			if sample < 0 {
-				sample += (dec.maxVal + 1)
-			} else if sample > dec.maxVal {
-				sample -= (dec.maxVal + 1)
-			}
-
-			pixels[idx] = sample
-
-			// Update context
-			ctx.UpdateContext(errValue)
 		}
 	}
 
 	return nil
+}
+
+// incrementRunIndex increments the run index
+func (dec *Decoder) incrementRunIndex() {
+	if dec.runIndex < 31 {
+		dec.runIndex++
+	}
+}
+
+// decrementRunIndex decrements the run index
+func (dec *Decoder) decrementRunIndex() {
+	if dec.runIndex > 0 {
+		dec.runIndex--
+	}
+}
+
+// decodeRunPixels decodes a run of identical pixels
+// This matches CharLS decode_run_pixels (scan.h line 715)
+func (dec *Decoder) decodeRunPixels(gr *GolombReader, ra int, remainingInLine int) (int, error) {
+	runLength := 0
+
+	// Read 1 bit at a time (CharLS: while (Strategy::read_bit()))
+	for {
+		bit, err := gr.ReadBit()
+		if err != nil {
+			return runLength, err
+		}
+
+		if bit == 1 {
+			// Full run segment
+			count := min(1<<uint(J[dec.runIndex]), remainingInLine-runLength)
+			runLength += count
+
+			if count == (1 << uint(J[dec.runIndex])) {
+				dec.incrementRunIndex()
+			}
+
+			if runLength >= remainingInLine {
+				return remainingInLine, nil
+			}
+		} else {
+			// Bit is 0: incomplete run
+			break
+		}
+	}
+
+	// Read remaining run length if J[runIndex] > 0
+	// CharLS: index += (J[run_index_] > 0) ? Strategy::read_value(J[run_index_]) : 0;
+	if J[dec.runIndex] > 0 {
+		val, err := gr.ReadBits(J[dec.runIndex])
+		if err != nil {
+			return runLength, err
+		}
+		runLength += int(val)
+	}
+
+	if runLength > remainingInLine {
+		return 0, fmt.Errorf("run length exceeds line: %d > %d", runLength, remainingInLine)
+	}
+
+	return runLength, nil
+}
+
+// decodeRunInterruptionPixel decodes the pixel that interrupts a run
+func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (int, error) {
+	const nearLossless = 0
+
+	if abs(ra-rb) <= nearLossless {
+		// Use run mode context 1
+		errorValue, err := dec.decodeRunInterruptionError(gr, dec.runModeContexts[1])
+		if err != nil {
+			return 0, err
+		}
+		return ra + errorValue, nil
+	}
+
+	// Use run mode context 0
+	errorValue, err := dec.decodeRunInterruptionError(gr, dec.runModeContexts[0])
+	if err != nil {
+		return 0, err
+	}
+	return rb + errorValue*sign(rb-ra), nil
+}
+
+// decodeRunInterruptionError decodes the error value for run interruption
+func (dec *Decoder) decodeRunInterruptionError(gr *GolombReader, ctx *RunModeContext) (int, error) {
+	k := ctx.GetGolombCode()
+
+	// Decode using limited alphabet Golomb
+	eMappedErrorValue, err := dec.decodeGolombLimited(gr, k, dec.limit-J[dec.runIndex]-1)
+	if err != nil {
+		return 0, err
+	}
+
+	// Reconstruct error value
+	errorValue := ctx.ComputeErrorValue(eMappedErrorValue+ctx.runInterruptionType, k)
+
+	// Update context
+	ctx.UpdateVariables(errorValue, eMappedErrorValue, dec.resetThreshold)
+
+	return errorValue, nil
+}
+
+// decodeGolombLimited decodes a value using Golomb coding with limited alphabet
+func (dec *Decoder) decodeGolombLimited(gr *GolombReader, k, limit int) (int, error) {
+	// Use DecodeValue with the limit parameter
+	return gr.DecodeValue(k, limit, dec.quantizedBitsPerPixel)
+}
+
+// doRunMode handles decoding in run mode (when qs == 0)
+func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (int, error) {
+	stride := dec.components
+	offset := comp
+
+	startIdx := y*dec.width + x
+	remainingInLine := dec.width - x
+
+	// Get ra (left pixel)
+	raIdx := (startIdx - 1) * stride + offset
+	ra := 0
+	if raIdx >= 0 && raIdx < len(pixels) {
+		ra = pixels[raIdx]
+	}
+
+	// Decode run length
+	runLength, err := dec.decodeRunPixels(gr, ra, remainingInLine)
+	if err != nil {
+		return 0, err
+	}
+
+	// Fill run with ra value
+	for i := 0; i < runLength; i++ {
+		idx := (startIdx + i) * stride + offset
+		if idx < len(pixels) {
+			pixels[idx] = ra
+		}
+	}
+
+	// Check if run reaches end of line
+	if runLength >= remainingInLine {
+		return runLength, nil
+	}
+
+	// Handle run interruption
+	interruptIdx := (startIdx + runLength) * stride + offset
+
+	// Get rb (top pixel at interruption point)
+	rbIdx := ((y-1)*dec.width + (x + runLength)) * stride + offset
+	rb := 0
+	if rbIdx >= 0 && rbIdx < len(pixels) {
+		rb = pixels[rbIdx]
+	}
+
+	// Decode interruption pixel
+	reconstructed, err := dec.decodeRunInterruptionPixel(gr, ra, rb)
+	if err != nil {
+		return 0, err
+	}
+
+	// Store reconstructed value
+	if interruptIdx < len(pixels) {
+		pixels[interruptIdx] = reconstructed
+	}
+
+	dec.decrementRunIndex()
+
+	return runLength + 1, nil
 }
 
 // getNeighbors gets neighboring pixels for prediction

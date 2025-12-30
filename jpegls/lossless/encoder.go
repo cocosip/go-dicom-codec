@@ -15,22 +15,44 @@ type Encoder struct {
 	bitDepth   int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 
-	contextTable *ContextTable
-	runEncoder   *RunModeEncoder
+	contextTable      *ContextTable
+	runModeContexts   [2]*RunModeContext // Two run mode contexts (index 0 and 1)
+	runIndex          int                // Current run index (0-31)
+	resetThreshold    int                // Reset threshold (typically 64)
+	limit             int                // LIMIT parameter
+	quantizedBitsPerPixel int           // qbpp
 }
 
 // NewEncoder creates a new JPEG-LS encoder
 func NewEncoder(width, height, components, bitDepth int) *Encoder {
 	maxVal := (1 << uint(bitDepth)) - 1
+	range_ := maxVal + 1
+
+	// Compute LIMIT parameter: 2 * (bitDepth + max(8, bitDepth))
+	limit := 2 * (bitDepth + max(8, bitDepth))
+
+	// Compute quantized bits per pixel (qbpp)
+	qbpp := bitDepth
+	if bitDepth > 12 {
+		qbpp = 16
+	} else if bitDepth > 8 {
+		qbpp = 12
+	} else {
+		qbpp = 8
+	}
 
 	return &Encoder{
-		width:        width,
-		height:       height,
-		components:   components,
-		bitDepth:     bitDepth,
-		maxVal:       maxVal,
-		contextTable: NewContextTable(maxVal),
-		runEncoder:   NewRunModeEncoder(),
+		width:             width,
+		height:            height,
+		components:        components,
+		bitDepth:          bitDepth,
+		maxVal:            maxVal,
+		contextTable:      NewContextTable(maxVal),
+		runModeContexts:   [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
+		runIndex:          0,
+		resetThreshold:    64, // Standard default
+		limit:             limit,
+		quantizedBitsPerPixel: qbpp,
 	}
 }
 
@@ -95,7 +117,9 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 // writeSOF55 writes Start of Frame marker for JPEG-LS
 func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 	// SOF55 = 0xFFF7
-	length := 8 + enc.components*3
+	// Data length = 6 (fixed header) + components*3 (component specs)
+	// Note: WriteSegment adds the 2-byte length field automatically
+	length := 6 + enc.components*3
 	data := make([]byte, length)
 
 	data[0] = byte(enc.bitDepth)           // Precision
@@ -119,8 +143,8 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 // writeLSE writes JPEG-LS parameters (LSE marker)
 func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	// LSE = 0xFFF8
-	// Write default parameters
-	data := make([]byte, 13)
+	// Write default parameters (11 bytes of data, WriteSegment adds 2-byte length field)
+	data := make([]byte, 11)
 	data[0] = 1 // ID = 1 (preset parameters)
 
 	// MAXVAL (maximum sample value)
@@ -128,20 +152,31 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[1] = byte(maxVal >> 8)
 	data[2] = byte(maxVal & 0xFF)
 
-	// T1, T2, T3 (thresholds) - use defaults
-	// T1 = 3, T2 = 7, T3 = 21
-	data[3] = 0
-	data[4] = 3
-	data[5] = 0
-	data[6] = 7
-	data[7] = 0
-	data[8] = 21
+	// T1, T2, T3 (thresholds) - compute based on MAXVAL
+	// For MAXVAL < 4095, use the basic defaults: T1=3, T2=7, T3=21
+	// For MAXVAL >= 4095, scale the thresholds based on the standard formula
+	var t1, t2, t3 uint16
+	if enc.maxVal < 4095 {
+		t1, t2, t3 = 3, 7, 21
+	} else {
+		// For higher bit depths, scale thresholds according to JPEG-LS standard
+		// This matches the behavior of fo-dicom and other implementations
+		rangeValue := (enc.maxVal + 1) / 4096
+		t1 = uint16(2 + rangeValue)
+		t2 = uint16(3 + 4*rangeValue)
+		t3 = uint16(4 + 17*rangeValue)
+	}
 
-	// RESET interval (0 = disabled)
+	data[3] = byte(t1 >> 8)
+	data[4] = byte(t1 & 0xFF)
+	data[5] = byte(t2 >> 8)
+	data[6] = byte(t2 & 0xFF)
+	data[7] = byte(t3 >> 8)
+	data[8] = byte(t3 & 0xFF)
+
+	// RESET interval (64 = standard default)
 	data[9] = 0
-	data[10] = 0
-	data[11] = 0
-	data[12] = 64
+	data[10] = 64
 
 	return writer.WriteSegment(0xFFF8, data)
 }
@@ -199,54 +234,260 @@ func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
 }
 
 // encodeComponent encodes a single component
+// This matches CharLS do_line encoding logic with RUN mode support
 func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) error {
 	stride := enc.components
 	offset := comp
 
 	// Process line by line
 	for y := 0; y < enc.height; y++ {
-		for x := 0; x < enc.width; x++ {
+		// Reset run index at start of each line (JPEG-LS standard)
+		enc.runIndex = 0
+
+		x := 0
+		for x < enc.width {
 			idx := (y*enc.width + x) * stride + offset
 			if idx >= len(pixels) {
+				x++
 				continue
 			}
 
-			sample := pixels[idx]
+			x_sample := pixels[idx] // Current sample value
 
-			// Get neighboring pixels for prediction
-			a, b, c, d := enc.getNeighbors(pixels, x, y, comp)
+			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
+			ra, rb, rc, rd := enc.getNeighbors(pixels, x, y, comp)
 
-			// Compute prediction
-			prediction := Predict(a, b, c)
+			// Compute prediction using MED predictor
+			predicted := Predict(ra, rb, rc)
 
-			// Compute context
-			q1, q2, q3 := ComputeContext(a, b, c, d)
-			ctx := enc.contextTable.GetContext(q1, q2, q3)
+			// Compute context ID (can be negative due to sign symmetry)
+			// qs = (q1 * 9 + q2) * 9 + q3
+			// where q1 = quantize(rd - rb), q2 = quantize(rb - rc), q3 = quantize(rc - ra)
+			q1, q2, q3 := ComputeContext(ra, rb, rc, rd)
+			qs := ComputeContextID(q1, q2, q3)
 
-			// Apply bias correction
-			bias := ctx.GetBias()
-			correctedPred := CorrectPrediction(prediction, bias, enc.maxVal+1)
+			// Check if we should use RUN mode (qs == 0 means flat region)
+			if qs != 0 {
+				// Regular mode
+				// Extract sign and apply sign symmetry
+				sign := BitwiseSign(qs)
+				contextIdx := ApplySign(qs, sign)
 
-			// Compute error
-			errValue := sample - correctedPred
+				// Get context (always use positive index)
+				// Add bounds check
+				if contextIdx < 0 || contextIdx >= len(enc.contextTable.contexts) {
+					return fmt.Errorf("context index %d out of bounds [0, %d)", contextIdx, len(enc.contextTable.contexts))
+				}
+				ctx := enc.contextTable.contexts[contextIdx]
 
-			// Map error to non-negative
-			mappedError := MapErrorValue(errValue, enc.maxVal+1)
+				// Get Golomb parameter
+				k := ctx.ComputeGolombParameter()
 
-			// Get Golomb parameter
-			k := ctx.ComputeGolombParameter()
+				// Apply prediction correction with sign
+				// predicted_value = correct_prediction(predicted + apply_sign(context.c(), sign))
+				correctionC := ApplySign(ctx.C, sign)
+				predicted_value := CorrectPrediction(predicted, correctionC, enc.maxVal+1)
 
-			// Encode error using Golomb-Rice coding
-			if err := gw.WriteGolomb(mappedError, k); err != nil {
-				return err
+				// Compute error with sign applied
+				// error_value = apply_sign(x - predicted_value, sign)
+				error_value := ApplySign(x_sample-predicted_value, sign)
+
+				// Apply error correction and map to non-negative
+				// encode_mapped_value(k, map_error_value(get_error_correction(k | NEAR) ^ error_value))
+				// For lossless (NEAR=0): get_error_correction(k) or just get_error_correction(k|0)
+				errorCorrection := ctx.GetErrorCorrection(k, 0) // k|0 = k for lossless
+				corrected_error := errorCorrection ^ error_value
+				mapped_error := MapErrorValue(corrected_error)
+
+				// Encode the mapped error with limit handling (CharLS encode_mapped_value)
+				if err := gw.EncodeMappedValue(k, mapped_error, enc.limit, enc.quantizedBitsPerPixel); err != nil {
+					return err
+				}
+
+				// Update context with the error value
+				ctx.UpdateContext(error_value)
+
+				x++
+			} else {
+				// RUN mode (qs == 0, flat region)
+				pixelsProcessed, err := enc.doRunMode(gw, pixels, x, y, comp)
+				if err != nil {
+					return err
+				}
+				x += pixelsProcessed
 			}
-
-			// Update context
-			ctx.UpdateContext(errValue)
 		}
 	}
 
 	return nil
+}
+
+// incrementRunIndex increments the run index
+func (enc *Encoder) incrementRunIndex() {
+	if enc.runIndex < 31 {
+		enc.runIndex++
+	}
+}
+
+// decrementRunIndex decrements the run index
+func (enc *Encoder) decrementRunIndex() {
+	if enc.runIndex > 0 {
+		enc.runIndex--
+	}
+}
+
+// encodeRunPixels encodes a run of identical pixels
+// This matches CharLS encode_run_pixels
+func (enc *Encoder) encodeRunPixels(gw *GolombWriter, runLength int, endOfLine bool) error {
+	// Encode run length using J[] array
+	for runLength >= (1 << uint(J[enc.runIndex])) {
+		// Write a '1' bit
+		if err := gw.WriteBit(1); err != nil {
+			return err
+		}
+		runLength -= (1 << uint(J[enc.runIndex]))
+		enc.incrementRunIndex()
+	}
+
+	if endOfLine {
+		if runLength != 0 {
+			// Write a '1' bit
+			if err := gw.WriteBit(1); err != nil {
+				return err
+			}
+		}
+	} else {
+		// Write leading 0 + actual remaining length
+		nBits := J[enc.runIndex] + 1
+		if err := gw.WriteBits(uint32(runLength), nBits); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// encodeRunInterruptionError encodes the error for run interruption
+func (enc *Encoder) encodeRunInterruptionError(gw *GolombWriter, ctx *RunModeContext, errorValue int) error {
+	k := ctx.GetGolombCode()
+	mapBit := ctx.ComputeMap(errorValue, k)
+
+	eMappedErrorValue := 2*abs(errorValue) - ctx.runInterruptionType
+	if mapBit {
+		eMappedErrorValue--
+	}
+
+	// Encode using the limited alphabet
+	limitMinusJ := enc.limit - J[enc.runIndex] - 1
+	mappedValue := eMappedErrorValue
+
+	// Encode using Golomb with limited alphabet
+	if err := enc.encodeGolombLimited(gw, k, mappedValue, limitMinusJ); err != nil {
+		return err
+	}
+
+	// Update context
+	ctx.UpdateVariables(errorValue, eMappedErrorValue, enc.resetThreshold)
+
+	return nil
+}
+
+// encodeGolombLimited encodes a value using Golomb coding with limited alphabet
+// This is used for RUN mode interruption where limit = enc.limit - J[runIndex] - 1
+func (enc *Encoder) encodeGolombLimited(gw *GolombWriter, k, value, limit int) error {
+	// Use EncodeMappedValue with the adjusted limit
+	// The limit parameter here already includes the adjustment for RUN mode
+	return gw.EncodeMappedValue(k, value, limit, enc.quantizedBitsPerPixel)
+}
+
+// encodeRunInterruptionPixel encodes the pixel that interrupts a run
+func (enc *Encoder) encodeRunInterruptionPixel(gw *GolombWriter, x, ra, rb int) (int, error) {
+	const nearLossless = 0 // Lossless mode
+
+	if abs(ra-rb) <= nearLossless {
+		// Use run mode context 1
+		errorValue := x - ra
+		if err := enc.encodeRunInterruptionError(gw, enc.runModeContexts[1], errorValue); err != nil {
+			return 0, err
+		}
+		return ra + errorValue, nil
+	}
+
+	// Use run mode context 0
+	errorValue := (x - rb) * sign(rb-ra)
+	if err := enc.encodeRunInterruptionError(gw, enc.runModeContexts[0], errorValue); err != nil {
+		return 0, err
+	}
+	return rb + errorValue*sign(rb-ra), nil
+}
+
+// doRunMode handles encoding in run mode (when qs == 0)
+// This matches CharLS do_run_mode for encoder
+func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int) (int, error) {
+	stride := enc.components
+	offset := comp
+
+	startIdx := y*enc.width + x
+	remainingInLine := enc.width - x
+
+	// Get ra (left pixel)
+	raIdx := (startIdx - 1) * stride + offset
+	ra := 0
+	if raIdx >= 0 && raIdx < len(pixels) {
+		ra = pixels[raIdx]
+	}
+
+	// Count run length
+	runLength := 0
+	for runLength < remainingInLine {
+		currIdx := (startIdx + runLength) * stride + offset
+		if currIdx >= len(pixels) {
+			break
+		}
+
+		currPixel := pixels[currIdx]
+
+		// Check if run continues
+		if currPixel != ra {
+			break
+		}
+
+		runLength++
+	}
+
+	// Encode the run
+	endOfLine := (runLength == remainingInLine)
+	if err := enc.encodeRunPixels(gw, runLength, endOfLine); err != nil {
+		return 0, err
+	}
+
+	if endOfLine {
+		return runLength, nil
+	}
+
+	// Handle run interruption
+	interruptIdx := (startIdx + runLength) * stride + offset
+	xInterrupt := pixels[interruptIdx]
+
+	// Get rb (top pixel at interruption point)
+	rbIdx := ((y-1)*enc.width + (x + runLength)) * stride + offset
+	rb := 0
+	if rbIdx >= 0 && rbIdx < len(pixels) {
+		rb = pixels[rbIdx]
+	}
+
+	// Encode interruption pixel
+	reconstructed, err := enc.encodeRunInterruptionPixel(gw, xInterrupt, ra, rb)
+	if err != nil {
+		return 0, err
+	}
+
+	// Store reconstructed value
+	pixels[interruptIdx] = reconstructed
+
+	enc.decrementRunIndex()
+
+	return runLength + 1, nil
 }
 
 // getNeighbors gets the neighboring pixels for prediction
@@ -294,6 +535,8 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 }
 
 // pixelsToIntegers converts pixel bytes to integer array
+// JPEG-LS operates on unsigned values in the range [0, MAXVAL]
+// For signed data, we must first convert to unsigned by adding an offset
 func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	if enc.bitDepth <= 8 {
 		// 8-bit or less: one byte per sample
@@ -305,12 +548,18 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	}
 
 	// 9-16 bit: two bytes per sample (little-endian)
+	// Read as int16 to properly handle signed data, then convert to unsigned range
 	numPixels := len(pixelData) / 2
 	pixels := make([]int, numPixels)
 	for i := 0; i < numPixels; i++ {
 		idx := i * 2
-		val := int(pixelData[idx]) | (int(pixelData[idx+1]) << 8)
-		pixels[i] = val
+		// Read as little-endian uint16 first
+		val := uint16(pixelData[idx]) | (uint16(pixelData[idx+1]) << 8)
+
+		// JPEG-LS uses unsigned values [0, MAXVAL]
+		// The data is already in the correct unsigned representation
+		// (signed values are stored in two's complement, which maps correctly to unsigned range)
+		pixels[i] = int(val)
 	}
 	return pixels
 }
