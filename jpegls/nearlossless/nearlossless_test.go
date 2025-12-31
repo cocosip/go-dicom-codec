@@ -2,6 +2,8 @@ package nearlossless
 
 import (
 	"testing"
+
+	jpegcommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 )
 
 // TestEncodeDecodeNEAR0 tests with NEAR=0 (should be lossless)
@@ -44,7 +46,7 @@ func TestEncodeDecodeNEAR0(t *testing.T) {
 	errors := 0
 	maxError := 0
 	for i := range pixelData {
-		diff := abs(int(decoded[i]) - int(pixelData[i]))
+		diff := jpegcommon.Abs(int(decoded[i]) - int(pixelData[i]))
 		if diff > 0 {
 			errors++
 			if diff > maxError {
@@ -101,7 +103,7 @@ func TestEncodeDecodeNEAR3(t *testing.T) {
 	maxError := 0
 	totalError := 0
 	for i := range pixelData {
-		diff := abs(int(decoded[i]) - int(pixelData[i]))
+		diff := jpegcommon.Abs(int(decoded[i]) - int(pixelData[i]))
 		if diff > 0 {
 			errors++
 			totalError += diff
@@ -159,7 +161,7 @@ func TestEncodeDecodeNEAR7(t *testing.T) {
 	// Verify error bound
 	maxError := 0
 	for i := range pixelData {
-		diff := abs(int(decoded[i]) - int(pixelData[i]))
+		diff := jpegcommon.Abs(int(decoded[i]) - int(pixelData[i]))
 		if diff > maxError {
 			maxError = diff
 		}
@@ -204,7 +206,7 @@ func TestEncodeDecodeRGB(t *testing.T) {
 	// Verify error bound
 	maxError := 0
 	for i := range pixelData {
-		diff := abs(int(decoded[i]) - int(pixelData[i]))
+		diff := jpegcommon.Abs(int(decoded[i]) - int(pixelData[i]))
 		if diff > maxError {
 			maxError = diff
 		}
@@ -281,12 +283,4 @@ func TestInvalidParameters(t *testing.T) {
 			}
 		})
 	}
-}
-
-// abs returns absolute value
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
 }

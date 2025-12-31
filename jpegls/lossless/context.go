@@ -182,7 +182,13 @@ func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 	}
 
 	qbpp := bitsLen(range_)
-	limit := 2 * (qbpp + max(8, qbpp))
+
+	// IMPORTANT: According to CharLS and JPEG-LS standard T.87,
+	// LIMIT should be calculated using bits_per_sample (original bit depth),
+	// NOT qbpp (quantized bits per sample).
+	// For near-lossless, qbpp < bitsPerSample, so we need to derive bitsPerSample from maxVal
+	bitsPerSample := bitsLen(maxVal + 1)
+	limit := 2 * (bitsPerSample + max(8, bitsPerSample))
 
 	t1, t2, t3 := computeThresholds(maxVal, near)
 

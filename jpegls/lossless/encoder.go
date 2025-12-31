@@ -364,7 +364,15 @@ func (enc *Encoder) encodeRunPixels(gw *GolombWriter, runLength int, endOfLine b
 	}
 
 	// Write leading 0 + actual remaining length
+	// After the loop above, runLength < 2^J[runIndex], so writing it in J[runIndex]+1 bits
+	// guarantees the first bit is 0 (since runLength requires at most J[runIndex] bits)
 	nBits := J[enc.runIndex] + 1
+
+	// Safety check: runLength should always be < 2^J[runIndex]
+	if runLength >= (1 << uint(J[enc.runIndex])) {
+		return fmt.Errorf("invalid run length %d >= %d (2^J[%d])", runLength, 1<<uint(J[enc.runIndex]), enc.runIndex)
+	}
+
 	if err := gw.WriteBits(uint32(runLength), nBits); err != nil {
 		return err
 	}

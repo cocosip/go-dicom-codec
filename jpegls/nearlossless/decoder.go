@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	jpegcommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 	"github.com/cocosip/go-dicom-codec/jpegls/lossless"
 )
 
@@ -23,11 +24,12 @@ type Decoder struct {
 	t2         int
 	t3         int
 
-	contextTable *lossless.ContextTable
-	runDecoder   *lossless.RunModeDecoder
-	limit        int
-	reset        int
-	quantizer    *lossless.GradientQuantizer
+	contextTable    *lossless.ContextTable
+	runModeContexts [2]*lossless.RunModeContext // Two run mode contexts (index 0 and 1)
+	runIndex        int                         // Current run index (0-31)
+	limit           int
+	reset           int
+	quantizer       *lossless.GradientQuantizer
 }
 
 // NewDecoder creates a new JPEG-LS near-lossless decoder
@@ -189,7 +191,11 @@ func (dec *Decoder) applyCodingParameters() {
 	dec.limit = params.Limit
 	dec.quantizer = lossless.NewGradientQuantizer(params.T1, params.T2, params.T3, dec.near)
 	dec.contextTable = lossless.NewContextTable(dec.maxVal, dec.near, params.Reset)
-	dec.runDecoder = lossless.NewRunModeDecoder()
+	dec.runModeContexts = [2]*lossless.RunModeContext{
+		lossless.NewRunModeContext(0, params.Range),
+		lossless.NewRunModeContext(1, params.Range),
+	}
+	dec.runIndex = 0
 }
 
 // parseSOS parses the SOS segment and extracts NEAR parameter
@@ -275,7 +281,11 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 	offset := comp
 
 	for y := 0; y < dec.height; y++ {
-		for x := 0; x < dec.width; x++ {
+		// Reset run index at start of each line (JPEG-LS standard)
+		dec.runIndex = 0
+
+		x := 0
+		for x < dec.width {
 			idx := (y*dec.width+x)*stride + offset
 
 			// Get neighbors
@@ -284,50 +294,60 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			// Compute context on ORIGINAL values (before quantization)
 			// This ensures thresholds work correctly
 			q1, q2, q3 := dec.quantizer.ComputeContext(a, b, c, d)
-			ctx := dec.contextTable.GetContext(q1, q2, q3)
 
-			// Quantize neighbors for prediction
-			qa := dec.quantize(a)
-			qb := dec.quantize(b)
-			qc := dec.quantize(c)
+			// Compute context ID to check for RUN mode
+			qs := lossless.ComputeContextID(q1, q2, q3)
 
-			// Compute prediction on quantized values
-			prediction := lossless.Predict(qa, qb, qc)
+			// Check if we should use RUN mode (qs == 0 means flat region)
+			if qs != 0 {
+				// Regular mode
+				ctx := dec.contextTable.GetContext(q1, q2, q3)
 
-			// Apply prediction correction using C value
-			correctionC := ctx.GetPredictionCorrection()
-			correctedPred := dec.correctPrediction(prediction, correctionC)
+				// Quantize neighbors for prediction
+				qa := dec.quantize(a)
+				qb := dec.quantize(b)
+				qc := dec.quantize(c)
 
-			// Reconstruct prediction to original range
-			reconstructedPred := dec.dequantize(correctedPred)
+				// Compute prediction on quantized values
+				prediction := lossless.Predict(qa, qb, qc)
 
-			// Get Golomb parameter
-			k := ctx.ComputeGolombParameter()
+				// Apply prediction correction using C value
+				correctionC := ctx.GetPredictionCorrection()
+				correctedPred := dec.correctPrediction(prediction, correctionC)
 
-			// Decode error using limited alphabet
-			mappedError, err := gr.DecodeValue(k, dec.limit, dec.qbpp)
-			if err != nil {
-				return err
+				// Reconstruct prediction to original range
+				reconstructedPred := dec.dequantize(correctedPred)
+
+				// Get Golomb parameter
+				k := ctx.ComputeGolombParameter()
+
+				// Decode error using limited alphabet
+				mappedError, err := gr.DecodeValue(k, dec.limit, dec.qbpp)
+				if err != nil {
+					return err
+				}
+
+				// Unmap error to get error value (after modulo_range)
+				errorValue := dec.unmapErrorValue(mappedError)
+
+				// Reconstruct sample with wraparound handling (CharLS: fix_reconstructed_value)
+				reconstructedError := dec.dequantizeError(errorValue)
+				sample := dec.fixReconstructedValue(reconstructedPred + reconstructedError)
+
+				pixels[idx] = sample
+
+				// Update context with error value
+				ctx.UpdateContext(errorValue, dec.near, dec.reset)
+
+				x++
+			} else {
+				// RUN mode (qs == 0, flat region)
+				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
+				if err != nil {
+					return err
+				}
+				x += pixelsProcessed
 			}
-
-			// Unmap error
-			quantizedError := dec.unmapErrorValue(mappedError)
-
-			// Reconstruct sample
-			reconstructedError := dec.dequantizeError(quantizedError)
-			sample := reconstructedPred + reconstructedError
-
-			// Clamp to valid range
-			if sample < 0 {
-				sample = 0
-			} else if sample > dec.maxVal {
-				sample = dec.maxVal
-			}
-
-			pixels[idx] = sample
-
-			// Update context with quantized error
-			ctx.UpdateContext(quantizedError, dec.near, dec.reset)
 		}
 	}
 
@@ -350,15 +370,34 @@ func (dec *Decoder) dequantize(qval int) int {
 	return qval * (2*dec.near + 1)
 }
 
+// fixReconstructedValue handles wraparound for reconstructed values
+// According to CharLS implementation
+func (dec *Decoder) fixReconstructedValue(value int) int {
+	if value < -dec.near {
+		value += dec.range_ * (2*dec.near + 1)
+	} else if value > dec.maxVal+dec.near {
+		value -= dec.range_ * (2*dec.near + 1)
+	}
+
+	// Clamp to valid range
+	if value < 0 {
+		value = 0
+	} else if value > dec.maxVal {
+		value = dec.maxVal
+	}
+
+	return value
+}
+
 // dequantizeError reconstructs error from quantized error
-// According to JPEG-LS standard T.87
+// According to CharLS implementation and JPEG-LS standard T.87
 func (dec *Decoder) dequantizeError(qerr int) int {
 	if dec.near == 0 {
 		return qerr
 	}
 
-	// JPEG-LS error reconstruction
-	// Multiply by quantization step size to get reconstructed error
+	// CharLS implementation: simple multiplication
+	// The NEAR offset is handled by modulo_range operation, not here
 	return qerr * (2*dec.near + 1)
 }
 
@@ -441,4 +480,183 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 		pixelData[idx+1] = byte((val >> 8) & 0xFF)
 	}
 	return pixelData
+}
+
+
+// doRunMode handles decoding in run mode (when qs == 0) for near-lossless
+func (dec *Decoder) doRunMode(gr *lossless.GolombReader, pixels []int, x, y, comp int) (int, error) {
+	stride := dec.components
+	offset := comp
+
+	startIdx := y*dec.width + x
+	remainingInLine := dec.width - x
+
+	// Get ra (left pixel)
+	raIdx := (startIdx-1)*stride + offset
+	ra := 0
+	if raIdx >= 0 && raIdx < len(pixels) {
+		ra = pixels[raIdx]
+	}
+
+	// Decode run length
+	runLength, err := dec.decodeRunPixels(gr, ra, remainingInLine)
+	if err != nil {
+		return 0, err
+	}
+
+	// Fill run with ra value
+	for i := 0; i < runLength; i++ {
+		idx := (startIdx+i)*stride + offset
+		if idx < len(pixels) {
+			pixels[idx] = ra
+		}
+	}
+
+	// Check if run reaches end of line
+	if runLength >= remainingInLine {
+		dec.runIndex = 0
+		return runLength, nil
+	}
+
+	// Handle run interruption
+	interruptIdx := (startIdx+runLength)*stride + offset
+
+	// Get rb (top pixel at interruption point)
+	rbIdx := ((y-1)*dec.width+(x+runLength))*stride + offset
+	rb := 0
+	if rbIdx >= 0 && rbIdx < len(pixels) {
+		rb = pixels[rbIdx]
+	}
+
+	// Decode interruption pixel
+	reconstructed, err := dec.decodeRunInterruptionPixel(gr, ra, rb)
+	if err != nil {
+		return 0, err
+	}
+
+	// Store reconstructed value
+	if interruptIdx < len(pixels) {
+		pixels[interruptIdx] = reconstructed
+	}
+
+	dec.runIndex = jpegcommon.DecrementRunIndex(dec.runIndex)
+
+	return runLength + 1, nil
+}
+
+// decodeRunPixels decodes a run of identical pixels
+func (dec *Decoder) decodeRunPixels(gr *lossless.GolombReader, ra int, remainingInLine int) (int, error) {
+	runLength := 0
+
+	// Read 1 bit at a time
+	for {
+		bit, err := gr.ReadBit()
+		if err != nil {
+			return runLength, err
+		}
+
+		if bit == 1 {
+			// Full run segment
+			count := jpegcommon.Min(1<<uint(lossless.J[dec.runIndex]), remainingInLine-runLength)
+			runLength += count
+
+			if count == (1 << uint(lossless.J[dec.runIndex])) {
+				dec.runIndex = jpegcommon.IncrementRunIndex(dec.runIndex)
+			}
+
+			if runLength >= remainingInLine {
+				return remainingInLine, nil
+			}
+		} else {
+			// Bit is 0: incomplete run
+			break
+		}
+	}
+
+	// Read remaining run length if J[runIndex] > 0
+	if lossless.J[dec.runIndex] > 0 {
+		val, err := gr.ReadBits(lossless.J[dec.runIndex])
+		if err != nil {
+			return runLength, err
+		}
+		runLength += int(val)
+	}
+
+	if runLength > remainingInLine {
+		return 0, fmt.Errorf("run length exceeds line: %d > %d", runLength, remainingInLine)
+	}
+
+	return runLength, nil
+}
+
+// decodeRunInterruptionPixel decodes the pixel that interrupts a run
+func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb int) (int, error) {
+	if jpegcommon.Abs(ra-rb) <= dec.near {
+		// Use run mode context 1
+		quantizedError, err := dec.decodeRunInterruptionError(gr, dec.runModeContexts[1])
+		if err != nil {
+			return 0, err
+		}
+
+		// Dequantize error for reconstruction
+		reconstructedError := dec.dequantizeError(quantizedError)
+		reconstructed := ra + reconstructedError
+
+		// Clamp to valid range
+		if reconstructed < 0 {
+			reconstructed = 0
+		} else if reconstructed > dec.maxVal {
+			reconstructed = dec.maxVal
+		}
+
+		return reconstructed, nil
+	}
+
+	// Use run mode context 0
+	quantizedError, err := dec.decodeRunInterruptionError(gr, dec.runModeContexts[0])
+	if err != nil {
+		return 0, err
+	}
+
+	// Dequantize error for reconstruction
+	reconstructedError := dec.dequantizeError(quantizedError)
+	reconstructed := rb + reconstructedError*jpegcommon.Sign(rb-ra)
+
+	// Clamp to valid range
+	if reconstructed < 0 {
+		reconstructed = 0
+	} else if reconstructed > dec.maxVal {
+		reconstructed = dec.maxVal
+	}
+
+	return reconstructed, nil
+}
+
+// decodeRunInterruptionError decodes the error value for run interruption
+func (dec *Decoder) decodeRunInterruptionError(gr *lossless.GolombReader, ctx *lossless.RunModeContext) (int, error) {
+	k := ctx.GetGolombCode()
+
+	// Decode using limited alphabet Golomb
+	limitMinusJ := dec.limit - lossless.J[dec.runIndex] - 1
+	if limitMinusJ < 0 {
+		limitMinusJ = 0
+	}
+	eMappedErrorValue, err := gr.DecodeValue(k, limitMinusJ, dec.qbpp)
+	if err != nil {
+		return 0, err
+	}
+
+	// Get the runInterruptionType value
+	runInterruptionType := 0
+	if ctx == dec.runModeContexts[1] {
+		runInterruptionType = 1
+	}
+
+	// Reconstruct error value
+	errorValue := ctx.ComputeErrorValue(eMappedErrorValue+runInterruptionType, k)
+
+	// Update context
+	ctx.UpdateVariables(errorValue, eMappedErrorValue, dec.reset)
+
+	return errorValue, nil
 }
