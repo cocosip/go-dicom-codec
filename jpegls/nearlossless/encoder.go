@@ -463,7 +463,6 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	return pixels
 }
 
-
 // doRunMode handles encoding in run mode (when qs == 0) for near-lossless
 func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, comp int) (int, error) {
 	stride := enc.components

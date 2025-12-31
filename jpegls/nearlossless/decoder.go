@@ -324,7 +324,7 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 				// Decode error using limited alphabet
 				mappedError, err := gr.DecodeValue(k, dec.limit, dec.qbpp)
 				if err != nil {
-					return err
+					return fmt.Errorf("decode regular mode error at x=%d y=%d comp=%d: %w", x, y, comp, err)
 				}
 
 				// Unmap error to get error value (after modulo_range)
@@ -344,7 +344,7 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 				// RUN mode (qs == 0, flat region)
 				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
 				if err != nil {
-					return err
+					return fmt.Errorf("decode run mode error at x=%d y=%d comp=%d: %w", x, y, comp, err)
 				}
 				x += pixelsProcessed
 			}
@@ -482,7 +482,6 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 	return pixelData
 }
 
-
 // doRunMode handles decoding in run mode (when qs == 0) for near-lossless
 func (dec *Decoder) doRunMode(gr *lossless.GolombReader, pixels []int, x, y, comp int) (int, error) {
 	stride := dec.components
@@ -552,7 +551,7 @@ func (dec *Decoder) decodeRunPixels(gr *lossless.GolombReader, ra int, remaining
 	for {
 		bit, err := gr.ReadBit()
 		if err != nil {
-			return runLength, err
+			return runLength, fmt.Errorf("read run bit: %w", err)
 		}
 
 		if bit == 1 {
@@ -577,7 +576,7 @@ func (dec *Decoder) decodeRunPixels(gr *lossless.GolombReader, ra int, remaining
 	if lossless.J[dec.runIndex] > 0 {
 		val, err := gr.ReadBits(lossless.J[dec.runIndex])
 		if err != nil {
-			return runLength, err
+			return runLength, fmt.Errorf("read run tail: %w", err)
 		}
 		runLength += int(val)
 	}
@@ -629,7 +628,7 @@ func (dec *Decoder) decodeRunInterruptionError(gr *lossless.GolombReader, ctx *l
 	}
 	eMappedErrorValue, err := gr.DecodeValue(k, limitMinusJ, dec.qbpp)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("decode run interruption mapped value: %w", err)
 	}
 
 	// Get the runInterruptionType value
