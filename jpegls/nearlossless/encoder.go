@@ -599,14 +599,7 @@ func (enc *Encoder) encodeRunInterruptionPixel(gw *lossless.GolombWriter, x, ra,
 
 		// Dequantize for reconstruction
 		reconstructedError := enc.dequantizeError(quantizedError)
-		reconstructed := ra + reconstructedError
-
-		// Clamp to valid range
-		if reconstructed < 0 {
-			reconstructed = 0
-		} else if reconstructed > enc.maxVal {
-			reconstructed = enc.maxVal
-		}
+		reconstructed := enc.fixReconstructedValue(ra + reconstructedError)
 
 		return reconstructed, nil
 	}
@@ -623,14 +616,7 @@ func (enc *Encoder) encodeRunInterruptionPixel(gw *lossless.GolombWriter, x, ra,
 
 	// Dequantize for reconstruction
 	reconstructedError := enc.dequantizeError(quantizedError)
-	reconstructed := rb + reconstructedError*jpegcommon.Sign(rb-ra)
-
-	// Clamp to valid range
-	if reconstructed < 0 {
-		reconstructed = 0
-	} else if reconstructed > enc.maxVal {
-		reconstructed = enc.maxVal
-	}
+	reconstructed := enc.fixReconstructedValue(rb + reconstructedError*jpegcommon.Sign(rb-ra))
 
 	return reconstructed, nil
 }

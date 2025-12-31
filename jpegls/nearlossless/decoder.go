@@ -600,14 +600,7 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb
 
 		// Dequantize error for reconstruction
 		reconstructedError := dec.dequantizeError(quantizedError)
-		reconstructed := ra + reconstructedError
-
-		// Clamp to valid range
-		if reconstructed < 0 {
-			reconstructed = 0
-		} else if reconstructed > dec.maxVal {
-			reconstructed = dec.maxVal
-		}
+		reconstructed := dec.fixReconstructedValue(ra + reconstructedError)
 
 		return reconstructed, nil
 	}
@@ -620,14 +613,7 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb
 
 	// Dequantize error for reconstruction
 	reconstructedError := dec.dequantizeError(quantizedError)
-	reconstructed := rb + reconstructedError*jpegcommon.Sign(rb-ra)
-
-	// Clamp to valid range
-	if reconstructed < 0 {
-		reconstructed = 0
-	} else if reconstructed > dec.maxVal {
-		reconstructed = dec.maxVal
-	}
+	reconstructed := dec.fixReconstructedValue(rb + reconstructedError*jpegcommon.Sign(rb-ra))
 
 	return reconstructed, nil
 }
