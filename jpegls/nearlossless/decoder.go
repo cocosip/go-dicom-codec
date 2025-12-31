@@ -19,9 +19,15 @@ type Decoder struct {
 	near       int // NEAR parameter
 	qbpp       int
 	range_     int
+	t1         int
+	t2         int
+	t3         int
 
 	contextTable *lossless.ContextTable
 	runDecoder   *lossless.RunModeDecoder
+	limit        int
+	reset        int
+	quantizer    *lossless.GradientQuantizer
 }
 
 // NewDecoder creates a new JPEG-LS near-lossless decoder
@@ -124,6 +130,7 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	}
 
 	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
+	dec.reset = 64
 
 	return nil
 }
@@ -146,9 +153,43 @@ func (dec *Decoder) parseLSE(reader *common.Reader) error {
 		if maxVal > 0 {
 			dec.maxVal = maxVal
 		}
+
+		dec.t1 = int(data[3])<<8 | int(data[4])
+		dec.t2 = int(data[5])<<8 | int(data[6])
+		dec.t3 = int(data[7])<<8 | int(data[8])
+
+		// RESET interval
+		dec.reset = int(data[9])<<8 | int(data[10])
+		if dec.reset == 0 {
+			dec.reset = 64
+		}
 	}
 
 	return nil
+}
+
+// applyCodingParameters recomputes derived parameters once NEAR is known.
+func (dec *Decoder) applyCodingParameters() {
+	params := lossless.ComputeCodingParameters(dec.maxVal, dec.near, dec.reset)
+	if dec.t1 > 0 {
+		params.T1 = dec.t1
+	}
+	if dec.t2 > 0 {
+		params.T2 = dec.t2
+	}
+	if dec.t3 > 0 {
+		params.T3 = dec.t3
+	}
+	if dec.reset > 0 {
+		params.Reset = dec.reset
+	}
+
+	dec.qbpp = params.Qbpp
+	dec.range_ = params.Range
+	dec.limit = params.Limit
+	dec.quantizer = lossless.NewGradientQuantizer(params.T1, params.T2, params.T3, dec.near)
+	dec.contextTable = lossless.NewContextTable(dec.maxVal, dec.near, params.Reset)
+	dec.runDecoder = lossless.NewRunModeDecoder()
 }
 
 // parseSOS parses the SOS segment and extracts NEAR parameter
@@ -170,13 +211,8 @@ func (dec *Decoder) parseSOS(reader *common.Reader) error {
 	// Extract NEAR parameter (at position len-3)
 	dec.near = int(data[len(data)-3])
 
-	// Compute quantization parameters
-	dec.qbpp = computeQBPP(dec.maxVal, dec.near)
-	dec.range_ = (dec.maxVal + 2*dec.near) / (2*dec.near + 1) + 1
-
-	// Initialize context table
-	dec.contextTable = lossless.NewContextTable(dec.maxVal)
-	dec.runDecoder = lossless.NewRunModeDecoder()
+	// Compute quantization parameters and contexts using NEAR + LSE thresholds
+	dec.applyCodingParameters()
 
 	return nil
 }
@@ -240,14 +276,14 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 
 	for y := 0; y < dec.height; y++ {
 		for x := 0; x < dec.width; x++ {
-			idx := (y*dec.width + x) * stride + offset
+			idx := (y*dec.width+x)*stride + offset
 
 			// Get neighbors
 			a, b, c, d := dec.getNeighbors(pixels, x, y, comp)
 
 			// Compute context on ORIGINAL values (before quantization)
 			// This ensures thresholds work correctly
-			q1, q2, q3 := lossless.ComputeContext(a, b, c, d)
+			q1, q2, q3 := dec.quantizer.ComputeContext(a, b, c, d)
 			ctx := dec.contextTable.GetContext(q1, q2, q3)
 
 			// Quantize neighbors for prediction
@@ -268,8 +304,8 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			// Get Golomb parameter
 			k := ctx.ComputeGolombParameter()
 
-			// Decode error
-			mappedError, err := gr.ReadGolomb(k)
+			// Decode error using limited alphabet
+			mappedError, err := gr.DecodeValue(k, dec.limit, dec.qbpp)
 			if err != nil {
 				return err
 			}
@@ -291,7 +327,7 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			pixels[idx] = sample
 
 			// Update context with quantized error
-			ctx.UpdateContext(quantizedError)
+			ctx.UpdateContext(quantizedError, dec.near, dec.reset)
 		}
 	}
 
@@ -356,22 +392,22 @@ func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	a, b, c, d := 0, 0, 0, 0
 
 	if x > 0 {
-		idx := (y*dec.width + (x - 1)) * stride + offset
+		idx := (y*dec.width+(x-1))*stride + offset
 		a = pixels[idx]
 	}
 
 	if y > 0 {
-		idx := ((y-1)*dec.width + x) * stride + offset
+		idx := ((y-1)*dec.width+x)*stride + offset
 		b = pixels[idx]
 	}
 
 	if x > 0 && y > 0 {
-		idx := ((y-1)*dec.width + (x - 1)) * stride + offset
+		idx := ((y-1)*dec.width+(x-1))*stride + offset
 		c = pixels[idx]
 	}
 
 	if x < dec.width-1 && y > 0 {
-		idx := ((y-1)*dec.width + (x + 1)) * stride + offset
+		idx := ((y-1)*dec.width+(x+1))*stride + offset
 		d = pixels[idx]
 	}
 

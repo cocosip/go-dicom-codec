@@ -16,12 +16,13 @@ type Decoder struct {
 	bitDepth   int
 	maxVal     int
 
-	contextTable      *ContextTable
-	runModeContexts   [2]*RunModeContext
-	runIndex          int
-	resetThreshold    int
-	limit             int
+	contextTable          *ContextTable
+	runModeContexts       [2]*RunModeContext
+	runIndex              int
+	resetThreshold        int
+	limit                 int
 	quantizedBitsPerPixel int
+	quantizer             *GradientQuantizer
 }
 
 // NewDecoder creates a new JPEG-LS decoder
@@ -126,21 +127,15 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	}
 
 	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
-	range_ := dec.maxVal + 1
-	dec.contextTable = NewContextTable(dec.maxVal)
-
-	// Initialize RUN mode contexts
-	dec.runModeContexts = [2]*RunModeContext{
-		NewRunModeContext(0, range_),
-		NewRunModeContext(1, range_),
-	}
-	dec.runIndex = 0
 	dec.resetThreshold = 64
+	dec.initCodingParameters(0, 0, 0)
 
-	// Compute LIMIT parameter
-	dec.limit = 2 * (dec.bitDepth + max(8, dec.bitDepth))
+	return nil
+}
 
-	// Compute quantized bits per pixel
+// initCodingParameters recomputes derived parameters and contexts (legacy/bitDepth-based).
+func (dec *Decoder) initCodingParameters(t1, t2, t3 int) {
+	// Legacy qbpp/limit based on bit depth
 	qbpp := dec.bitDepth
 	if dec.bitDepth > 12 {
 		qbpp = 16
@@ -149,9 +144,28 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	} else {
 		qbpp = 8
 	}
-	dec.quantizedBitsPerPixel = qbpp
+	// LIMIT: larger value to avoid overflow of mapped errors; cap exponent to avoid overflow
+	exp := qbpp + max(8, qbpp)
+	if exp > 24 {
+		exp = 24
+	}
+	limit := 1 << uint(exp)
 
-	return nil
+	if t1 == 0 || t2 == 0 || t3 == 0 {
+		t1, t2, t3 = computeThresholds(dec.maxVal, 0)
+	}
+
+	dec.limit = limit
+	dec.quantizedBitsPerPixel = qbpp
+	dec.quantizer = NewGradientQuantizer(t1, t2, t3, 0)
+
+	range_ := dec.maxVal + 1
+	dec.contextTable = NewContextTable(dec.maxVal, 0, dec.resetThreshold)
+	dec.runModeContexts = [2]*RunModeContext{
+		NewRunModeContext(0, range_),
+		NewRunModeContext(1, range_),
+	}
+	dec.runIndex = 0
 }
 
 // parseLSE parses the LSE segment (JPEG-LS parameters)
@@ -177,14 +191,19 @@ func (dec *Decoder) parseLSE(reader *common.Reader) error {
 
 		// Read MAXVAL
 		maxVal := int(data[1])<<8 | int(data[2])
-		if maxVal > 0 {
-			dec.maxVal = maxVal
-		}
+		t1 := int(data[3])<<8 | int(data[4])
+		t2 := int(data[5])<<8 | int(data[6])
+		t3 := int(data[7])<<8 | int(data[8])
+		reset := int(data[9])<<8 | int(data[10])
 
-		// T1, T2, T3 thresholds are at data[3:9]
-		// RESET interval at data[9:11]
-		// The context table uses these thresholds internally
-		// For now, we use the standard context update mechanism
+		if maxVal <= 0 {
+			maxVal = dec.maxVal
+		}
+		dec.maxVal = maxVal
+		if reset > 0 {
+			dec.resetThreshold = reset
+		}
+		dec.initCodingParameters(t1, t2, t3)
 	}
 
 	return nil
@@ -278,7 +297,7 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 
 		x := 0
 		for x < dec.width {
-			idx := (y*dec.width + x) * stride + offset
+			idx := (y*dec.width+x)*stride + offset
 
 			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
 			ra, rb, rc, rd := dec.getNeighbors(pixels, x, y, comp)
@@ -287,7 +306,7 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 			predicted := Predict(ra, rb, rc)
 
 			// Compute context ID with sign symmetry
-			q1, q2, q3 := ComputeContext(ra, rb, rc, rd)
+			q1, q2, q3 := dec.quantizer.ComputeContext(ra, rb, rc, rd)
 			qs := ComputeContextID(q1, q2, q3)
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
@@ -325,7 +344,7 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 				error_value := errorCorrection ^ corrected_error
 
 				// Update context
-				ctx.UpdateContext(error_value)
+				ctx.UpdateContext(error_value, 0, dec.resetThreshold)
 
 				// Apply sign to error and reconstruct
 				error_value = ApplySign(error_value, sign)
@@ -441,7 +460,11 @@ func (dec *Decoder) decodeRunInterruptionError(gr *GolombReader, ctx *RunModeCon
 	k := ctx.GetGolombCode()
 
 	// Decode using limited alphabet Golomb
-	eMappedErrorValue, err := dec.decodeGolombLimited(gr, k, dec.limit-J[dec.runIndex]-1)
+	limitMinusJ := dec.limit - J[dec.runIndex] - 1
+	if limitMinusJ < 0 {
+		limitMinusJ = 0
+	}
+	eMappedErrorValue, err := dec.decodeGolombLimited(gr, k, limitMinusJ)
 	if err != nil {
 		return 0, err
 	}
@@ -470,7 +493,7 @@ func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (i
 	remainingInLine := dec.width - x
 
 	// Get ra (left pixel)
-	raIdx := (startIdx - 1) * stride + offset
+	raIdx := (startIdx-1)*stride + offset
 	ra := 0
 	if raIdx >= 0 && raIdx < len(pixels) {
 		ra = pixels[raIdx]
@@ -484,7 +507,7 @@ func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (i
 
 	// Fill run with ra value
 	for i := 0; i < runLength; i++ {
-		idx := (startIdx + i) * stride + offset
+		idx := (startIdx+i)*stride + offset
 		if idx < len(pixels) {
 			pixels[idx] = ra
 		}
@@ -492,14 +515,15 @@ func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (i
 
 	// Check if run reaches end of line
 	if runLength >= remainingInLine {
+		dec.runIndex = 0
 		return runLength, nil
 	}
 
 	// Handle run interruption
-	interruptIdx := (startIdx + runLength) * stride + offset
+	interruptIdx := (startIdx+runLength)*stride + offset
 
 	// Get rb (top pixel at interruption point)
-	rbIdx := ((y-1)*dec.width + (x + runLength)) * stride + offset
+	rbIdx := ((y-1)*dec.width+(x+runLength))*stride + offset
 	rb := 0
 	if rbIdx >= 0 && rbIdx < len(pixels) {
 		rb = pixels[rbIdx]
@@ -529,22 +553,22 @@ func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	a, b, c, d := 0, 0, 0, 0
 
 	if x > 0 {
-		idx := (y*dec.width + (x - 1)) * stride + offset
+		idx := (y*dec.width+(x-1))*stride + offset
 		a = pixels[idx]
 	}
 
 	if y > 0 {
-		idx := ((y-1)*dec.width + x) * stride + offset
+		idx := ((y-1)*dec.width+x)*stride + offset
 		b = pixels[idx]
 	}
 
 	if x > 0 && y > 0 {
-		idx := ((y-1)*dec.width + (x - 1)) * stride + offset
+		idx := ((y-1)*dec.width+(x-1))*stride + offset
 		c = pixels[idx]
 	}
 
 	if x < dec.width-1 && y > 0 {
-		idx := ((y-1)*dec.width + (x + 1)) * stride + offset
+		idx := ((y-1)*dec.width+(x+1))*stride + offset
 		d = pixels[idx]
 	}
 

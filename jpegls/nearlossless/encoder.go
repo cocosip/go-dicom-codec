@@ -14,12 +14,15 @@ type Encoder struct {
 	height     int
 	components int
 	bitDepth   int
-	maxVal     int  // Maximum sample value (2^bitDepth - 1)
-	near       int  // NEAR parameter (maximum error bound)
-	qbpp       int  // Quantized bits per pixel
-	range_     int  // Quantization range
+	maxVal     int // Maximum sample value (2^bitDepth - 1)
+	near       int // NEAR parameter (maximum error bound)
+	qbpp       int // Quantized bits per pixel
+	range_     int // Quantization range
+	limit      int // LIMIT parameter
+	reset      int // RESET parameter
 
 	contextTable *lossless.ContextTable
+	quantizer    *lossless.GradientQuantizer
 	runEncoder   *lossless.RunModeEncoder
 }
 
@@ -27,9 +30,7 @@ type Encoder struct {
 func NewEncoder(width, height, components, bitDepth, near int) *Encoder {
 	maxVal := (1 << uint(bitDepth)) - 1
 
-	// Compute quantization parameters
-	qbpp := computeQBPP(maxVal, near)
-	range_ := (maxVal + 2*near) / (2*near + 1) + 1
+	params := lossless.ComputeCodingParameters(maxVal, near, 64)
 
 	return &Encoder{
 		width:        width,
@@ -38,9 +39,12 @@ func NewEncoder(width, height, components, bitDepth, near int) *Encoder {
 		bitDepth:     bitDepth,
 		maxVal:       maxVal,
 		near:         near,
-		qbpp:         qbpp,
-		range_:       range_,
-		contextTable: lossless.NewContextTable(maxVal),
+		qbpp:         params.Qbpp,
+		range_:       params.Range,
+		limit:        params.Limit,
+		reset:        params.Reset,
+		contextTable: lossless.NewContextTable(maxVal, near, params.Reset),
+		quantizer:    lossless.NewGradientQuantizer(params.T1, params.T2, params.T3, near),
 		runEncoder:   lossless.NewRunModeEncoder(),
 	}
 }
@@ -138,19 +142,19 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[2] = byte(maxVal & 0xFF)
 
 	// T1, T2, T3 (thresholds) - use defaults for near-lossless
-	// Since we pass quantized errors to context, default thresholds work well
-	data[3] = 0
-	data[4] = 3
-	data[5] = 0
-	data[6] = 7
-	data[7] = 0
-	data[8] = 21
+	data[3] = byte(enc.quantizer.T1 >> 8)
+	data[4] = byte(enc.quantizer.T1 & 0xFF)
+	data[5] = byte(enc.quantizer.T2 >> 8)
+	data[6] = byte(enc.quantizer.T2 & 0xFF)
+	data[7] = byte(enc.quantizer.T3 >> 8)
+	data[8] = byte(enc.quantizer.T3 & 0xFF)
 
 	// RESET interval
-	data[9] = 0
-	data[10] = 0
+	data[9] = byte(enc.reset >> 8)
+	data[10] = byte(enc.reset & 0xFF)
+	// Keep 2-byte RESET only; extra padding bytes remain zero
 	data[11] = 0
-	data[12] = 64
+	data[12] = 0
 
 	return writer.WriteSegment(0xFFF8, data)
 }
@@ -214,7 +218,7 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 
 	for y := 0; y < enc.height; y++ {
 		for x := 0; x < enc.width; x++ {
-			idx := (y*enc.width + x) * stride + offset
+			idx := (y*enc.width+x)*stride + offset
 			if idx >= len(pixels) {
 				continue
 			}
@@ -226,7 +230,7 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 
 			// Compute context on ORIGINAL values (before quantization)
 			// This ensures thresholds work correctly
-			q1, q2, q3 := lossless.ComputeContext(a, b, c, d)
+			q1, q2, q3 := enc.quantizer.ComputeContext(a, b, c, d)
 			ctx := enc.contextTable.GetContext(q1, q2, q3)
 
 			// Quantize neighbors for prediction
@@ -264,19 +268,19 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 			}
 			pixels[idx] = actualSample
 
-			// Map error to non-negative
-			mappedError := enc.mapErrorValue(quantizedError)
-
 			// Get Golomb parameter
 			k := ctx.ComputeGolombParameter()
 
-			// Encode error
-			if err := gw.WriteGolomb(mappedError, k); err != nil {
+			// Map error to non-negative
+			mappedError := enc.mapErrorValue(quantizedError)
+
+			// Encode error with limit handling (near-lossless still uses limited alphabet)
+			if err := gw.EncodeMappedValue(k, mappedError, enc.limit, enc.qbpp); err != nil {
 				return err
 			}
 
 			// Update context with quantized error
-			ctx.UpdateContext(quantizedError)
+			ctx.UpdateContext(quantizedError, enc.near, enc.reset)
 		}
 	}
 
@@ -353,28 +357,28 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	a, b, c, d := 0, 0, 0, 0
 
 	if x > 0 {
-		idx := (y*enc.width + (x - 1)) * stride + offset
+		idx := (y*enc.width+(x-1))*stride + offset
 		if idx < len(pixels) {
 			a = pixels[idx]
 		}
 	}
 
 	if y > 0 {
-		idx := ((y-1)*enc.width + x) * stride + offset
+		idx := ((y-1)*enc.width+x)*stride + offset
 		if idx < len(pixels) {
 			b = pixels[idx]
 		}
 	}
 
 	if x > 0 && y > 0 {
-		idx := ((y-1)*enc.width + (x - 1)) * stride + offset
+		idx := ((y-1)*enc.width+(x-1))*stride + offset
 		if idx < len(pixels) {
 			c = pixels[idx]
 		}
 	}
 
 	if x < enc.width-1 && y > 0 {
-		idx := ((y-1)*enc.width + (x + 1)) * stride + offset
+		idx := ((y-1)*enc.width+(x+1))*stride + offset
 		if idx < len(pixels) {
 			d = pixels[idx]
 		}
@@ -401,19 +405,4 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 		pixels[i] = val
 	}
 	return pixels
-}
-
-// computeQBPP computes quantized bits per pixel
-func computeQBPP(maxVal, near int) int {
-	if near == 0 {
-		return 0
-	}
-
-	qbpp := 0
-	temp := maxVal
-	for temp > 0 {
-		temp >>= 1
-		qbpp++
-	}
-	return qbpp
 }

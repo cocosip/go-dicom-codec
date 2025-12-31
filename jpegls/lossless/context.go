@@ -8,8 +8,8 @@ type Context struct {
 	C int // Error accumulation counter
 }
 
-// NewContext creates a new context with initial values
-// The range parameter is the dynamic range (MAXVAL + 1)
+// NewContext creates a new context with initial values.
+// The range parameter is the dynamic range (can be adjusted for NEAR>0).
 func NewContext(range_ int) *Context {
 	// ISO/IEC 14495-1, A.8, step 1.d and A.2.1
 	// A_init = max(2, (RANGE + 32) / 64)
@@ -23,8 +23,7 @@ func NewContext(range_ int) *Context {
 	}
 }
 
-// ComputeGolombParameter computes the Golomb-Rice coding parameter k
-// based on the current context statistics
+// ComputeGolombParameter computes the Golomb-Rice coding parameter k.
 // This matches the CharLS implementation (ISO 14495-1, code segment A.10)
 func (ctx *Context) ComputeGolombParameter() int {
 	// Find k such that N * 2^k < A
@@ -39,11 +38,9 @@ func (ctx *Context) ComputeGolombParameter() int {
 	return k
 }
 
-// UpdateContext updates context statistics after encoding/decoding a sample
-// This implements ISO 14495-1, Code segment A.12 – Variables update
-func (ctx *Context) UpdateContext(errValue int) {
-	const nearLossless = 0 // For lossless mode, NEAR = 0
-	const resetThreshold = 64
+// UpdateContext updates context statistics after encoding/decoding a sample.
+// This implements ISO 14495-1, Code segment A.12 — Variables update.
+func (ctx *Context) UpdateContext(errValue, nearLossless, resetThreshold int) {
 	const maxC = 127
 	const minC = -128
 
@@ -51,7 +48,6 @@ func (ctx *Context) UpdateContext(errValue int) {
 	ctx.A += abs(errValue)
 
 	// A.12: Update B[Q] with (2*NEAR + 1) * Errval
-	// For lossless (NEAR=0), this is just Errval
 	ctx.B += errValue * (2*nearLossless + 1)
 
 	// A.12: Check for reset (when N reaches threshold, halve all values)
@@ -84,14 +80,12 @@ func (ctx *Context) UpdateContext(errValue int) {
 	}
 }
 
-// GetPredictionCorrection returns the C value used to correct predictions
-// In JPEG-LS, C is used to bias the prediction, not B
+// GetPredictionCorrection returns the C value used to correct predictions.
 func (ctx *Context) GetPredictionCorrection() int {
 	return ctx.C
 }
 
-// GetErrorCorrection returns the error correction value for the given Golomb parameter k
-// This implements the CharLS get_error_correction function
+// GetErrorCorrection returns the error correction value for the given Golomb parameter k.
 // For lossless mode (NEAR=0):
 //   - If k != 0: returns 0
 //   - If k == 0: returns sign(2*B + N - 1)
@@ -116,23 +110,34 @@ type ContextTable struct {
 	contexts []*Context
 	maxVal   int // Maximum sample value (e.g., 255 for 8-bit)
 	range_   int // Dynamic range
+	near     int // NEAR parameter
+	reset    int // RESET interval
 }
 
-// NewContextTable creates a new context table
-func NewContextTable(maxVal int) *ContextTable {
+// NewContextTable creates a new context table.
+func NewContextTable(maxVal, near, reset int) *ContextTable {
 	// Total number of contexts = 9 * 9 * 9 = 729
 	numContexts := 729
 	range_ := maxVal + 1
+	if near > 0 {
+		range_ = (maxVal+2*near)/(2*near+1) + 1
+	}
 
 	contexts := make([]*Context, numContexts)
 	for i := range contexts {
 		contexts[i] = NewContext(range_)
 	}
 
+	if reset == 0 {
+		reset = 64
+	}
+
 	return &ContextTable{
 		contexts: contexts,
 		maxVal:   maxVal,
 		range_:   range_,
+		near:     near,
+		reset:    reset,
 	}
 }
 
@@ -150,6 +155,102 @@ func (ct *ContextTable) GetContext(q1, q2, q3 int) *Context {
 		return ct.contexts[0]
 	}
 	return ct.contexts[id]
+}
+
+// CodingParameters capture derived values needed for JPEG-LS coding.
+type CodingParameters struct {
+	MaxVal int
+	Near   int
+	Range  int
+	Qbpp   int
+	Limit  int
+	T1     int
+	T2     int
+	T3     int
+	Reset  int
+}
+
+// ComputeCodingParameters computes derived JPEG-LS parameters similar to CharLS defaults.
+// - range_: per T.87 for NEAR>0
+// - qbpp: ceil(log2(range_))
+// - limit: 2 * (qbpp + max(8, qbpp))
+// - thresholds: default per MAXVAL with NEAR adjustment
+func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
+	range_ := maxVal + 1
+	if near > 0 {
+		range_ = (maxVal+2*near)/(2*near+1) + 1
+	}
+
+	qbpp := bitsLen(range_)
+	limit := 2 * (qbpp + max(8, qbpp))
+
+	t1, t2, t3 := computeThresholds(maxVal, near)
+
+	if reset == 0 {
+		reset = 64
+	}
+
+	return CodingParameters{
+		MaxVal: maxVal,
+		Near:   near,
+		Range:  range_,
+		Qbpp:   qbpp,
+		Limit:  limit,
+		T1:     t1,
+		T2:     t2,
+		T3:     t3,
+		Reset:  reset,
+	}
+}
+
+// computeThresholds provides default T1/T2/T3 with a simple scaling rule that
+// matches common JPEG-LS defaults (3/7/21) and scales for larger bit depths.
+func computeThresholds(maxVal, near int) (int, int, int) {
+	// Base defaults for <=12-bit
+	t1 := 3 + near
+	t2 := 7 + near
+	t3 := 21 + near
+
+	// Scale for very large MAXVAL (>=4095) similarly to the previous logic but NEAR-aware
+	if maxVal >= 4095 {
+		rangeValue := (maxVal + 1) / 4096
+		t1 = 2 + near + rangeValue
+		t2 = 3 + near + 4*rangeValue
+		t3 = 4 + near + 17*rangeValue
+	}
+
+	// Ensure monotonicity and clamp to MaxVal
+	if t2 < t1 {
+		t2 = t1
+	}
+	if t3 < t2 {
+		t3 = t2
+	}
+	if t1 > maxVal {
+		t1 = maxVal
+	}
+	if t2 > maxVal {
+		t2 = maxVal
+	}
+	if t3 > maxVal {
+		t3 = maxVal
+	}
+
+	return t1, t2, t3
+}
+
+// bitsLen returns ceil(log2(n)).
+func bitsLen(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	length := 0
+	n--
+	for n > 0 {
+		n >>= 1
+		length++
+	}
+	return length
 }
 
 // MapErrorValue maps a signed error to a non-negative integer for Golomb coding

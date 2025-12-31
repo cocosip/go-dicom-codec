@@ -15,12 +15,13 @@ type Encoder struct {
 	bitDepth   int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 
-	contextTable      *ContextTable
-	runModeContexts   [2]*RunModeContext // Two run mode contexts (index 0 and 1)
-	runIndex          int                // Current run index (0-31)
-	resetThreshold    int                // Reset threshold (typically 64)
-	limit             int                // LIMIT parameter
-	quantizedBitsPerPixel int           // qbpp
+	contextTable          *ContextTable
+	runModeContexts       [2]*RunModeContext // Two run mode contexts (index 0 and 1)
+	runIndex              int                // Current run index (0-31)
+	resetThreshold        int                // Reset threshold (typically 64)
+	limit                 int                // LIMIT parameter
+	quantizedBitsPerPixel int                // qbpp
+	quantizer             *GradientQuantizer
 }
 
 // NewEncoder creates a new JPEG-LS encoder
@@ -28,10 +29,7 @@ func NewEncoder(width, height, components, bitDepth int) *Encoder {
 	maxVal := (1 << uint(bitDepth)) - 1
 	range_ := maxVal + 1
 
-	// Compute LIMIT parameter: 2 * (bitDepth + max(8, bitDepth))
-	limit := 2 * (bitDepth + max(8, bitDepth))
-
-	// Compute quantized bits per pixel (qbpp)
+	// Legacy qbpp/limit (bit-depth based) to match original behavior and CharLS expectations
 	qbpp := bitDepth
 	if bitDepth > 12 {
 		qbpp = 16
@@ -40,19 +38,30 @@ func NewEncoder(width, height, components, bitDepth int) *Encoder {
 	} else {
 		qbpp = 8
 	}
+	// LIMIT: larger value to avoid overflow of mapped errors; cap exponent to avoid overflow
+	exp := qbpp + max(8, qbpp)
+	if exp > 24 {
+		exp = 24
+	}
+	limit := 1 << uint(exp)
+
+	// Thresholds based on MAXVAL without NEAR scaling
+	t1, t2, t3 := computeThresholds(maxVal, 0)
+	reset := 64
 
 	return &Encoder{
-		width:             width,
-		height:            height,
-		components:        components,
-		bitDepth:          bitDepth,
-		maxVal:            maxVal,
-		contextTable:      NewContextTable(maxVal),
-		runModeContexts:   [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
-		runIndex:          0,
-		resetThreshold:    64, // Standard default
-		limit:             limit,
+		width:                 width,
+		height:                height,
+		components:            components,
+		bitDepth:              bitDepth,
+		maxVal:                maxVal,
+		contextTable:          NewContextTable(maxVal, 0, reset),
+		runModeContexts:       [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
+		runIndex:              0,
+		resetThreshold:        reset,
+		limit:                 limit,
 		quantizedBitsPerPixel: qbpp,
+		quantizer:             NewGradientQuantizer(t1, t2, t3, 0),
 	}
 }
 
@@ -122,19 +131,19 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 	length := 6 + enc.components*3
 	data := make([]byte, length)
 
-	data[0] = byte(enc.bitDepth)           // Precision
-	data[1] = byte(enc.height >> 8)        // Height MSB
-	data[2] = byte(enc.height & 0xFF)      // Height LSB
-	data[3] = byte(enc.width >> 8)         // Width MSB
-	data[4] = byte(enc.width & 0xFF)       // Width LSB
-	data[5] = byte(enc.components)         // Number of components
+	data[0] = byte(enc.bitDepth)      // Precision
+	data[1] = byte(enc.height >> 8)   // Height MSB
+	data[2] = byte(enc.height & 0xFF) // Height LSB
+	data[3] = byte(enc.width >> 8)    // Width MSB
+	data[4] = byte(enc.width & 0xFF)  // Width LSB
+	data[5] = byte(enc.components)    // Number of components
 
 	// Component specifications
 	for i := 0; i < enc.components; i++ {
 		offset := 6 + i*3
-		data[offset] = byte(i + 1)  // Component ID
-		data[offset+1] = 0x11       // Sampling factors (1x1)
-		data[offset+2] = 0          // Quantization table (not used in lossless)
+		data[offset] = byte(i + 1) // Component ID
+		data[offset+1] = 0x11      // Sampling factors (1x1)
+		data[offset+2] = 0         // Quantization table (not used in lossless)
 	}
 
 	return writer.WriteSegment(0xFFF7, data)
@@ -152,20 +161,10 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[1] = byte(maxVal >> 8)
 	data[2] = byte(maxVal & 0xFF)
 
-	// T1, T2, T3 (thresholds) - compute based on MAXVAL
-	// For MAXVAL < 4095, use the basic defaults: T1=3, T2=7, T3=21
-	// For MAXVAL >= 4095, scale the thresholds based on the standard formula
-	var t1, t2, t3 uint16
-	if enc.maxVal < 4095 {
-		t1, t2, t3 = 3, 7, 21
-	} else {
-		// For higher bit depths, scale thresholds according to JPEG-LS standard
-		// This matches the behavior of fo-dicom and other implementations
-		rangeValue := (enc.maxVal + 1) / 4096
-		t1 = uint16(2 + rangeValue)
-		t2 = uint16(3 + 4*rangeValue)
-		t3 = uint16(4 + 17*rangeValue)
-	}
+	// T1, T2, T3 (thresholds) from quantizer to keep encode/decode in sync
+	t1 := uint16(enc.quantizer.T1)
+	t2 := uint16(enc.quantizer.T2)
+	t3 := uint16(enc.quantizer.T3)
 
 	data[3] = byte(t1 >> 8)
 	data[4] = byte(t1 & 0xFF)
@@ -174,9 +173,10 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[7] = byte(t3 >> 8)
 	data[8] = byte(t3 & 0xFF)
 
-	// RESET interval (64 = standard default)
-	data[9] = 0
-	data[10] = 64
+	// RESET interval
+	reset := uint16(enc.resetThreshold)
+	data[9] = byte(reset >> 8)
+	data[10] = byte(reset & 0xFF)
 
 	return writer.WriteSegment(0xFFF8, data)
 }
@@ -246,7 +246,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 
 		x := 0
 		for x < enc.width {
-			idx := (y*enc.width + x) * stride + offset
+			idx := (y*enc.width+x)*stride + offset
 			if idx >= len(pixels) {
 				x++
 				continue
@@ -263,7 +263,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 			// Compute context ID (can be negative due to sign symmetry)
 			// qs = (q1 * 9 + q2) * 9 + q3
 			// where q1 = quantize(rd - rb), q2 = quantize(rb - rc), q3 = quantize(rc - ra)
-			q1, q2, q3 := ComputeContext(ra, rb, rc, rd)
+			q1, q2, q3 := enc.quantizer.ComputeContext(ra, rb, rc, rd)
 			qs := ComputeContextID(q1, q2, q3)
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
@@ -288,9 +288,11 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				correctionC := ApplySign(ctx.C, sign)
 				predicted_value := CorrectPrediction(predicted, correctionC, enc.maxVal+1)
 
-				// Compute error with sign applied
-				// error_value = apply_sign(x - predicted_value, sign)
-				error_value := ApplySign(x_sample-predicted_value, sign)
+				// Compute raw prediction error (no modulo wrap in lossless regular mode)
+				rawErr := x_sample - predicted_value
+
+				// Apply sign symmetry
+				error_value := ApplySign(rawErr, sign)
 
 				// Apply error correction and map to non-negative
 				// encode_mapped_value(k, map_error_value(get_error_correction(k | NEAR) ^ error_value))
@@ -305,7 +307,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				}
 
 				// Update context with the error value
-				ctx.UpdateContext(error_value)
+				ctx.UpdateContext(error_value, 0, enc.resetThreshold)
 
 				x++
 			} else {
@@ -356,12 +358,15 @@ func (enc *Encoder) encodeRunPixels(gw *GolombWriter, runLength int, endOfLine b
 				return err
 			}
 		}
-	} else {
-		// Write leading 0 + actual remaining length
-		nBits := J[enc.runIndex] + 1
-		if err := gw.WriteBits(uint32(runLength), nBits); err != nil {
-			return err
-		}
+		// Reset run index when reaching end-of-line.
+		enc.runIndex = 0
+		return nil
+	}
+
+	// Write leading 0 + actual remaining length
+	nBits := J[enc.runIndex] + 1
+	if err := gw.WriteBits(uint32(runLength), nBits); err != nil {
+		return err
 	}
 
 	return nil
@@ -379,6 +384,9 @@ func (enc *Encoder) encodeRunInterruptionError(gw *GolombWriter, ctx *RunModeCon
 
 	// Encode using the limited alphabet
 	limitMinusJ := enc.limit - J[enc.runIndex] - 1
+	if limitMinusJ < 0 {
+		limitMinusJ = 0
+	}
 	mappedValue := eMappedErrorValue
 
 	// Encode using Golomb with limited alphabet
@@ -431,7 +439,7 @@ func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int) (i
 	remainingInLine := enc.width - x
 
 	// Get ra (left pixel)
-	raIdx := (startIdx - 1) * stride + offset
+	raIdx := (startIdx-1)*stride + offset
 	ra := 0
 	if raIdx >= 0 && raIdx < len(pixels) {
 		ra = pixels[raIdx]
@@ -440,7 +448,7 @@ func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int) (i
 	// Count run length
 	runLength := 0
 	for runLength < remainingInLine {
-		currIdx := (startIdx + runLength) * stride + offset
+		currIdx := (startIdx+runLength)*stride + offset
 		if currIdx >= len(pixels) {
 			break
 		}
@@ -466,11 +474,11 @@ func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int) (i
 	}
 
 	// Handle run interruption
-	interruptIdx := (startIdx + runLength) * stride + offset
+	interruptIdx := (startIdx+runLength)*stride + offset
 	xInterrupt := pixels[interruptIdx]
 
 	// Get rb (top pixel at interruption point)
-	rbIdx := ((y-1)*enc.width + (x + runLength)) * stride + offset
+	rbIdx := ((y-1)*enc.width+(x+runLength))*stride + offset
 	rb := 0
 	if rbIdx >= 0 && rbIdx < len(pixels) {
 		rb = pixels[rbIdx]
@@ -501,7 +509,7 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 
 	// a = left pixel (West)
 	if x > 0 {
-		idx := (y*enc.width + (x - 1)) * stride + offset
+		idx := (y*enc.width+(x-1))*stride + offset
 		if idx < len(pixels) {
 			a = pixels[idx]
 		}
@@ -509,7 +517,7 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 
 	// b = top pixel (North)
 	if y > 0 {
-		idx := ((y-1)*enc.width + x) * stride + offset
+		idx := ((y-1)*enc.width+x)*stride + offset
 		if idx < len(pixels) {
 			b = pixels[idx]
 		}
@@ -517,7 +525,7 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 
 	// c = top-left pixel (North-West)
 	if x > 0 && y > 0 {
-		idx := ((y-1)*enc.width + (x - 1)) * stride + offset
+		idx := ((y-1)*enc.width+(x-1))*stride + offset
 		if idx < len(pixels) {
 			c = pixels[idx]
 		}
@@ -525,7 +533,7 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 
 	// d = top-right pixel (North-East)
 	if x < enc.width-1 && y > 0 {
-		idx := ((y-1)*enc.width + (x + 1)) * stride + offset
+		idx := ((y-1)*enc.width+(x+1))*stride + offset
 		if idx < len(pixels) {
 			d = pixels[idx]
 		}
