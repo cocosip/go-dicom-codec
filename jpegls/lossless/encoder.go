@@ -15,6 +15,7 @@ type Encoder struct {
 	bitDepth   int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 
+	traits                Traits
 	contextTable          *ContextTable
 	runModeContexts       [2]*RunModeContext // Two run mode contexts (index 0 and 1)
 	runIndex              int                // Current run index (0-31)
@@ -27,27 +28,8 @@ type Encoder struct {
 // NewEncoder creates a new JPEG-LS encoder
 func NewEncoder(width, height, components, bitDepth int) *Encoder {
 	maxVal := (1 << uint(bitDepth)) - 1
-	range_ := maxVal + 1
-
-	// Legacy qbpp/limit (bit-depth based) to match original behavior and CharLS expectations
-	qbpp := bitDepth
-	if bitDepth > 12 {
-		qbpp = 16
-	} else if bitDepth > 8 {
-		qbpp = 12
-	} else {
-		qbpp = 8
-	}
-	// LIMIT: larger value to avoid overflow of mapped errors; cap exponent to avoid overflow
-	exp := qbpp + max(8, qbpp)
-	if exp > 24 {
-		exp = 24
-	}
-	limit := 1 << uint(exp)
-
-	// Thresholds based on MAXVAL without NEAR scaling
-	t1, t2, t3 := computeThresholds(maxVal, 0)
-	reset := 64
+	traits := NewTraits(maxVal, 0, 64)
+	range_ := traits.Range
 
 	return &Encoder{
 		width:                 width,
@@ -55,13 +37,14 @@ func NewEncoder(width, height, components, bitDepth int) *Encoder {
 		components:            components,
 		bitDepth:              bitDepth,
 		maxVal:                maxVal,
-		contextTable:          NewContextTable(maxVal, 0, reset),
+		traits:                traits,
+		contextTable:          NewContextTable(maxVal, 0, traits.Reset),
 		runModeContexts:       [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
 		runIndex:              0,
-		resetThreshold:        reset,
-		limit:                 limit,
-		quantizedBitsPerPixel: qbpp,
-		quantizer:             NewGradientQuantizer(t1, t2, t3, 0),
+		resetThreshold:        traits.Reset,
+		limit:                 traits.Limit,
+		quantizedBitsPerPixel: traits.Qbpp,
+		quantizer:             NewGradientQuantizer(traits.T1, traits.T2, traits.T3, traits.Near),
 	}
 }
 
@@ -161,10 +144,10 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[1] = byte(maxVal >> 8)
 	data[2] = byte(maxVal & 0xFF)
 
-	// T1, T2, T3 (thresholds) from quantizer to keep encode/decode in sync
-	t1 := uint16(enc.quantizer.T1)
-	t2 := uint16(enc.quantizer.T2)
-	t3 := uint16(enc.quantizer.T3)
+	// T1, T2, T3 (thresholds) from traits to keep encode/decode in sync
+	t1 := uint16(enc.traits.T1)
+	t2 := uint16(enc.traits.T2)
+	t3 := uint16(enc.traits.T3)
 
 	data[3] = byte(t1 >> 8)
 	data[4] = byte(t1 & 0xFF)
@@ -174,7 +157,7 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data[8] = byte(t3 & 0xFF)
 
 	// RESET interval
-	reset := uint16(enc.resetThreshold)
+	reset := uint16(enc.traits.Reset)
 	data[9] = byte(reset >> 8)
 	data[10] = byte(reset & 0xFF)
 

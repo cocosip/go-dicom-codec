@@ -15,6 +15,7 @@ type Decoder struct {
 	components int
 	bitDepth   int
 	maxVal     int
+	traits     Traits
 
 	contextTable          *ContextTable
 	runModeContexts       [2]*RunModeContext
@@ -127,7 +128,8 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	}
 
 	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
-	dec.resetThreshold = 64
+	dec.traits = NewTraits(dec.maxVal, 0, 64)
+	dec.resetThreshold = dec.traits.Reset
 	dec.initCodingParameters(0, 0, 0)
 
 	return nil
@@ -135,29 +137,15 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 
 // initCodingParameters recomputes derived parameters and contexts (legacy/bitDepth-based).
 func (dec *Decoder) initCodingParameters(t1, t2, t3 int) {
-	// Legacy qbpp/limit based on bit depth
-	qbpp := dec.bitDepth
-	if dec.bitDepth > 12 {
-		qbpp = 16
-	} else if dec.bitDepth > 8 {
-		qbpp = 12
-	} else {
-		qbpp = 8
-	}
-	// LIMIT: larger value to avoid overflow of mapped errors; cap exponent to avoid overflow
-	exp := qbpp + max(8, qbpp)
-	if exp > 24 {
-		exp = 24
-	}
-	limit := 1 << uint(exp)
-
+	params := ComputeCodingParameters(dec.maxVal, 0, dec.resetThreshold)
 	if t1 == 0 || t2 == 0 || t3 == 0 {
-		t1, t2, t3 = computeThresholds(dec.maxVal, 0)
+		t1, t2, t3 = params.T1, params.T2, params.T3
 	}
 
-	dec.limit = limit
-	dec.quantizedBitsPerPixel = qbpp
-	dec.quantizer = NewGradientQuantizer(t1, t2, t3, 0)
+	dec.traits = NewTraits(dec.maxVal, 0, params.Reset)
+	dec.limit = dec.traits.Limit
+	dec.quantizedBitsPerPixel = dec.traits.Qbpp
+	dec.quantizer = NewGradientQuantizer(t1, t2, t3, dec.traits.Near)
 
 	range_ := dec.maxVal + 1
 	dec.contextTable = NewContextTable(dec.maxVal, 0, dec.resetThreshold)
