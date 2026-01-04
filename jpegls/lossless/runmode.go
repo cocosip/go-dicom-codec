@@ -90,39 +90,39 @@ func signInt(n int) int {
 
 // RunModeScanner encapsulates run-mode helpers (encode/decode)
 type RunModeScanner struct {
-	runIndex        int
-	runModeContexts [2]*RunModeContext
+	RunIndex        int
+	RunModeContexts [2]*RunModeContext
 	traits          Traits
 }
 
 func NewRunModeScanner(traits Traits) *RunModeScanner {
 	range_ := traits.Range
 	return &RunModeScanner{
-		runIndex:        0,
-		runModeContexts: [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
+		RunIndex:        0,
+		RunModeContexts: [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
 		traits:          traits,
 	}
 }
 
-func (r *RunModeScanner) ResetLine() { r.runIndex = 0 }
+func (r *RunModeScanner) ResetLine() { r.RunIndex = 0 }
 func (r *RunModeScanner) incRunIndex() {
-	if r.runIndex < 31 {
-		r.runIndex++
+	if r.RunIndex < 31 {
+		r.RunIndex++
 	}
 }
-func (r *RunModeScanner) decRunIndex() {
-	if r.runIndex > 0 {
-		r.runIndex--
+func (r *RunModeScanner) DecRunIndex() {
+	if r.RunIndex > 0 {
+		r.RunIndex--
 	}
 }
 
 // EncodeRunLength encodes a run of given length (CharLS encode_run_pixels)
 func (r *RunModeScanner) EncodeRunLength(gw *GolombWriter, runLength int, endOfLine bool) error {
-	for runLength >= (1 << uint(J[r.runIndex])) {
+	for runLength >= (1 << uint(J[r.RunIndex])) {
 		if err := gw.WriteBit(1); err != nil {
 			return err
 		}
-		runLength -= (1 << uint(J[r.runIndex]))
+		runLength -= (1 << uint(J[r.RunIndex]))
 		r.incRunIndex()
 	}
 	if endOfLine {
@@ -131,10 +131,10 @@ func (r *RunModeScanner) EncodeRunLength(gw *GolombWriter, runLength int, endOfL
 				return err
 			}
 		}
-		r.runIndex = 0
+		r.RunIndex = 0
 		return nil
 	}
-	nBits := J[r.runIndex] + 1
+	nBits := J[r.RunIndex] + 1
 	return gw.WriteBits(uint32(runLength), nBits)
 }
 
@@ -147,9 +147,9 @@ func (r *RunModeScanner) DecodeRunLength(gr *GolombReader, remainingInLine int) 
 			return runLength, err
 		}
 		if bit == 1 {
-			count := min(1<<uint(J[r.runIndex]), remainingInLine-runLength)
+			count := min(1<<uint(J[r.RunIndex]), remainingInLine-runLength)
 			runLength += count
-			if count == (1 << uint(J[r.runIndex])) {
+			if count == (1 << uint(J[r.RunIndex])) {
 				r.incRunIndex()
 			}
 			if runLength >= remainingInLine {
@@ -159,8 +159,8 @@ func (r *RunModeScanner) DecodeRunLength(gr *GolombReader, remainingInLine int) 
 			break
 		}
 	}
-	if J[r.runIndex] > 0 {
-		val, err := gr.ReadBits(J[r.runIndex])
+	if J[r.RunIndex] > 0 {
+		val, err := gr.ReadBits(J[r.RunIndex])
 		if err != nil {
 			return runLength, err
 		}
@@ -180,7 +180,7 @@ func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeCon
 	if mapBit {
 		eMapped--
 	}
-	limitMinusJ := r.traits.Limit - J[r.runIndex] - 1
+	limitMinusJ := r.traits.Limit - J[r.RunIndex] - 1
 	if limitMinusJ < 0 {
 		limitMinusJ = 0
 	}
@@ -194,7 +194,7 @@ func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeCon
 // DecodeRunInterruption decodes interruption error (CharLS decode_run_interruption_error)
 func (r *RunModeScanner) DecodeRunInterruption(gr *GolombReader, ctx *RunModeContext) (int, error) {
 	k := ctx.GetGolombCode()
-	limitMinusJ := r.traits.Limit - J[r.runIndex] - 1
+	limitMinusJ := r.traits.Limit - J[r.RunIndex] - 1
 	if limitMinusJ < 0 {
 		limitMinusJ = 0
 	}
