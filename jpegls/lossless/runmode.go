@@ -1,191 +1,208 @@
 package lossless
 
-// Run mode is used when encoding flat regions (many pixels with same value)
-// This provides better compression for smooth areas
+import "fmt"
 
-// RunModeEncoder handles run mode encoding
-type RunModeEncoder struct {
-	runIndex  int // Index of current run (J[0] to J[31])
-	runLength int // Length of current run
+// J array (JPEG-LS A.2.1)
+var J = [32]int{
+	0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
+	4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 }
 
-// NewRunModeEncoder creates a new run mode encoder
-func NewRunModeEncoder() *RunModeEncoder {
-	return &RunModeEncoder{
-		runIndex:  0,
-		runLength: 0,
+// RunModeContext matches CharLS context_run_mode
+type RunModeContext struct {
+	runInterruptionType int
+	A                   int
+	N                   int
+	NN                  int
+}
+
+func NewRunModeContext(runInterruptionType int, range_ int) *RunModeContext {
+	aInit := max(2, (range_+32)/64)
+	return &RunModeContext{
+		runInterruptionType: runInterruptionType,
+		A:                   aInit,
+		N:                   1,
+		NN:                  0,
 	}
 }
 
-// EncodeRun encodes a run of identical values
-// runLength: number of pixels in the run
-// endOfLine: true if run ends at end of line
-// Returns encoded run representation
-func (rme *RunModeEncoder) EncodeRun(runLength int, endOfLine bool) []int {
-	// JPEG-LS uses a variable-length encoding for runs
-	// Based on adaptive J[runIndex] parameter
-
-	runs := []int{}
-
-	// Compute J[runIndex] - the expected run length
-	j := rme.computeJ()
-
-	for runLength >= j {
-		// Encode a full run of length j
-		runs = append(runs, 1) // Signal: continue run
-		runLength -= j
-		rme.updateRunIndex(true) // Increase run index
-		j = rme.computeJ()
-	}
-
-	// Encode remaining partial run
-	if runLength > 0 || !endOfLine {
-		runs = append(runs, 0)           // Signal: end run
-		runs = append(runs, runLength)   // Actual remainder
-		rme.updateRunIndex(false)        // Reset or decrease run index
-	}
-
-	return runs
-}
-
-// computeJ computes the expected run length J[runIndex]
-// J[0] = 4, J[i+1] = min(2*J[i], maxRun)
-func (rme *RunModeEncoder) computeJ() int {
-	if rme.runIndex >= 32 {
-		rme.runIndex = 31 // Clamp
-	}
-
-	// Standard J values from JPEG-LS
-	j := 4 // J[0] = 4
-	for i := 0; i < rme.runIndex; i++ {
-		j *= 2
-		if j > 65536 { // Practical limit
-			j = 65536
+// GetGolombCode computes k for run interruption (CharLS get_golomb_code)
+func (ctx *RunModeContext) GetGolombCode() int {
+	temp := ctx.A + (ctx.N>>1)*ctx.runInterruptionType
+	nTest := ctx.N
+	k := 0
+	for nTest < temp {
+		nTest <<= 1
+		k++
+		if k > 32 {
 			break
 		}
 	}
-	return j
+	return k
 }
 
-// updateRunIndex updates the run index based on success/failure
-func (rme *RunModeEncoder) updateRunIndex(success bool) {
-	if success {
-		// Run was at least J[runIndex], increase index
-		if rme.runIndex < 31 {
-			rme.runIndex++
-		}
-	} else {
-		// Run was less than J[runIndex], decrease index
-		if rme.runIndex > 0 {
-			rme.runIndex--
-		}
+// UpdateVariables updates run context after encoding/decoding (A.23)
+func (ctx *RunModeContext) UpdateVariables(errorValue, eMappedErrorValue int, resetThreshold int) {
+	if errorValue < 0 {
+		ctx.NN++
+	}
+	ctx.A += (eMappedErrorValue + 1 - ctx.runInterruptionType) >> 1
+	if ctx.N == resetThreshold {
+		ctx.A >>= 1
+		ctx.N >>= 1
+		ctx.NN >>= 1
+	}
+	ctx.N++
+}
+
+// ComputeMap computes map bit for run interruption (A.21)
+func (ctx *RunModeContext) ComputeMap(errorValue, k int) bool {
+	if k == 0 && errorValue > 0 && 2*ctx.NN < ctx.N {
+		return true
+	}
+	if errorValue < 0 && 2*ctx.NN >= ctx.N {
+		return true
+	}
+	if errorValue < 0 && k != 0 {
+		return true
+	}
+	return false
+}
+
+// ComputeErrorValue reconstructs error value from mapped value
+func (ctx *RunModeContext) ComputeErrorValue(temp, k int) int {
+	mapBit := temp & 1
+	errAbs := (temp + mapBit) / 2
+	mapCondition := k != 0 || (2*ctx.NN >= ctx.N)
+	if mapCondition == (mapBit != 0) {
+		return -errAbs
+	}
+	return errAbs
+}
+
+// sign helper used in run interruption reconstruction
+func signInt(n int) int {
+	if n < 0 {
+		return -1
+	}
+	return 1
+}
+
+// RunModeScanner encapsulates run-mode helpers (encode/decode)
+type RunModeScanner struct {
+	runIndex        int
+	runModeContexts [2]*RunModeContext
+	traits          Traits
+}
+
+func NewRunModeScanner(traits Traits) *RunModeScanner {
+	range_ := traits.Range
+	return &RunModeScanner{
+		runIndex:        0,
+		runModeContexts: [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
+		traits:          traits,
 	}
 }
 
-// Reset resets the run mode encoder (e.g., at start of new line)
-func (rme *RunModeEncoder) Reset() {
-	// Don't reset runIndex - it adapts across the image
-	rme.runLength = 0
+func (r *RunModeScanner) ResetLine() { r.runIndex = 0 }
+func (r *RunModeScanner) incRunIndex() {
+	if r.runIndex < 31 {
+		r.runIndex++
+	}
 }
-
-// RunModeDecoder handles run mode decoding
-type RunModeDecoder struct {
-	runIndex int // Index of current run (J[0] to J[31])
-}
-
-// NewRunModeDecoder creates a new run mode decoder
-func NewRunModeDecoder() *RunModeDecoder {
-	return &RunModeDecoder{
-		runIndex: 0,
+func (r *RunModeScanner) decRunIndex() {
+	if r.runIndex > 0 {
+		r.runIndex--
 	}
 }
 
-// DecodeRun decodes run length from encoded representation
-func (rmd *RunModeDecoder) DecodeRun(bits []int) int {
-	runLength := 0
-	idx := 0
-
-	for idx < len(bits) {
-		signal := bits[idx]
-		idx++
-
-		if signal == 1 {
-			// Continue run: add J[runIndex]
-			j := rmd.computeJ()
-			runLength += j
-			rmd.updateRunIndex(true)
-		} else {
-			// End run: read remainder
-			if idx < len(bits) {
-				remainder := bits[idx]
-				runLength += remainder
+// EncodeRunLength encodes a run of given length (CharLS encode_run_pixels)
+func (r *RunModeScanner) EncodeRunLength(gw *GolombWriter, runLength int, endOfLine bool) error {
+	for runLength >= (1 << uint(J[r.runIndex])) {
+		if err := gw.WriteBit(1); err != nil {
+			return err
+		}
+		runLength -= (1 << uint(J[r.runIndex]))
+		r.incRunIndex()
+	}
+	if endOfLine {
+		if runLength != 0 {
+			if err := gw.WriteBit(1); err != nil {
+				return err
 			}
-			rmd.updateRunIndex(false)
-			break
 		}
+		r.runIndex = 0
+		return nil
 	}
-
-	return runLength
+	nBits := J[r.runIndex] + 1
+	return gw.WriteBits(uint32(runLength), nBits)
 }
 
-// computeJ computes the expected run length J[runIndex]
-func (rmd *RunModeDecoder) computeJ() int {
-	if rmd.runIndex >= 32 {
-		rmd.runIndex = 31
-	}
-
-	j := 4
-	for i := 0; i < rmd.runIndex; i++ {
-		j *= 2
-		if j > 65536 {
-			j = 65536
-			break
+// DecodeRunLength decodes run length (CharLS decode_run_pixels)
+func (r *RunModeScanner) DecodeRunLength(gr *GolombReader, remainingInLine int) (int, error) {
+	runLength := 0
+	for {
+		bit, err := gr.ReadBit()
+		if err != nil {
+			return runLength, err
 		}
-	}
-	return j
-}
-
-// updateRunIndex updates the run index
-func (rmd *RunModeDecoder) updateRunIndex(success bool) {
-	if success {
-		if rmd.runIndex < 31 {
-			rmd.runIndex++
-		}
-	} else {
-		if rmd.runIndex > 0 {
-			rmd.runIndex--
-		}
-	}
-}
-
-// Reset resets the run mode decoder
-func (rmd *RunModeDecoder) Reset() {
-	// Keep runIndex for adaptation
-}
-
-// DetectRun checks if current position starts a run
-// Returns run length if run detected, 0 otherwise
-func DetectRun(data []int, pos, width, maxVal int, threshold int) int {
-	if pos >= len(data) {
-		return 0
-	}
-
-	runValue := data[pos]
-	runLength := 1
-
-	// Count consecutive pixels with same (or very close) value
-	for i := pos + 1; i < len(data) && i < pos+width; i++ {
-		if abs(data[i]-runValue) <= threshold {
-			runLength++
+		if bit == 1 {
+			count := min(1<<uint(J[r.runIndex]), remainingInLine-runLength)
+			runLength += count
+			if count == (1 << uint(J[r.runIndex])) {
+				r.incRunIndex()
+			}
+			if runLength >= remainingInLine {
+				return remainingInLine, nil
+			}
 		} else {
 			break
 		}
 	}
-
-	// Only consider it a run if length is significant
-	if runLength >= 4 { // Minimum run length
-		return runLength
+	if J[r.runIndex] > 0 {
+		val, err := gr.ReadBits(J[r.runIndex])
+		if err != nil {
+			return runLength, err
+		}
+		runLength += int(val)
 	}
+	if runLength > remainingInLine {
+		return 0, fmt.Errorf("run length exceeds line: %d > %d", runLength, remainingInLine)
+	}
+	return runLength, nil
+}
 
-	return 0
+// EncodeRunInterruption encodes interruption error (CharLS encode_run_interruption_error)
+func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeContext, errorValue int) error {
+	k := ctx.GetGolombCode()
+	mapBit := ctx.ComputeMap(errorValue, k)
+	eMapped := 2*abs(errorValue) - ctx.runInterruptionType
+	if mapBit {
+		eMapped--
+	}
+	limitMinusJ := r.traits.Limit - J[r.runIndex] - 1
+	if limitMinusJ < 0 {
+		limitMinusJ = 0
+	}
+	if err := gw.EncodeMappedValue(k, eMapped, limitMinusJ, r.traits.Qbpp); err != nil {
+		return err
+	}
+	ctx.UpdateVariables(errorValue, eMapped, r.traits.Reset)
+	return nil
+}
+
+// DecodeRunInterruption decodes interruption error (CharLS decode_run_interruption_error)
+func (r *RunModeScanner) DecodeRunInterruption(gr *GolombReader, ctx *RunModeContext) (int, error) {
+	k := ctx.GetGolombCode()
+	limitMinusJ := r.traits.Limit - J[r.runIndex] - 1
+	if limitMinusJ < 0 {
+		limitMinusJ = 0
+	}
+	mapped, err := gr.DecodeValue(k, limitMinusJ, r.traits.Qbpp)
+	if err != nil {
+		return 0, err
+	}
+	errVal := ctx.ComputeErrorValue(mapped+ctx.runInterruptionType, k)
+	ctx.UpdateVariables(errVal, mapped, r.traits.Reset)
+	return errVal, nil
 }

@@ -440,7 +440,7 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (in
 	if err != nil {
 		return 0, err
 	}
-	return rb + errorValue*sign(rb-ra), nil
+	return rb + errorValue*signInt(rb-ra), nil
 }
 
 // decodeRunInterruptionError decodes the error value for run interruption
@@ -461,7 +461,7 @@ func (dec *Decoder) decodeRunInterruptionError(gr *GolombReader, ctx *RunModeCon
 	errorValue := ctx.ComputeErrorValue(eMappedErrorValue+ctx.runInterruptionType, k)
 
 	// Update context
-	ctx.UpdateVariables(errorValue, eMappedErrorValue, dec.resetThreshold)
+	ctx.UpdateVariables(errorValue, eMappedErrorValue, dec.traits.Reset)
 
 	return errorValue, nil
 }

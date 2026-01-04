@@ -401,23 +401,19 @@ func (enc *Encoder) encodeGolombLimited(gw *GolombWriter, k, value, limit int) e
 
 // encodeRunInterruptionPixel encodes the pixel that interrupts a run
 func (enc *Encoder) encodeRunInterruptionPixel(gw *GolombWriter, x, ra, rb int) (int, error) {
-	const nearLossless = 0 // Lossless mode
-
-	if abs(ra-rb) <= nearLossless {
-		// Use run mode context 1
+	traits := enc.traits
+	if abs(ra-rb) <= traits.Near {
 		errorValue := x - ra
 		if err := enc.encodeRunInterruptionError(gw, enc.runModeContexts[1], errorValue); err != nil {
 			return 0, err
 		}
-		return ra + errorValue, nil
+		return traits.ComputeReconstructedSample(ra, errorValue), nil
 	}
-
-	// Use run mode context 0
-	errorValue := (x - rb) * sign(rb-ra)
+	errorValue := (x - rb) * signInt(rb-ra)
 	if err := enc.encodeRunInterruptionError(gw, enc.runModeContexts[0], errorValue); err != nil {
 		return 0, err
 	}
-	return rb + errorValue*sign(rb-ra), nil
+	return traits.ComputeReconstructedSample(rb, errorValue*signInt(rb-ra)), nil
 }
 
 // doRunMode handles encoding in run mode (when qs == 0)
