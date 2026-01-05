@@ -15,7 +15,7 @@ import (
 // preview and progressively improve as more layers are decoded
 
 func main() {
-	fmt.Println("=== JPEG 2000 Progressive/Multi-layer Example ===\n")
+	fmt.Println("=== JPEG 2000 Progressive/Multi-layer Example ===")
 
 	// Create sample image (512x512)
 	width, height := 512, 512
@@ -83,8 +83,8 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 	fmt.Println("   - Layer 1-3: Progressive refinement")
 	fmt.Println("   - Layer 4: Full quality")
 	fmt.Println()
-	fmt.Println("   ✅ Multi-layer encoding complete")
-	fmt.Println("   💡 Decoder can stop at any layer for progressive display")
+	fmt.Println("   鉁?Multi-layer encoding complete")
+	fmt.Println("   馃挕 Decoder can stop at any layer for progressive display")
 
 	// Decode (all layers)
 	decoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -149,7 +149,7 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 	fmt.Println("   - Each layer adds meaningful quality improvement")
 	fmt.Println("   - Respects target compression ratio constraint")
 	fmt.Println()
-	fmt.Println("   ✅ Multi-layer encoding with rate control complete")
+	fmt.Println("   鉁?Multi-layer encoding with rate control complete")
 }
 
 // progressiveDecodingExample simulates progressive decoding
@@ -220,9 +220,9 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 	fmt.Println("   3. Streaming: Adapt quality to network bandwidth")
 	fmt.Println("   4. Storage: Single file with multiple quality versions")
 	fmt.Println()
-	fmt.Println("   ✅ Progressive encoding demonstrated")
+	fmt.Println("   鉁?Progressive encoding demonstrated")
 	fmt.Println()
-	fmt.Println("   💡 Note: Full layer-by-layer decoding requires using")
+	fmt.Println("   馃挕 Note: Full layer-by-layer decoding requires using")
 	fmt.Println("      the lower-level tile decoder API for maximum control")
 
 	// Full decode

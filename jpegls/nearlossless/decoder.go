@@ -22,10 +22,10 @@ type Decoder struct {
 	t2         int
 	t3         int
 
-	traits          lossless.Traits
-	contextTable    *lossless.ContextTable
-	quantizer       *lossless.GradientQuantizer
-	runModeScanner  *lossless.RunModeScanner
+	traits         lossless.Traits
+	contextTable   *lossless.ContextTable
+	quantizer      *lossless.GradientQuantizer
+	runModeScanner *lossless.RunModeScanner
 }
 
 // NewDecoder creates a new JPEG-LS near-lossless decoder
@@ -292,44 +292,44 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
-				// Regular mode
+				// Regular mode - following CharLS do_regular (decoder)
+				// Reference: CharLS scan.h line 305-334
+
+				// Apply sign symmetry
+				sign := lossless.BitwiseSign(qs)
 				ctx := dec.contextTable.GetContext(q1, q2, q3)
-
-				// Quantize neighbors for prediction
-				qa := dec.quantize(a)
-				qb := dec.quantize(b)
-				qc := dec.quantize(c)
-
-				// Compute prediction on quantized values
-				prediction := lossless.Predict(qa, qb, qc)
-
-				// Apply prediction correction using C value
-				correctionC := ctx.GetPredictionCorrection()
-				correctedPred := dec.correctPrediction(prediction, correctionC)
-
-				// Reconstruct prediction to original range
-				reconstructedPred := dec.dequantize(correctedPred)
-
-				// Get Golomb parameter
 				k := ctx.ComputeGolombParameter()
 
-				// Decode error using limited alphabet
+				// Compute prediction on ORIGINAL values (not quantized)
+				// CharLS: predicted = get_predicted_value(ra, rb, rc)
+				prediction := lossless.Predict(a, b, c)
+
+				// Apply prediction correction with sign (CharLS: predicted + apply_sign(context.c(), sign))
+				correctionC := lossless.ApplySign(ctx.GetPredictionCorrection(), sign)
+				predictedValue := dec.correctPrediction(prediction, correctionC)
+
+				// Decode mapped error (CharLS uses traits_.limit directly)
 				mappedError, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
 				if err != nil {
 					return fmt.Errorf("decode regular mode error at x=%d y=%d comp=%d: %w", x, y, comp, err)
 				}
 
-				// Unmap error to get error value (after modulo_range)
-				errorValue := dec.traits.UnmapErrorValue(mappedError)
+				// Unmap error (CharLS: unmap_error_value)
+				errorValue := lossless.UnmapErrorValue(mappedError)
 
-				// Reconstruct sample with wraparound handling
-				reconstructedError := dec.dequantizeError(errorValue)
-				sample := dec.traits.ComputeReconstructedSample(reconstructedPred, reconstructedError)
+				// Apply error correction if k==0 (always 0 for near-lossless when NEAR > 0)
+				if k == 0 {
+					errorValue ^= ctx.GetErrorCorrection(k, dec.near)
+				}
+
+				// Update context (CharLS: update_variables_and_bias(error_value, ...))
+				ctx.UpdateContext(errorValue, dec.near, dec.traits.Reset)
+
+				// Reconstruct sample (CharLS: compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign)))
+				reconstructedError := dec.dequantizeError(lossless.ApplySign(errorValue, sign))
+				sample := dec.traits.ComputeReconstructedSample(predictedValue, reconstructedError)
 
 				pixels[idx] = sample
-
-				// Update context with error value
-				ctx.UpdateContext(errorValue, dec.near, dec.traits.Reset)
 
 				x++
 			} else {
@@ -345,23 +345,6 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 
 	return nil
 }
-
-// quantize quantizes a value
-func (dec *Decoder) quantize(val int) int {
-	if dec.near == 0 {
-		return val
-	}
-	return val / (2*dec.near + 1)
-}
-
-// dequantize reconstructs a value
-func (dec *Decoder) dequantize(qval int) int {
-	if dec.near == 0 {
-		return qval
-	}
-	return qval * (2*dec.near + 1)
-}
-
 
 // dequantizeError reconstructs error from quantized error
 // According to CharLS implementation and JPEG-LS standard T.87

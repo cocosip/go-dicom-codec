@@ -31,6 +31,13 @@ func NewTraits(maxVal, near, reset int) Traits {
 
 // ComputeReconstructedSample matches CharLS fix_reconstructed_value.
 func (t Traits) ComputeReconstructedSample(prediction, errorValue int) int {
+	// Lossless power-of-two optimization (matches CharLS lossless_traits<uint16_t,8/16>)
+	rangeIsPowerOfTwo := (t.MaxVal+1)&t.MaxVal == 0
+	if t.Near == 0 && rangeIsPowerOfTwo {
+		// Wrap modulo range using mask (fast path for 8/16-bit)
+		return (prediction + errorValue) & t.MaxVal
+	}
+
 	reconstructed := prediction + errorValue
 	if reconstructed < -t.Near {
 		reconstructed += t.Range * (2*t.Near + 1)
@@ -43,6 +50,21 @@ func (t Traits) ComputeReconstructedSample(prediction, errorValue int) int {
 		reconstructed = t.MaxVal
 	}
 	return reconstructed
+}
+
+// CorrectPrediction clamps prediction to [0, MaxVal] (CharLS correct_prediction).
+func (t Traits) CorrectPrediction(pred int) int {
+	// Fast path: Near=0 and Range is power-of-two -> wrap using mask (CharLS lossless_traits)
+	if t.Near == 0 && ((t.MaxVal+1)&t.MaxVal) == 0 {
+		return pred & t.MaxVal
+	}
+	if pred < 0 {
+		return 0
+	}
+	if pred > t.MaxVal {
+		return t.MaxVal
+	}
+	return pred
 }
 
 // ModuloRange applies modulo reduction for near-lossless error values.

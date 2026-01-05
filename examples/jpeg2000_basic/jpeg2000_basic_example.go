@@ -13,7 +13,7 @@ import (
 // This example demonstrates basic JPEG 2000 lossless and lossy compression
 
 func main() {
-	fmt.Println("=== JPEG 2000 Basic Example ===\n")
+	fmt.Println("=== JPEG 2000 Basic Example ===")
 
 	// Create sample image data (512x512 grayscale)
 	width, height := 512, 512
@@ -84,9 +84,9 @@ func losslessExample(pixelData []byte, width, height int) {
 	errors := countPixelErrors(srcData, decodedData)
 	fmt.Printf("   Pixel errors: %d (should be 0 for lossless)\n", errors)
 	if errors == 0 {
-		fmt.Println("   ✅ Perfect reconstruction!")
+		fmt.Println("   鉁?Perfect reconstruction!")
 	} else {
-		fmt.Println("   ❌ Reconstruction errors detected!")
+		fmt.Println("   鉂?Reconstruction errors detected!")
 	}
 }
 
@@ -189,7 +189,7 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 			targetRatio, actualRatio, deviation)
 	}
 
-	fmt.Println("   Note: Actual ratio may vary ±5-20% depending on image complexity")
+	fmt.Println("   Note: Actual ratio may vary 卤5-20% depending on image complexity")
 }
 
 // Helper functions

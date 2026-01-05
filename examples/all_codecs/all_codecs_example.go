@@ -13,14 +13,14 @@ import (
 )
 
 func main() {
-	fmt.Println("=== DICOM JPEG Codecs - Complete Example ===\n")
+	fmt.Println("=== DICOM JPEG Codecs - Complete Example ===")
 
 	// Register all codecs
 	fmt.Println("Registering all JPEG codecs...")
 	baseline.RegisterBaselineCodec(85)       // Quality 85
 	lossless14sv1.RegisterLosslessSV1Codec() // Predictor 1 only
 	lossless.RegisterLosslessCodec(4)        // Predictor 4
-	fmt.Println("✓ All codecs registered\n")
+	fmt.Println("鉁?All codecs registered")
 
 	// Create test image data (64x64 grayscale)
 	width, height := 64, 64
@@ -76,7 +76,7 @@ func testCodec(registry *codec.Registry, ts *transfer.Syntax, src imagetypes.Pix
 	// Get codec from registry
 	c, exists := registry.GetCodec(ts)
 	if !exists {
-		fmt.Printf("✗ Codec not found for %s\n", ts.UID().UID())
+		fmt.Printf("鉁?Codec not found for %s\n", ts.UID().UID())
 		return
 	}
 
@@ -87,7 +87,7 @@ func testCodec(registry *codec.Registry, ts *transfer.Syntax, src imagetypes.Pix
 	encoded := codecHelpers.NewTestPixelData(src.GetFrameInfo())
 	err := c.Encode(src, encoded, nil)
 	if err != nil {
-		fmt.Printf("✗ Encode failed: %v\n", err)
+		fmt.Printf("鉁?Encode failed: %v\n", err)
 		return
 	}
 
@@ -100,7 +100,7 @@ func testCodec(registry *codec.Registry, ts *transfer.Syntax, src imagetypes.Pix
 	decoded := codecHelpers.NewTestPixelData(src.GetFrameInfo())
 	err = c.Decode(encoded, decoded, nil)
 	if err != nil {
-		fmt.Printf("✗ Decode failed: %v\n", err)
+		fmt.Printf("鉁?Decode failed: %v\n", err)
 		return
 	}
 
@@ -122,7 +122,7 @@ func testCodec(registry *codec.Registry, ts *transfer.Syntax, src imagetypes.Pix
 		}
 		avgDiff := float64(totalDiff) / float64(len(srcData))
 		fmt.Printf("Quality: Max diff=%d, Avg diff=%.2f\n", maxDiff, avgDiff)
-		fmt.Println("✓ Lossy compression completed")
+		fmt.Println("鉁?Lossy compression completed")
 	} else {
 		// For lossless, check perfect reconstruction
 		errors := 0
@@ -132,9 +132,9 @@ func testCodec(registry *codec.Registry, ts *transfer.Syntax, src imagetypes.Pix
 			}
 		}
 		if errors == 0 {
-			fmt.Printf("✓ Perfect reconstruction: all %d pixels match\n", len(srcData))
+			fmt.Printf("鉁?Perfect reconstruction: all %d pixels match\n", len(srcData))
 		} else {
-			fmt.Printf("✗ Errors: %d pixels differ\n", errors)
+			fmt.Printf("鉁?Errors: %d pixels differ\n", errors)
 		}
 	}
 }
@@ -150,7 +150,7 @@ func compareCodecs(registry *codec.Registry, src imagetypes.PixelData) {
 	}
 
 	fmt.Printf("%-20s %12s %10s %12s\n", "Codec", "Size (bytes)", "Ratio", "Type")
-	fmt.Println("─────────────────────────────────────────────────────────")
+	fmt.Println("鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€")
 
 	for _, entry := range codecs {
 		c, exists := registry.GetCodec(entry.ts)
@@ -226,7 +226,7 @@ func testRGBImage(registry *codec.Registry) {
 			if err != nil {
 				fmt.Printf("RGB Baseline decode failed: %v\n", err)
 			} else {
-				fmt.Println("✓ RGB lossy compression successful")
+				fmt.Println("鉁?RGB lossy compression successful")
 			}
 		}
 	}
@@ -258,7 +258,7 @@ func testRGBImage(registry *codec.Registry) {
 					}
 				}
 				if errors == 0 {
-					fmt.Println("✓ RGB perfect lossless reconstruction")
+					fmt.Println("鉁?RGB perfect lossless reconstruction")
 				} else {
 					fmt.Printf("RGB had %d pixel differences\n", errors)
 				}

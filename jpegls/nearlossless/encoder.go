@@ -18,10 +18,10 @@ type Encoder struct {
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 	near       int // NEAR parameter (maximum error bound)
 
-	traits          lossless.Traits
-	contextTable    *lossless.ContextTable
-	quantizer       *lossless.GradientQuantizer
-	runModeScanner  *lossless.RunModeScanner
+	traits         lossless.Traits
+	contextTable   *lossless.ContextTable
+	quantizer      *lossless.GradientQuantizer
+	runModeScanner *lossless.RunModeScanner
 }
 
 // NewEncoder creates a new JPEG-LS near-lossless encoder
@@ -236,54 +236,49 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
-				// Regular mode
+				// Regular mode - following CharLS do_regular (encoder)
+				// Reference: CharLS scan.h line 336-351
+
+				// Apply sign symmetry
+				sign := lossless.BitwiseSign(qs)
 				ctx := enc.contextTable.GetContext(q1, q2, q3)
-
-				// Quantize neighbors for prediction
-				qa := enc.quantize(a)
-				qb := enc.quantize(b)
-				qc := enc.quantize(c)
-
-				// Compute prediction on quantized values
-				prediction := lossless.Predict(qa, qb, qc)
-
-				// Apply prediction correction using C value
-				correctionC := ctx.GetPredictionCorrection()
-				correctedPred := enc.correctPrediction(prediction, correctionC)
-
-				// Reconstruct prediction to original range
-				reconstructedPred := enc.dequantize(correctedPred)
-
-				// Compute error (on original values)
-				errValue := sample - reconstructedPred
-
-				// Quantize error for near-lossless
-				quantizedError := enc.quantizeError(errValue)
-
-				// Apply modulo range operation (CharLS: modulo_range after quantize)
-				// This ensures error_value stays within [-RANGE/2, (RANGE+1)/2-1]
-				errorValue := enc.moduloRange(quantizedError)
-
-				// Dequantize error for reconstruction
-				reconstructedError := enc.dequantizeError(errorValue)
-
-				// Compute reconstructed sample with wraparound handling (CharLS: fix_reconstructed_value)
-				actualSample := enc.fixReconstructedValue(reconstructedPred + reconstructedError)
-				pixels[idx] = actualSample
-
-				// Get Golomb parameter
 				k := ctx.ComputeGolombParameter()
 
-				// Map error to non-negative
-				mappedError := enc.traits.MapErrorValue(errorValue)
+				// Compute prediction on ORIGINAL values (not quantized)
+				// CharLS: predicted = get_predicted_value(ra, rb, rc)
+				prediction := lossless.Predict(a, b, c)
 
-				// Encode error with limit handling
+				// Apply prediction correction with sign (CharLS: predicted + apply_sign(context.c(), sign))
+				correctionC := lossless.ApplySign(ctx.GetPredictionCorrection(), sign)
+				predictedValue := enc.correctPrediction(prediction, correctionC)
+
+				// Compute error in original domain, then apply sign
+				// CharLS: compute_error_value(apply_sign(x - predicted_value, sign))
+				rawError := sample - predictedValue
+				signedRawError := lossless.ApplySign(rawError, sign)
+
+				// Quantize and modulo range (CharLS: modulo_range(quantize(e)))
+				quantizedError := enc.quantizeError(signedRawError)
+				errorValue := enc.moduloRange(quantizedError)
+
+				// Get error correction (always 0 for near-lossless when NEAR > 0)
+				errorCorrection := ctx.GetErrorCorrection(k, enc.near)
+
+				// Map error (CharLS: map_error_value(error_correction ^ error_value))
+				mappedError := lossless.MapErrorValue(errorCorrection ^ errorValue)
+
+				// Encode with limit (CharLS uses traits_.limit directly)
 				if err := gw.EncodeMappedValue(k, mappedError, enc.traits.Limit, enc.traits.Qbpp); err != nil {
 					return err
 				}
 
-				// Update context with error value (after modulo_range)
+				// Update context (CharLS: update_variables_and_bias(error_value, ...))
 				ctx.UpdateContext(errorValue, enc.near, enc.traits.Reset)
+
+				// Reconstruct sample (CharLS: compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign)))
+				reconstructedError := enc.dequantizeError(lossless.ApplySign(errorValue, sign))
+				actualSample := enc.fixReconstructedValue(predictedValue + reconstructedError)
+				pixels[idx] = actualSample
 
 				x++
 			} else {
@@ -298,22 +293,6 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 	}
 
 	return nil
-}
-
-// quantize quantizes a value for near-lossless mode
-func (enc *Encoder) quantize(val int) int {
-	if enc.near == 0 {
-		return val
-	}
-	return val / (2*enc.near + 1)
-}
-
-// dequantize reconstructs a value from quantized representation
-func (enc *Encoder) dequantize(qval int) int {
-	if enc.near == 0 {
-		return qval
-	}
-	return qval * (2*enc.near + 1)
 }
 
 // quantizeError quantizes prediction error

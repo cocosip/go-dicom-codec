@@ -26,15 +26,10 @@ func NewContext(range_ int) *Context {
 // ComputeGolombParameter computes the Golomb-Rice coding parameter k.
 // This matches the CharLS implementation (ISO 14495-1, code segment A.10)
 func (ctx *Context) ComputeGolombParameter() int {
-	// Find k such that N * 2^k < A
-	// This avoids precision loss from integer division
-	const maxK = 16 // Maximum k value to prevent overflow
-
 	k := 0
-	for k < maxK && (ctx.N<<uint(k)) < ctx.A {
+	for (ctx.N<<uint(k)) < ctx.A && k < 16 {
 		k++
 	}
-
 	return k
 }
 
@@ -44,23 +39,17 @@ func (ctx *Context) UpdateContext(errValue, nearLossless, resetThreshold int) {
 	const maxC = 127
 	const minC = -128
 
-	// A.12: Update A[Q]
 	ctx.A += abs(errValue)
-
-	// A.12: Update B[Q] with (2*NEAR + 1) * Errval
 	ctx.B += errValue * (2*nearLossless + 1)
 
-	// A.12: Check for reset (when N reaches threshold, halve all values)
 	if ctx.N == resetThreshold {
 		ctx.A >>= 1
 		ctx.B >>= 1
 		ctx.N >>= 1
 	}
 
-	// A.12: Increment N[Q]
 	ctx.N++
 
-	// A.13: Update of bias-related variables B[Q] and C[Q]
 	if ctx.B+ctx.N <= 0 {
 		ctx.B += ctx.N
 		if ctx.B <= -ctx.N {
@@ -116,8 +105,8 @@ type ContextTable struct {
 
 // NewContextTable creates a new context table.
 func NewContextTable(maxVal, near, reset int) *ContextTable {
-	// Total number of contexts = 9 * 9 * 9 = 729
-	numContexts := 729
+	// CharLS uses 365 contexts after sign symmetry (|ID| <= 364)
+	numContexts := 365
 	range_ := maxVal + 1
 	if near > 0 {
 		range_ = (maxVal+2*near)/(2*near+1) + 1
@@ -183,14 +172,10 @@ func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 
 	qbpp := bitsLen(range_)
 
-	// LIMIT: follow the lossless path (power-of-two with exponent capped)
-	// Use original bit depth (bitsPerSample) to keep LIMIT large enough for run interruption coding.
-	bitsPerSample := bitsLen(maxVal + 1)
-	exp := bitsPerSample + max(8, bitsPerSample)
-	if exp > 24 { // avoid overflow
-		exp = 24
-	}
-	limit := 1 << uint(exp)
+	// LIMIT: match CharLS (see util.h::compute_limit_parameter).
+	// bitsPerSample is ceil(log2(MAXVAL))
+	bitsPerSample := bitsLen(maxVal)
+	limit := 2 * (bitsPerSample + max(8, bitsPerSample))
 
 	t1, t2, t3 := computeThresholds(maxVal, near)
 
@@ -211,39 +196,39 @@ func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 	}
 }
 
-// computeThresholds provides default T1/T2/T3 with a simple scaling rule that
-// matches common JPEG-LS defaults (3/7/21) and scales for larger bit depths.
+// clamp helper to keep thresholds within bounds.
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// computeThresholds matches CharLS compute_default (ISO 14495-1, C.2.4.1.1.1 / Table C.3).
 func computeThresholds(maxVal, near int) (int, int, int) {
-	// Base defaults for <=12-bit
-	t1 := 3 + near
-	t2 := 7 + near
-	t3 := 21 + near
+	// defaults for MAXVAL=255 NEAR=0
+	const (
+		t1Default = 3
+		t2Default = 7
+		t3Default = 21
+	)
 
-	// Scale for very large MAXVAL (>=4095) similarly to the previous logic but NEAR-aware
-	if maxVal >= 4095 {
-		rangeValue := (maxVal + 1) / 4096
-		t1 = 2 + near + rangeValue
-		t2 = 3 + near + 4*rangeValue
-		t3 = 4 + near + 17*rangeValue
-	}
-
-	// Ensure monotonicity and clamp to MaxVal
-	if t2 < t1 {
-		t2 = t1
-	}
-	if t3 < t2 {
-		t3 = t2
-	}
-	if t1 > maxVal {
-		t1 = maxVal
-	}
-	if t2 > maxVal {
-		t2 = maxVal
-	}
-	if t3 > maxVal {
-		t3 = maxVal
+	if maxVal >= 128 {
+		factor := (min(maxVal, 4095) + 128) / 256
+		t1 := clamp(factor*(t1Default-2)+2+3*near, near+1, maxVal)
+		t2 := clamp(factor*(t2Default-3)+3+5*near, t1, maxVal)
+		t3 := clamp(factor*(t3Default-4)+4+7*near, t2, maxVal)
+		return t1, t2, t3
 	}
 
+	// maxVal < 128 branch from CharLS
+	factor := 256 / (maxVal + 1)
+	t1 := clamp(max(2, t1Default/factor+3*near), near+1, maxVal)
+	t2 := clamp(max(3, t2Default/factor+5*near), t1, maxVal)
+	t3 := clamp(max(4, t3Default/factor+7*near), t2, maxVal)
 	return t1, t2, t3
 }
 
@@ -261,30 +246,16 @@ func bitsLen(n int) int {
 	return length
 }
 
-// MapErrorValue maps a signed error to a non-negative integer for Golomb coding
-// This matches CharLS implementation (ISO/IEC 14495-1, A.5.2, Code Segment A.11)
-// Formula: (error_value >> 30) ^ (2 * error_value)
-func MapErrorValue(errValue int) int {
-	// Map error value to non-negative range
-	// JPEG-LS standard: MErrval = 2*|Errval|-1 if Errval<0, else 2*Errval
-	// Using bit tricks for efficiency
-	errValue32 := int32(errValue)
-	const intBitCount = 32
-	mappedError := int((errValue32 >> (intBitCount - 2)) ^ (2 * errValue32))
-	return mappedError
+// MapErrorValue maps signed err to non-negative (ISO/IEC 14495-1 A.5.2, CharLS apply_sign logic).
+// Equivalent to (err << 1) ^ (err >> 31).
+func MapErrorValue(err int) int {
+	return (err << 1) ^ (err >> 31)
 }
 
-// UnmapErrorValue reverses the error mapping
-// This is the inverse of MapErrorValue (ISO/IEC 14495-1, A.5.2)
-func UnmapErrorValue(mappedError int) int {
-	// Use int32 to ensure 32-bit semantics
-	mapped32 := int32(mappedError)
-	const intBitCount = 32
-	// Extract sign bit from LSB
-	sign := int32(uint32(mapped32)<<(intBitCount-1)) >> (intBitCount - 1)
-	// Reconstruct error value
-	errValue := int(sign ^ (mapped32 >> 1))
-	return errValue
+// UnmapErrorValue reverses MapErrorValue.
+// Equivalent to (val >> 1) ^ (-(val & 1))
+func UnmapErrorValue(val int) int {
+	return (val >> 1) ^ (-(val & 1))
 }
 
 // CorrectPrediction applies bias correction and modulo reduction to prediction

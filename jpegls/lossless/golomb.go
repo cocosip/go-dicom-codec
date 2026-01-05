@@ -119,66 +119,37 @@ func (gw *GolombWriter) Flush() error {
 	return nil
 }
 
-// EncodeMappedValue encodes a mapped error value with limit handling
-// This matches CharLS encode_mapped_value (scan.h)
+// EncodeMappedValue encodes a mapped error value with limit handling (CharLS encode_mapped_value).
 func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPerPixel int) error {
 	highBits := mappedError >> uint(k)
 
-	// Normal case: high_bits < limit - qbpp - 1
-	if highBits < limit-quantizedBitsPerPixel-1 {
-		// Write unary code for high_bits (high_bits 0's followed by 1)
-		// If highBits + 1 > 31, split into two writes to avoid overflow
-		if highBits+1 > 31 {
-			// Write half as 0's
-			if err := gw.WriteBits(0, highBits/2); err != nil {
-				return err
-			}
-			highBits = highBits - highBits/2
-		}
-
-		// Write (highBits + 1) bits with value 1 at the end
-		// This is: highBits 0's followed by one 1
+	// Normal case: high_bits < limit - (qbpp + 1)
+	if highBits < limit-(quantizedBitsPerPixel+1) {
+		// write unary (highBits zeros, then 1)
 		if err := gw.WriteBits(1, highBits+1); err != nil {
 			return err
 		}
-
-		// Write remainder (k bits)
+		// write remainder
 		if k > 0 {
 			remainder := mappedError & ((1 << uint(k)) - 1)
 			if err := gw.WriteBits(uint32(remainder), k); err != nil {
 				return err
 			}
 		}
-
 		return nil
 	}
 
-	// Overflow case: high_bits >= limit - qbpp - 1
-	// Write (limit - qbpp) bits as unary code: (limit-qbpp-1) 0's followed by one 1
-	limitBits := limit - quantizedBitsPerPixel
-	if limitBits > 31 {
-		// Split into two writes
-		if err := gw.WriteBits(0, 31); err != nil {
-			return err
-		}
-		if err := gw.WriteBits(1, limitBits-31); err != nil {
-			return err
-		}
-	} else {
-		// Write all at once: (limitBits-1) 0's followed by one 1
-		// This is equivalent to writing value 1 with limitBits bits
-		if err := gw.WriteBits(1, limitBits); err != nil {
-			return err
-		}
+	// Escape case: write (limit - (qbpp+1)) zeros then 1, then mappedError-1 with qbpp bits
+	escapeBits := limit - (quantizedBitsPerPixel + 1)
+	if escapeBits < 0 {
+		escapeBits = 0
 	}
-
-	// Write (mappedError - 1) masked to qbpp bits
-	value := (mappedError - 1) & ((1 << uint(quantizedBitsPerPixel)) - 1)
-	if err := gw.WriteBits(uint32(value), quantizedBitsPerPixel); err != nil {
+	// write escapeBits zeros then 1
+	if err := gw.WriteBits(1, escapeBits+1); err != nil {
 		return err
 	}
-
-	return nil
+	value := (mappedError - 1) & ((1 << uint(quantizedBitsPerPixel)) - 1)
+	return gw.WriteBits(uint32(value), quantizedBitsPerPixel)
 }
 
 // GolombReader reads Golomb-Rice encoded data
@@ -186,6 +157,7 @@ type GolombReader struct {
 	r          io.Reader
 	buffer     uint32 // bit buffer
 	bufferSize int    // number of bits in buffer
+	bitsRead   int64  // debug counter
 }
 
 // NewGolombReader creates a new Golomb-Rice reader
@@ -204,7 +176,7 @@ func (gr *GolombReader) DecodeValue(k, limit, quantizedBitsPerPixel int) (int, e
 	for {
 		bit, err := gr.ReadBit()
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("read highBits after %d bits: %w", gr.bitsRead, err)
 		}
 		if bit == 1 {
 			break
@@ -220,7 +192,7 @@ func (gr *GolombReader) DecodeValue(k, limit, quantizedBitsPerPixel int) (int, e
 	if highBits >= limit-(quantizedBitsPerPixel+1) {
 		val, err := gr.ReadBits(quantizedBitsPerPixel)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("read overflow bits after %d bits: %w", gr.bitsRead, err)
 		}
 		return int(val) + 1, nil
 	}
@@ -233,7 +205,7 @@ func (gr *GolombReader) DecodeValue(k, limit, quantizedBitsPerPixel int) (int, e
 	// CharLS: return (high_bits << k) + Strategy::read_value(k);
 	remainder, err := gr.ReadBits(k)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("read remainder after %d bits: %w", gr.bitsRead, err)
 	}
 
 	return (highBits << uint(k)) + int(remainder), nil
@@ -273,12 +245,13 @@ func (gr *GolombReader) ReadGolomb(k int) (int, error) {
 func (gr *GolombReader) ReadBit() (int, error) {
 	if gr.bufferSize == 0 {
 		if err := gr.fillBuffer(); err != nil {
-			return 0, err
+			return 0, fmt.Errorf("fillBuffer: %w", err)
 		}
 	}
 
 	gr.bufferSize--
 	bit := int((gr.buffer >> uint(gr.bufferSize)) & 1)
+	gr.bitsRead++
 	return bit, nil
 }
 
@@ -288,7 +261,7 @@ func (gr *GolombReader) ReadBits(n int) (uint32, error) {
 	for n > 0 {
 		if gr.bufferSize == 0 {
 			if err := gr.fillBuffer(); err != nil {
-				return 0, err
+				return 0, fmt.Errorf("fillBuffer: %w", err)
 			}
 		}
 
@@ -302,6 +275,7 @@ func (gr *GolombReader) ReadBits(n int) (uint32, error) {
 		bits := (gr.buffer >> uint(gr.bufferSize)) & ((1 << uint(take)) - 1)
 		result = (result << uint(take)) | bits
 		n -= take
+		gr.bitsRead += int64(take)
 	}
 	return result, nil
 }

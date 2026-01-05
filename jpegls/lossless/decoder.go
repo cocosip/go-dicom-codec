@@ -17,14 +17,22 @@ type Decoder struct {
 	maxVal     int
 	traits     Traits
 
-	contextTable    *ContextTable
-	quantizer       *GradientQuantizer
-	runModeScanner  *RunModeScanner
+	contextTable   *ContextTable
+	quantizer      *GradientQuantizer
+	runModeScanner *RunModeScanner
 }
 
 // NewDecoder creates a new JPEG-LS decoder
 func NewDecoder() *Decoder {
 	return &Decoder{}
+}
+
+// computeErrorValue mirrors encoder compute_error_value: for Near=0 use unsigned wrap.
+func (dec *Decoder) computeErrorValue(delta int) int {
+	if dec.bitDepth <= 8 {
+		return int(int8(delta))
+	}
+	return int(int16(delta))
 }
 
 // Decode decodes JPEG-LS compressed data
@@ -218,7 +226,6 @@ func (dec *Decoder) decodeScan(reader *common.Reader) ([]byte, error) {
 		}
 
 		if b == 0xFF {
-			// Check next byte
 			b2, err := reader.ReadByte()
 			if err != nil {
 				if err == io.EOF {
@@ -229,18 +236,17 @@ func (dec *Decoder) decodeScan(reader *common.Reader) ([]byte, error) {
 			}
 
 			if b2 == 0x00 {
-				// Byte stuffing
-				scanData.WriteByte(b)
-			} else if b2 == 0xD9 {
-				// EOI marker
-				break
-			} else {
-				// Other marker, stop
+				// stuffed 0xFF
+				scanData.WriteByte(0xFF)
+				continue
+			}
+			if b2 == 0xD9 {
 				break
 			}
-		} else {
-			scanData.WriteByte(b)
+			// restart markers: ignore marker, continue decoding data after it
+			continue
 		}
+		scanData.WriteByte(b)
 	}
 
 	// Create Golomb reader
@@ -304,32 +310,30 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 
 				// Apply prediction correction (CharLS: traits_.correct_prediction(predicted + apply_sign(context.c(), sign)))
 				correctionC := ApplySign(ctx.C, sign)
-				predicted_value := dec.traits.ComputeReconstructedSample(predicted+correctionC, 0)
-				if predicted_value < 0 {
-					predicted_value += (dec.maxVal + 1)
-				} else if predicted_value > dec.maxVal {
-					predicted_value -= (dec.maxVal + 1)
+				predicted_value := dec.traits.CorrectPrediction(predicted + correctionC)
+
+				limitMinusJ := dec.traits.Limit - J[dec.runModeScanner.RunIndex] - 1
+				if limitMinusJ < 0 {
+					limitMinusJ = 0
 				}
 
-				// Decode mapped error
-				mapped_error, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
+				mapped_error, err := gr.DecodeValue(k, limitMinusJ, dec.traits.Qbpp)
 				if err != nil {
-					return err
+					return fmt.Errorf("decode regular at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
 				}
 
-				// Unmap error
-				corrected_error := dec.traits.UnmapErrorValue(mapped_error)
+				// Unmap error (before sign)
+				error_value := UnmapErrorValue(mapped_error)
+				if k == 0 {
+					error_value ^= ctx.GetErrorCorrection(k, 0)
+				}
 
-				// Apply error correction (XOR)
-				errorCorrection := ctx.GetErrorCorrection(k, 0)
-				error_value := errorCorrection ^ corrected_error
-
-				// Update context
+				// Update context using unsigned error (before sign)
 				ctx.UpdateContext(error_value, 0, dec.traits.Reset)
 
 				// Apply sign to error and reconstruct
-				error_value = ApplySign(error_value, sign)
-				reconstructed := dec.traits.ComputeReconstructedSample(predicted_value, error_value)
+				signedError := ApplySign(error_value, sign)
+				reconstructed := dec.traits.ComputeReconstructedSample(predicted_value, signedError)
 
 				pixels[idx] = reconstructed
 				x++
@@ -337,7 +341,7 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 				// RUN mode (qs == 0, flat region)
 				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
 				if err != nil {
-					return err
+					return fmt.Errorf("decode run at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
 				}
 				x += pixelsProcessed
 			}
@@ -355,6 +359,7 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (in
 		if err != nil {
 			return 0, err
 		}
+		errorValue = dec.computeErrorValue(errorValue)
 		return dec.traits.ComputeReconstructedSample(ra, errorValue), nil
 	}
 
@@ -363,7 +368,8 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (in
 	if err != nil {
 		return 0, err
 	}
-	return dec.traits.ComputeReconstructedSample(rb, errorValue*signInt(rb-ra)), nil
+	errorValue = dec.computeErrorValue(errorValue * signInt(rb-ra))
+	return dec.traits.ComputeReconstructedSample(rb, errorValue), nil
 }
 
 // doRunMode handles decoding in run mode (when qs == 0) - CharLS: do_run_mode for decoder
@@ -384,7 +390,7 @@ func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (i
 	// Decode run length using RunModeScanner - CharLS: decode_run_pixels(ra, current_line_ + start_index, width_ - start_index)
 	runLength, err := dec.runModeScanner.DecodeRunLength(gr, remainingInLine)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("runLength (bits=%d): %w", gr.bitsRead, err)
 	}
 
 	// Fill run with ra value
@@ -413,7 +419,7 @@ func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (i
 	// Decode interruption pixel
 	reconstructed, err := dec.decodeRunInterruptionPixel(gr, ra, rb)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("runInterruption (bits=%d): %w", gr.bitsRead, err)
 	}
 
 	// Store reconstructed value

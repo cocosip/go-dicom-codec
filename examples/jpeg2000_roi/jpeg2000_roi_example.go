@@ -12,7 +12,7 @@ import (
 // compressing the background more aggressively
 
 func main() {
-	fmt.Println("=== JPEG 2000 ROI Example ===\n")
+	fmt.Println("=== JPEG 2000 ROI Example ===")
 
 	// Create sample image (512x512)
 	width, height := 512, 512
@@ -68,7 +68,7 @@ func simpleROIExample(pixelData []byte, width, height int) {
 	fmt.Printf("   ROI shift: %d (background compressed %dx more)\n",
 		roi.Shift, 1<<roi.Shift)
 	fmt.Printf("   Compression: %.2fx\n", ratio)
-	fmt.Println("   ✅ ROI encoded with higher quality than background")
+	fmt.Println("   鉁?ROI encoded with higher quality than background")
 
 	// Decode and verify
 	decoder := jpeg2000.NewDecoder()
@@ -135,7 +135,7 @@ func multipleROIExample(pixelData []byte, width, height int) {
 			roi.Shift)
 	}
 
-	fmt.Println("   ✅ Multiple ROI regions encoded")
+	fmt.Println("   鉁?Multiple ROI regions encoded")
 }
 
 // circularROIExample demonstrates mask-based ROI (circular region)
@@ -199,10 +199,10 @@ func circularROIExample(pixelData []byte, width, height int) {
 	fmt.Printf("   ROI coverage: %.1f%% of image\n", roiPercent)
 	fmt.Printf("   Background quality: %d\n", params.Quality)
 	fmt.Printf("   Compression: %.2fx\n", ratio)
-	fmt.Println("   ✅ Circular ROI encoded using bitmap mask")
+	fmt.Println("   鉁?Circular ROI encoded using bitmap mask")
 
 	// Note about polygon ROI
-	fmt.Println("\n   💡 Tip: You can also use polygon ROI:")
+	fmt.Println("\n   馃挕 Tip: You can also use polygon ROI:")
 	fmt.Println("      ROIShapePolygon with Polygon: []Point{{X,Y}, ...}")
 }
 

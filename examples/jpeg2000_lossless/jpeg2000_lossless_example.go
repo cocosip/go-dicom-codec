@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== JPEG 2000 Lossless Codec Usage Example ===\n")
+	fmt.Println("=== JPEG 2000 Lossless Codec Usage Example ===")
 
 	// Example 1: Registry-based usage
 	fmt.Println("Example 1: Registry-based decoding (JPEG 2000 Lossless)")
@@ -103,20 +103,20 @@ func codecInfoExample() {
 
 	fmt.Println()
 	fmt.Println("Capabilities:")
-	fmt.Println("  ✓ Decode: Supported (JPEG 2000 Part 1 codestreams)")
-	fmt.Println("  ✗ Encode: Not yet implemented")
+	fmt.Println("  鉁?Decode: Supported (JPEG 2000 Part 1 codestreams)")
+	fmt.Println("  鉁?Encode: Not yet implemented")
 	fmt.Println()
 	fmt.Println("Supported features:")
-	fmt.Println("  • Grayscale and RGB images")
-	fmt.Println("  • 8-bit and 16-bit pixel data")
-	fmt.Println("  • 5/3 reversible wavelet transform")
-	fmt.Println("  • EBCOT Tier-1 decoding (MQ arithmetic coding)")
-	fmt.Println("  • EBCOT Tier-2 packet parsing")
-	fmt.Println("  • Single-tile codestreams")
+	fmt.Println("  鈥?Grayscale and RGB images")
+	fmt.Println("  鈥?8-bit and 16-bit pixel data")
+	fmt.Println("  鈥?5/3 reversible wavelet transform")
+	fmt.Println("  鈥?EBCOT Tier-1 decoding (MQ arithmetic coding)")
+	fmt.Println("  鈥?EBCOT Tier-2 packet parsing")
+	fmt.Println("  鈥?Single-tile codestreams")
 	fmt.Println()
 	fmt.Println("Limitations (current MVP):")
-	fmt.Println("  • Multi-tile images: Only first tile decoded")
-	fmt.Println("  • 9/7 irreversible wavelet: Not supported")
-	fmt.Println("  • ROI coding: Not fully implemented")
-	fmt.Println("  • Encoding: Not yet implemented")
+	fmt.Println("  鈥?Multi-tile images: Only first tile decoded")
+	fmt.Println("  鈥?9/7 irreversible wavelet: Not supported")
+	fmt.Println("  鈥?ROI coding: Not fully implemented")
+	fmt.Println("  鈥?Encoding: Not yet implemented")
 }

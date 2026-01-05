@@ -15,10 +15,10 @@ type Encoder struct {
 	bitDepth   int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 
-	traits          Traits
-	contextTable    *ContextTable
-	quantizer       *GradientQuantizer
-	runModeScanner  *RunModeScanner // Manages run mode state and operations
+	traits         Traits
+	contextTable   *ContextTable
+	quantizer      *GradientQuantizer
+	runModeScanner *RunModeScanner // Manages run mode state and operations
 }
 
 // NewEncoder creates a new JPEG-LS encoder
@@ -57,6 +57,14 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 
 	encoder := NewEncoder(width, height, components, bitDepth)
 	return encoder.encode(pixelData)
+}
+
+// computeErrorValue implements CharLS compute_error_value: narrow to sample precision.
+func (enc *Encoder) computeErrorValue(delta int) int {
+	if enc.bitDepth <= 8 {
+		return int(int8(delta))
+	}
+	return int(int16(delta))
 }
 
 // encode performs the actual encoding
@@ -255,23 +263,25 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 
 				// Apply prediction correction (CharLS: traits_.correct_prediction(predicted + apply_sign(context.c(), sign)))
 				correctionC := ApplySign(ctx.C, sign)
-				predicted_value := enc.traits.ComputeReconstructedSample(predicted+correctionC, 0)
-				if predicted_value < 0 {
-					predicted_value += (enc.maxVal + 1)
-				} else if predicted_value > enc.maxVal {
-					predicted_value -= (enc.maxVal + 1)
-				}
+				predicted_value := enc.traits.CorrectPrediction(predicted + correctionC)
 
-				// Compute error value with sign symmetry (CharLS: traits_.compute_error_value(apply_sign(x - predicted_value, sign)))
-				error_value := ApplySign(x_sample-predicted_value, sign)
+				// Compute error value (before sign) using signed narrow per bit depth (CharLS compute_error_value)
+				rawErr := x_sample - predicted_value
+				error_value := enc.computeErrorValue(rawErr)
+				// Apply sign symmetry
+				error_value = ApplySign(error_value, sign)
 
 				// Apply error correction and map (CharLS: map_error_value(context.get_error_correction(k | NEAR) ^ error_value))
 				errorCorrection := ctx.GetErrorCorrection(k, 0) // k|0 = k for lossless
 				corrected_error := errorCorrection ^ error_value
-				mapped_error := enc.traits.MapErrorValue(corrected_error)
+				mapped_error := MapErrorValue(corrected_error)
 
-				// Encode mapped error
-				if err := gw.EncodeMappedValue(k, mapped_error, enc.traits.Limit, enc.traits.Qbpp); err != nil {
+				limitMinusJ := enc.traits.Limit - J[enc.runModeScanner.RunIndex] - 1
+				if limitMinusJ < 0 {
+					limitMinusJ = 0
+				}
+				// Encode mapped error (with debug hook for first few pixels)
+				if err := gw.EncodeMappedValue(k, mapped_error, limitMinusJ, enc.traits.Qbpp); err != nil {
 					return err
 				}
 
@@ -297,14 +307,14 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 func (enc *Encoder) encodeRunInterruptionPixel(gw *GolombWriter, x, ra, rb int) (int, error) {
 	if abs(ra-rb) <= enc.traits.Near {
 		// Use run mode context 1
-		errorValue := x - ra
+		errorValue := enc.computeErrorValue(x - ra)
 		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[1], errorValue); err != nil {
 			return 0, err
 		}
 		return enc.traits.ComputeReconstructedSample(ra, errorValue), nil
 	}
 	// Use run mode context 0
-	errorValue := (x - rb) * signInt(rb-ra)
+	errorValue := enc.computeErrorValue((x - rb) * signInt(rb-ra))
 	if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], errorValue); err != nil {
 		return 0, err
 	}
