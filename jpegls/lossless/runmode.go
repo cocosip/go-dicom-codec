@@ -104,7 +104,15 @@ func NewRunModeScanner(traits Traits) *RunModeScanner {
 	}
 }
 
-func (r *RunModeScanner) ResetLine() { r.RunIndex = 0 }
+// ResetLine is kept for API compatibility but does nothing.
+// Per JPEG-LS standard and CharLS implementation (scan.h:520-544),
+// RunIndex should NOT be reset at the start of each line.
+// It maintains state across lines and is only reset:
+// 1. At scan initialization (reset_parameters)
+// 2. After a restart marker
+func (r *RunModeScanner) ResetLine() {
+	// Intentionally empty - do not reset RunIndex here
+}
 func (r *RunModeScanner) incRunIndex() {
 	if r.RunIndex < 31 {
 		r.RunIndex++
@@ -131,7 +139,10 @@ func (r *RunModeScanner) EncodeRunLength(gw *GolombWriter, runLength int, endOfL
 				return err
 			}
 		}
-		r.RunIndex = 0
+		// Note: RunIndex is NOT reset here. It should only be reset:
+		// 1. At scan initialization (reset_parameters in CharLS)
+		// 2. After a restart marker
+		// CharLS scan.h:832-852 does not reset run_index_ at end of line
 		return nil
 	}
 	nBits := J[r.RunIndex] + 1
@@ -180,10 +191,8 @@ func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeCon
 	if mapBit {
 		eMapped--
 	}
+	// CharLS scan.h:775 uses limit - J[run_index_] - 1 directly without bounds checking
 	limitMinusJ := r.traits.Limit - J[r.RunIndex] - 1
-	if limitMinusJ < 0 {
-		limitMinusJ = 0
-	}
 	if err := gw.EncodeMappedValue(k, eMapped, limitMinusJ, r.traits.Qbpp); err != nil {
 		return err
 	}
@@ -194,10 +203,8 @@ func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeCon
 // DecodeRunInterruption decodes interruption error (CharLS decode_run_interruption_error)
 func (r *RunModeScanner) DecodeRunInterruption(gr *GolombReader, ctx *RunModeContext) (int, error) {
 	k := ctx.GetGolombCode()
+	// CharLS scan.h:672 uses limit - J[run_index_] - 1 directly without bounds checking
 	limitMinusJ := r.traits.Limit - J[r.RunIndex] - 1
-	if limitMinusJ < 0 {
-		limitMinusJ = 0
-	}
 	mapped, err := gr.DecodeValue(k, limitMinusJ, r.traits.Qbpp)
 	if err != nil {
 		return 0, err

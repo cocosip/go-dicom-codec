@@ -210,8 +210,8 @@ jpegls/
 - [x] LSE (0xFFF8) - JPEG-LS Extension
 - [x] SOS (0xFFDA) - Start of Scan
 - [x] EOI (0xFFD9)
-- [ ] APP markers handling
-- [ ] COM markers handling
+- [x] APP markers handling - skipped in default case (matches CharLS behavior)
+- [x] COM markers handling - skipped in default case (matches CharLS behavior)
 
 ### 9. Byte Stuffing
 - [x] Encoding: 0xFF → 0xFF 0x00
@@ -223,8 +223,9 @@ jpegls/
 - [x] First line (no top neighbors) - b/c/d=0
 - [x] Left column (no left neighbor) - a=b per CharLS
 - [x] Right column + line wrap - d=b per CharLS
-- [ ] Single pixel images (needs testing)
-- [ ] Single line images (needs testing)
+- [x] Single pixel images (1x1) - tested with NEAR=0,3,5
+- [x] Single line images (Nx1) - tested with width=1,10,100
+- [x] Single column images (1xN) - tested with height=1,10,100
 - [x] Very small Range values (NEAR close to MaxVal/2) - tested NEAR=100
 
 ## Priority Order
@@ -264,7 +265,13 @@ For each component:
 🔄 = Partially done
 ⬜ = Not started
 
-**Overall Progress: ~95% (core algorithm complete, all NEAR values 0-100 tested and passing)**
+**Overall Progress: 100% (完全对齐 CharLS)**
+
+所有核心算法、边缘情况、标记处理均已完成并通过测试：
+- ✅ 所有 NEAR 值 0-100 测试通过
+- ✅ 单像素/单行/单列图像测试通过
+- ✅ APP/COM 标记正确跳过
+- ✅ 所有 Traits 方法与 CharLS 完全一致
 
 ### Recent Fixes (2026-01-06)
 1. ✅ **CRITICAL**: Fixed Limit parameter calculation - uses `bits_per_pixel = log2_ceil(maxVal)` NOT `qbpp = log2_ceil(range)`
@@ -297,3 +304,15 @@ For each component:
    - Location: `jpegls/nearlossless/encoder.go:290-300`, `decoder.go:350-354`
 
 8. ✅ All NEAR values 0-100 now pass round-trip tests perfectly
+
+9. ✅ APP and COM markers handling:
+   - Decoder skips unknown markers in default case using `common.HasLength(marker)`
+   - Matches CharLS behavior: APP0-APP15 (0xE0-0xEF) and COM (0xFE) are read and skipped
+   - Location: `jpegls/nearlossless/decoder.go:94-99`
+
+10. ✅ Edge case testing completed:
+    - Single pixel images (1x1) tested with NEAR=0,3,5
+    - Single line images (Nx1) tested with various widths
+    - Single column images (1xN) tested with various heights
+    - All tests pass perfectly
+    - Location: `jpegls/nearlossless/edge_cases_test.go`
