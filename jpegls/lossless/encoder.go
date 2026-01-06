@@ -400,8 +400,15 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	a, b, c, d := 0, 0, 0, 0
 
 	// a = left pixel (West)
+	// CharLS: current_line_[-1] is initialized to previous_line_[0] for first pixel of row
 	if x > 0 {
 		idx := (y*enc.width+(x-1))*stride + offset
+		if idx < len(pixels) {
+			a = pixels[idx]
+		}
+	} else if y > 0 {
+		// Special case: x=0, y>0 - CharLS uses previous_line_[0] as current_line_[-1]
+		idx := ((y-1)*enc.width+0)*stride + offset
 		if idx < len(pixels) {
 			a = pixels[idx]
 		}
@@ -424,10 +431,16 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	}
 
 	// d = top-right pixel (North-East)
-	if x < enc.width-1 && y > 0 {
-		idx := ((y-1)*enc.width+(x+1))*stride + offset
-		if idx < len(pixels) {
-			d = pixels[idx]
+	// CharLS: previous_line_[width_] = previous_line_[width_ - 1]
+	if y > 0 {
+		if x < enc.width-1 {
+			idx := ((y-1)*enc.width+(x+1))*stride + offset
+			if idx < len(pixels) {
+				d = pixels[idx]
+			}
+		} else {
+			// Right edge: d = b (rightmost top pixel)
+			d = b
 		}
 	}
 
