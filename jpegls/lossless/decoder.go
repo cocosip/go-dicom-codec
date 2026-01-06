@@ -312,12 +312,8 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 				correctionC := ApplySign(ctx.C, sign)
 				predicted_value := dec.traits.CorrectPrediction(predicted + correctionC)
 
-				limitMinusJ := dec.traits.Limit - J[dec.runModeScanner.RunIndex] - 1
-				if limitMinusJ < 0 {
-					limitMinusJ = 0
-				}
-
-				mapped_error, err := gr.DecodeValue(k, limitMinusJ, dec.traits.Qbpp)
+				// In REGULAR MODE, use limit directly (J[RunIndex] is only for RUN MODE)
+				mapped_error, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
 				if err != nil {
 					return fmt.Errorf("decode regular at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
 				}

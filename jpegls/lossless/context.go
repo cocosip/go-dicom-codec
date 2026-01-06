@@ -173,9 +173,8 @@ func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 	qbpp := bitsLen(range_)
 
 	// LIMIT: match CharLS (see util.h::compute_limit_parameter).
-	// bitsPerSample is ceil(log2(MAXVAL))
-	bitsPerSample := bitsLen(maxVal)
-	limit := 2 * (bitsPerSample + max(8, bitsPerSample))
+	// Use qbpp instead of bitsPerSample to match CharLS implementation
+	limit := 2 * (qbpp + max(8, qbpp))
 
 	t1, t2, t3 := computeThresholds(maxVal, near)
 

@@ -276,12 +276,9 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				corrected_error := errorCorrection ^ error_value
 				mapped_error := MapErrorValue(corrected_error)
 
-				limitMinusJ := enc.traits.Limit - J[enc.runModeScanner.RunIndex] - 1
-				if limitMinusJ < 0 {
-					limitMinusJ = 0
-				}
-				// Encode mapped error (with debug hook for first few pixels)
-				if err := gw.EncodeMappedValue(k, mapped_error, limitMinusJ, enc.traits.Qbpp); err != nil {
+				// In REGULAR MODE, use limit directly (J[RunIndex] is only for RUN MODE)
+				// Encode mapped error
+				if err := gw.EncodeMappedValue(k, mapped_error, enc.traits.Limit, enc.traits.Qbpp); err != nil {
 					return err
 				}
 

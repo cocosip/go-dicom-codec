@@ -119,14 +119,44 @@ func (gw *GolombWriter) Flush() error {
 	return nil
 }
 
+// WriteUnary writes a unary code: n zeros followed by one 1
+func (gw *GolombWriter) WriteUnary(n int) error {
+	// Write n zeros
+	for i := 0; i < n; i++ {
+		if err := gw.WriteBit(0); err != nil {
+			return err
+		}
+	}
+	// Write one 1
+	return gw.WriteBit(1)
+}
+
+// WriteZeros writes n zero bits
+func (gw *GolombWriter) WriteZeros(n int) error {
+	for i := 0; i < n; i++ {
+		if err := gw.WriteBit(0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // EncodeMappedValue encodes a mapped error value with limit handling (CharLS encode_mapped_value).
 func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPerPixel int) error {
 	highBits := mappedError >> uint(k)
 
 	// Normal case: high_bits < limit - (qbpp + 1)
 	if highBits < limit-(quantizedBitsPerPixel+1) {
-		// write unary (highBits zeros, then 1)
-		if err := gw.WriteBits(1, highBits+1); err != nil {
+		// CharLS optimization: split unary code if too long (> 31 bits)
+		if highBits+1 > 31 {
+			// Write half as zeros first
+			if err := gw.WriteZeros(highBits / 2); err != nil {
+				return err
+			}
+			highBits = highBits - highBits/2
+		}
+		// Write unary code: highBits zeros followed by one 1
+		if err := gw.WriteUnary(highBits); err != nil {
 			return err
 		}
 		// write remainder
@@ -139,15 +169,26 @@ func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPe
 		return nil
 	}
 
-	// Escape case: write (limit - (qbpp+1)) zeros then 1, then mappedError-1 with qbpp bits
-	escapeBits := limit - (quantizedBitsPerPixel + 1)
-	if escapeBits < 0 {
-		escapeBits = 0
+	// Escape case: write (limit - qbpp) zeros then 1, then mappedError-1 with qbpp bits
+	escapeBits := limit - quantizedBitsPerPixel
+
+	// CharLS optimization: split escape code if too long (> 31 bits)
+	if escapeBits > 31 {
+		// Write 31 zeros first
+		if err := gw.WriteZeros(31); err != nil {
+			return err
+		}
+		// Write remaining unary code
+		if err := gw.WriteUnary(escapeBits - 31 - 1); err != nil {
+			return err
+		}
+	} else {
+		// Write unary code: escapeBits-1 zeros followed by one 1
+		if err := gw.WriteUnary(escapeBits - 1); err != nil {
+			return err
+		}
 	}
-	// write escapeBits zeros then 1
-	if err := gw.WriteBits(1, escapeBits+1); err != nil {
-		return err
-	}
+
 	value := (mappedError - 1) & ((1 << uint(quantizedBitsPerPixel)) - 1)
 	return gw.WriteBits(uint32(value), quantizedBitsPerPixel)
 }
