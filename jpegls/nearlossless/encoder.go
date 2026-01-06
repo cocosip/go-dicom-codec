@@ -104,22 +104,25 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 }
 
 // writeSOF55 writes Start of Frame marker for JPEG-LS
+// Format matches CharLS jpeg_stream_writer.cpp:96
+// SOF55 data: 6 (fixed header) + components*3 (component specs)
 func (enc *Encoder) writeSOF55(writer *common.Writer) error {
-	length := 8 + enc.components*3
+	length := 6 + enc.components*3  // Fixed: was 8, should be 6
 	data := make([]byte, length)
 
-	data[0] = byte(enc.bitDepth)
-	data[1] = byte(enc.height >> 8)
-	data[2] = byte(enc.height & 0xFF)
-	data[3] = byte(enc.width >> 8)
-	data[4] = byte(enc.width & 0xFF)
-	data[5] = byte(enc.components)
+	data[0] = byte(enc.bitDepth)      // P = Sample precision
+	data[1] = byte(enc.height >> 8)   // Y = Number of lines (MSB)
+	data[2] = byte(enc.height & 0xFF) // Y = Number of lines (LSB)
+	data[3] = byte(enc.width >> 8)    // X = Number of samples per line (MSB)
+	data[4] = byte(enc.width & 0xFF)  // X = Number of samples per line (LSB)
+	data[5] = byte(enc.components)    // Nf = Number of components
 
+	// Component specifications (3 bytes per component)
 	for i := 0; i < enc.components; i++ {
 		offset := 6 + i*3
-		data[offset] = byte(i + 1)
-		data[offset+1] = 0x11
-		data[offset+2] = 0
+		data[offset] = byte(i + 1) // Component ID (1-based)
+		data[offset+1] = 0x11      // Sampling factors (H=1, V=1)
+		data[offset+2] = 0         // Quantization table (not used in JPEG-LS)
 	}
 
 	return writer.WriteSegment(0xFFF7, data)

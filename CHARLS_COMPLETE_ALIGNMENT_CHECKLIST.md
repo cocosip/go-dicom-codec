@@ -331,6 +331,17 @@ For each component:
     - **Problem**: Near-lossless encoder wrote 13 bytes instead of 11 bytes
     - **Root Cause**: Added 2 extra padding bytes (data[11], data[12]) not in CharLS
     - **CharLS Format**: 11 bytes = 1 (ID) + 2 (MAXVAL) + 2 (T1) + 2 (T2) + 2 (T3) + 2 (RESET)
-    - **Fix**: `jpegls/nearlossless/encoder.go:128-153` - Changed from 13 to 11 bytes
+    - **Fix**: `jpegls/nearlossless/encoder.go:131-153` - Changed from 13 to 11 bytes
     - **Reference**: CharLS jpeg_stream_writer.cpp:149-158
     - **Impact**: Generated JPEG-LS files now readable by all compliant decoders
+
+13. ✅ **CRITICAL**: Fixed SOF55 marker format (2026-01-06)
+    - **Problem**: Near-lossless encoder wrote wrong SOF55 length (11 bytes payload instead of 9)
+    - **Root Cause**: Used `8 + components*3` instead of `6 + components*3`
+    - **CharLS Format**: 6 bytes fixed header + components*3 bytes component specs
+      - Fixed header: precision (1) + height (2) + width (2) + components (1) = 6 bytes
+      - Per component: ID (1) + sampling (1) + quantization (1) = 3 bytes
+    - **Fix**: `jpegls/nearlossless/encoder.go:110` - Changed from 8 to 6
+    - **Reference**: CharLS jpeg_stream_writer.cpp:96
+    - **Decoder**: Already correct, only validates minimum 6 bytes
+    - **Impact**: SOF55 now has correct length for all component counts
