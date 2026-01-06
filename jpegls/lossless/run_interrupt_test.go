@@ -3,17 +3,19 @@ package lossless
 import (
 	"bytes"
 	"testing"
+
+	jplscommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 )
 
 func TestRunInterruptionSymmetry(t *testing.T) {
 	// Test that encodeRunInterruptionError and decodeRunInterruptionError are inverses
 
 	testCases := []struct {
-		errorValue    int
-		contextType   int // 0 or 1
-		rangeVal      int
+		errorValue  int
+		contextType int // 0 or 1
+		rangeVal    int
 	}{
-		{10, 1, 256},  // Pixel value 10, ra=0, rb=0
+		{10, 1, 256}, // Pixel value 10, ra=0, rb=0
 		{5, 1, 256},
 		{-5, 1, 256},
 		{20, 0, 256},
@@ -38,7 +40,7 @@ func TestRunInterruptionSymmetry(t *testing.T) {
 		t.Logf("mapBit=%v", mapBit)
 
 		// Compute eMappedErrorValue
-		eMappedErrorValue := 2*abs(tc.errorValue) - encCtx.runInterruptionType
+		eMappedErrorValue := 2*jplscommon.Abs(tc.errorValue) - encCtx.runInterruptionType
 		if mapBit {
 			eMappedErrorValue--
 		}

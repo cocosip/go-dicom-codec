@@ -1,12 +1,13 @@
 package lossless
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cocosip/go-dicom-codec/jpegls/common"
+)
 
 // J array (JPEG-LS A.2.1)
-var J = [32]int{
-	0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3,
-	4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-}
+var J = common.J
 
 // RunModeContext matches CharLS context_run_mode
 type RunModeContext struct {
@@ -187,7 +188,7 @@ func (r *RunModeScanner) DecodeRunLength(gr *GolombReader, remainingInLine int) 
 func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeContext, errorValue int) error {
 	k := ctx.GetGolombCode()
 	mapBit := ctx.ComputeMap(errorValue, k)
-	eMapped := 2*abs(errorValue) - ctx.runInterruptionType
+	eMapped := 2*common.Abs(errorValue) - ctx.runInterruptionType
 	if mapBit {
 		eMapped--
 	}

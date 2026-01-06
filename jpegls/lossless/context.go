@@ -1,5 +1,7 @@
 package lossless
 
+import "github.com/cocosip/go-dicom-codec/jpegls/common"
+
 // Context holds the statistical model for a specific context
 type Context struct {
 	A int // Running sum of prediction errors (for bias estimation)
@@ -40,12 +42,12 @@ func (ctx *Context) UpdateContext(errValue, nearLossless, resetThreshold int) {
 	const minC = -128
 	const overflowLimit = 65536 * 256 // CharLS overflow protection
 
-	ctx.A += abs(errValue)
+	ctx.A += common.Abs(errValue)
 	ctx.B += errValue * (2*nearLossless + 1)
 
 	// CharLS overflow protection: check if context values exceed limits
 	// This indicates corrupted or invalid encoded data
-	if ctx.A >= overflowLimit || abs(ctx.B) >= overflowLimit {
+	if ctx.A >= overflowLimit || common.Abs(ctx.B) >= overflowLimit {
 		// In Go we can't throw errors from this function, but this should never
 		// happen with valid JPEG-LS data. Just clamp to prevent overflow.
 		if ctx.A >= overflowLimit {
@@ -104,8 +106,6 @@ func (ctx *Context) GetErrorCorrection(k int, nearLossless int) int {
 	val := 2*ctx.B + ctx.N - 1
 	if val < 0 {
 		return -1
-	} else if val > 0 {
-		return 1
 	}
 	return 0
 }

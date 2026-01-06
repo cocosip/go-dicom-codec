@@ -1,5 +1,7 @@
 package lossless
 
+import "github.com/cocosip/go-dicom-codec/jpegls/common"
+
 // MED (Median Edge Detection) predictor for JPEG-LS
 // This is the LOCO-I predictor that detects horizontal or vertical edges
 
@@ -20,40 +22,6 @@ func Predict(a, b, c int) int {
 		return max(a, b)
 	}
 	return a + b - c
-}
-
-// Min returns the minimum of two integers
-func Min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// Max returns the maximum of two integers
-func Max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// min returns the minimum of two integers (internal)
-func min(a, b int) int {
-	return Min(a, b)
-}
-
-// max returns the maximum of two integers (internal)
-func max(a, b int) int {
-	return Max(a, b)
-}
-
-// abs returns the absolute value of an integer
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
 }
 
 // GradientQuantizer encapsulates adaptive thresholds (T1/T2/T3) and NEAR.
@@ -186,5 +154,5 @@ func ApplySign(i, sign int) int {
 // Returns true if we should use run mode
 func EdgeDetection(a, b, c, d int, threshold int) bool {
 	// Check if values are close enough to trigger run mode
-	return abs(a-b) <= threshold && abs(b-c) <= threshold && abs(c-d) <= threshold
+	return common.Abs(a-b) <= threshold && common.Abs(b-c) <= threshold && common.Abs(c-d) <= threshold
 }

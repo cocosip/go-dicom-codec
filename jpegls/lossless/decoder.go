@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	jplscommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 )
 
 // Decoder represents a JPEG-LS lossless decoder
@@ -349,7 +350,7 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 
 // decodeRunInterruptionPixel decodes the pixel that interrupts a run (CharLS: decode_run_interruption_pixel)
 func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (int, error) {
-	if abs(ra-rb) <= dec.traits.Near {
+	if jplscommon.Abs(ra-rb) <= dec.traits.Near {
 		// Use run mode context 1
 		errorValue, err := dec.runModeScanner.DecodeRunInterruption(gr, dec.runModeScanner.RunModeContexts[1])
 		if err != nil {
