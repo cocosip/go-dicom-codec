@@ -29,27 +29,54 @@ func NewTraits(maxVal, near, reset int) Traits {
 	}
 }
 
-// ComputeReconstructedSample matches CharLS fix_reconstructed_value.
+// ComputeReconstructedSample matches CharLS compute_reconstructed_sample.
+// CharLS: fix_reconstructed_value(predicted_value + dequantize(error_value))
 func (t Traits) ComputeReconstructedSample(prediction, errorValue int) int {
-	// Lossless power-of-two optimization (matches CharLS lossless_traits<uint16_t,8/16>)
+	// First dequantize the error
+	dequantized := t.dequantize(errorValue)
+
+	// Then call fix_reconstructed_value
+	return t.fixReconstructedValue(prediction + dequantized)
+}
+
+// fixReconstructedValue matches CharLS fix_reconstructed_value (default_traits.h:140-152)
+func (t Traits) fixReconstructedValue(value int) int {
+	// Lossless power-of-two optimization
 	rangeIsPowerOfTwo := (t.MaxVal+1)&t.MaxVal == 0
 	if t.Near == 0 && rangeIsPowerOfTwo {
-		// Wrap modulo range using mask (fast path for 8/16-bit)
-		return (prediction + errorValue) & t.MaxVal
+		return value & t.MaxVal
 	}
 
-	reconstructed := prediction + errorValue
-	if reconstructed < -t.Near {
-		reconstructed += t.Range * (2*t.Near + 1)
-	} else if reconstructed > t.MaxVal+t.Near {
-		reconstructed -= t.Range * (2*t.Near + 1)
+	// if (value < -near_lossless)
+	if value < -t.Near {
+		value = value + t.Range*(2*t.Near+1)
+	} else if value > t.MaxVal+t.Near {
+		// else if (value > maximum_sample_value + near_lossless)
+		value = value - t.Range*(2*t.Near+1)
 	}
-	if reconstructed < 0 {
-		reconstructed = 0
-	} else if reconstructed > t.MaxVal {
-		reconstructed = t.MaxVal
+
+	// return correct_prediction(value)
+	return t.correctPrediction(value)
+}
+
+// dequantize matches CharLS dequantize (default_traits.h:135-138)
+func (t Traits) dequantize(errorValue int) int {
+	return errorValue * (2*t.Near + 1)
+}
+
+// correctPrediction matches CharLS correct_prediction (default_traits.h:83-89)
+func (t Traits) correctPrediction(predicted int) int {
+	// if ((predicted & maximum_sample_value) == predicted) return predicted;
+	if (predicted & t.MaxVal) == predicted {
+		return predicted
 	}
-	return reconstructed
+
+	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
+	// Handles negative by returning 0, and > maxVal by returning maxVal
+	if predicted < 0 {
+		return 0
+	}
+	return t.MaxVal
 }
 
 // CorrectPrediction clamps prediction to [0, MaxVal] (CharLS correct_prediction).

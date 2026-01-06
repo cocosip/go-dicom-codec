@@ -292,42 +292,43 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
-				// Regular mode - following CharLS do_regular (decoder)
+				// Regular mode - EXACTLY following CharLS do_regular (decoder)
 				// Reference: CharLS scan.h line 305-334
 
-				// Apply sign symmetry
+				// const int32_t sign{bit_wise_sign(qs)};
 				sign := lossless.BitwiseSign(qs)
+
+				// context_regular_mode& context{contexts_[apply_sign(qs, sign)]};
 				ctx := dec.contextTable.GetContext(q1, q2, q3)
+
+				// const int32_t k{context.get_golomb_coding_parameter()};
 				k := ctx.ComputeGolombParameter()
 
-				// Compute prediction on ORIGINAL values (not quantized)
-				// CharLS: predicted = get_predicted_value(ra, rb, rc)
+				// predicted = get_predicted_value(ra, rb, rc)
 				prediction := lossless.Predict(a, b, c)
 
-				// Apply prediction correction with sign (CharLS: predicted + apply_sign(context.c(), sign))
-				correctionC := lossless.ApplySign(ctx.GetPredictionCorrection(), sign)
-				predictedValue := dec.correctPrediction(prediction, correctionC)
+				// const int32_t predicted_value{traits_.correct_prediction(predicted + apply_sign(context.c(), sign))};
+				predictedValue := dec.correctPrediction(prediction + lossless.ApplySign(ctx.GetPredictionCorrection(), sign))
 
-				// Decode mapped error (CharLS uses traits_.limit directly)
+				// Decode mapped error
 				mappedError, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
 				if err != nil {
 					return fmt.Errorf("decode regular mode error at x=%d y=%d comp=%d: %w", x, y, comp, err)
 				}
 
-				// Unmap error (CharLS: unmap_error_value)
+				// int32_t error_value = unmap_error_value(decode_value(...));
 				errorValue := lossless.UnmapErrorValue(mappedError)
 
-				// Apply error correction if k==0 (always 0 for near-lossless when NEAR > 0)
+				// if (k == 0) error_value = error_value ^ context.get_error_correction(traits_.near_lossless);
 				if k == 0 {
 					errorValue ^= ctx.GetErrorCorrection(k, dec.near)
 				}
 
-				// Update context (CharLS: update_variables_and_bias(error_value, ...))
+				// context.update_variables_and_bias(error_value, traits_.near_lossless, traits_.reset_threshold);
 				ctx.UpdateContext(errorValue, dec.near, dec.traits.Reset)
 
-				// Reconstruct sample (CharLS: compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign)))
-				reconstructedError := dec.dequantizeError(lossless.ApplySign(errorValue, sign))
-				sample := dec.traits.ComputeReconstructedSample(predictedValue, reconstructedError)
+				// return traits_.compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign));
+				sample := dec.traits.ComputeReconstructedSample(predictedValue, lossless.ApplySign(errorValue, sign))
 
 				pixels[idx] = sample
 
@@ -358,45 +359,64 @@ func (dec *Decoder) dequantizeError(qerr int) int {
 	return qerr * (2*dec.near + 1)
 }
 
-// correctPrediction applies bias correction
-func (dec *Decoder) correctPrediction(prediction, bias int) int {
-	prediction += bias
-
-	// Clamp to quantized range
-	if prediction < 0 {
-		prediction = 0
-	} else if prediction >= dec.traits.Range {
-		prediction = dec.traits.Range - 1
+// correctPrediction clamps predicted value to [0, MaxVal].
+// CharLS: default_traits.h correct_prediction() line 83-89
+func (dec *Decoder) correctPrediction(predicted int) int {
+	// if ((predicted & maximum_sample_value) == predicted) return predicted;
+	if (predicted & dec.maxVal) == predicted {
+		return predicted
 	}
 
-	return prediction
+	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
+	// This handles negative values by returning 0, and values > maxVal by clamping
+	if predicted < 0 {
+		return 0
+	}
+	return dec.maxVal
 }
 
-// getNeighbors gets neighboring pixels
+// getNeighbors gets neighboring pixels following CharLS edge handling
+// CharLS initializes edge pixels as:
+//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := dec.components
 	offset := comp
 
 	a, b, c, d := 0, 0, 0, 0
 
-	if x > 0 {
-		idx := (y*dec.width+(x-1))*stride + offset
-		a = pixels[idx]
-	}
-
+	// b: pixel above current position
 	if y > 0 {
 		idx := ((y-1)*dec.width+x)*stride + offset
 		b = pixels[idx]
 	}
 
+	// a: pixel to the left
+	// CharLS: when x=0, current_line_[-1] = previous_line_[0], so a = b
+	if x > 0 {
+		idx := (y*dec.width+(x-1))*stride + offset
+		a = pixels[idx]
+	} else if y > 0 {
+		// Left edge: a = b (pixel above)
+		a = b
+	}
+
+	// c: pixel diagonally above-left
 	if x > 0 && y > 0 {
 		idx := ((y-1)*dec.width+(x-1))*stride + offset
 		c = pixels[idx]
 	}
 
-	if x < dec.width-1 && y > 0 {
-		idx := ((y-1)*dec.width+(x+1))*stride + offset
-		d = pixels[idx]
+	// d: pixel above-right
+	// CharLS: previous_line_[width_] = previous_line_[width_ - 1]
+	if y > 0 {
+		if x < dec.width-1 {
+			idx := ((y-1)*dec.width+(x+1))*stride + offset
+			d = pixels[idx]
+		} else {
+			// Right edge: d = b (rightmost top pixel)
+			d = b
+		}
 	}
 
 	return a, b, c, d
@@ -500,8 +520,8 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb
 			return 0, err
 		}
 
-		reconstructedError := dec.dequantizeError(quantizedError)
-		reconstructed := dec.traits.ComputeReconstructedSample(ra, reconstructedError)
+		// ComputeReconstructedSample will dequantize internally
+		reconstructed := dec.traits.ComputeReconstructedSample(ra, quantizedError)
 		return reconstructed, nil
 	}
 
@@ -511,7 +531,7 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb
 		return 0, err
 	}
 
-	reconstructedError := dec.dequantizeError(quantizedError)
-	reconstructed := dec.traits.ComputeReconstructedSample(rb, reconstructedError*jpegcommon.Sign(rb-ra))
+	// ComputeReconstructedSample will dequantize internally
+	reconstructed := dec.traits.ComputeReconstructedSample(rb, quantizedError*jpegcommon.Sign(rb-ra))
 	return reconstructed, nil
 }

@@ -38,9 +38,25 @@ func (ctx *Context) ComputeGolombParameter() int {
 func (ctx *Context) UpdateContext(errValue, nearLossless, resetThreshold int) {
 	const maxC = 127
 	const minC = -128
+	const overflowLimit = 65536 * 256 // CharLS overflow protection
 
 	ctx.A += abs(errValue)
 	ctx.B += errValue * (2*nearLossless + 1)
+
+	// CharLS overflow protection: check if context values exceed limits
+	// This indicates corrupted or invalid encoded data
+	if ctx.A >= overflowLimit || abs(ctx.B) >= overflowLimit {
+		// In Go we can't throw errors from this function, but this should never
+		// happen with valid JPEG-LS data. Just clamp to prevent overflow.
+		if ctx.A >= overflowLimit {
+			ctx.A = overflowLimit - 1
+		}
+		if ctx.B >= overflowLimit {
+			ctx.B = overflowLimit - 1
+		} else if ctx.B <= -overflowLimit {
+			ctx.B = -overflowLimit + 1
+		}
+	}
 
 	if ctx.N == resetThreshold {
 		ctx.A >>= 1

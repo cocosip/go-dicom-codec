@@ -236,48 +236,40 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
-				// Regular mode - following CharLS do_regular (encoder)
+				// Regular mode - EXACTLY following CharLS do_regular (encoder)
 				// Reference: CharLS scan.h line 336-351
 
-				// Apply sign symmetry
+				// const int32_t sign{bit_wise_sign(qs)};
 				sign := lossless.BitwiseSign(qs)
+
+				// context_regular_mode& context{contexts_[apply_sign(qs, sign)]};
 				ctx := enc.contextTable.GetContext(q1, q2, q3)
+
+				// const int32_t k{context.get_golomb_coding_parameter()};
 				k := ctx.ComputeGolombParameter()
 
-				// Compute prediction on ORIGINAL values (not quantized)
-				// CharLS: predicted = get_predicted_value(ra, rb, rc)
+				// predicted = get_predicted_value(ra, rb, rc)
 				prediction := lossless.Predict(a, b, c)
 
-				// Apply prediction correction with sign (CharLS: predicted + apply_sign(context.c(), sign))
-				correctionC := lossless.ApplySign(ctx.GetPredictionCorrection(), sign)
-				predictedValue := enc.correctPrediction(prediction, correctionC)
+				// const int32_t predicted_value{traits_.correct_prediction(predicted + apply_sign(context.c(), sign))};
+				predictedValue := enc.correctPrediction(prediction + lossless.ApplySign(ctx.GetPredictionCorrection(), sign))
 
-				// Compute error in original domain, then apply sign
-				// CharLS: compute_error_value(apply_sign(x - predicted_value, sign))
-				rawError := sample - predictedValue
-				signedRawError := lossless.ApplySign(rawError, sign)
+				// const int32_t error_value{traits_.compute_error_value(apply_sign(x - predicted_value, sign))};
+				// where compute_error_value(e) = modulo_range(quantize(e))
+				errorValue := enc.computeErrorValue(lossless.ApplySign(sample-predictedValue, sign))
 
-				// Quantize and modulo range (CharLS: modulo_range(quantize(e)))
-				quantizedError := enc.quantizeError(signedRawError)
-				errorValue := enc.moduloRange(quantizedError)
-
-				// Get error correction (always 0 for near-lossless when NEAR > 0)
-				errorCorrection := ctx.GetErrorCorrection(k, enc.near)
-
-				// Map error (CharLS: map_error_value(error_correction ^ error_value))
-				mappedError := lossless.MapErrorValue(errorCorrection ^ errorValue)
-
-				// Encode with limit (CharLS uses traits_.limit directly)
+				// encode_mapped_value(k, map_error_value(context.get_error_correction(k | traits_.near_lossless) ^ error_value), traits_.limit);
+				mappedError := lossless.MapErrorValue(ctx.GetErrorCorrection(k|enc.near, enc.near) ^ errorValue)
 				if err := gw.EncodeMappedValue(k, mappedError, enc.traits.Limit, enc.traits.Qbpp); err != nil {
 					return err
 				}
 
-				// Update context (CharLS: update_variables_and_bias(error_value, ...))
+				// context.update_variables_and_bias(error_value, traits_.near_lossless, traits_.reset_threshold);
 				ctx.UpdateContext(errorValue, enc.near, enc.traits.Reset)
 
-				// Reconstruct sample (CharLS: compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign)))
-				reconstructedError := enc.dequantizeError(lossless.ApplySign(errorValue, sign))
-				actualSample := enc.fixReconstructedValue(predictedValue + reconstructedError)
+				// return traits_.compute_reconstructed_sample(predicted_value, apply_sign(error_value, sign));
+				// where compute_reconstructed_sample(pv, ev) = fix_reconstructed_value(pv + dequantize(ev))
+				actualSample := enc.traits.ComputeReconstructedSample(predictedValue, lossless.ApplySign(errorValue, sign))
 				pixels[idx] = actualSample
 
 				x++
@@ -295,21 +287,26 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 	return nil
 }
 
-// quantizeError quantizes prediction error
+// computeErrorValue matches CharLS traits_.compute_error_value(e)
+// which is: modulo_range(quantize(e))
+func (enc *Encoder) computeErrorValue(e int) int {
+	// quantize
+	quantized := enc.quantizeError(e)
+	// modulo_range
+	return enc.traits.ModuloRange(quantized)
+}
+
+// quantizeError quantizes prediction error (CharLS quantize)
 func (enc *Encoder) quantizeError(err int) int {
 	if enc.near == 0 {
 		return err
 	}
 
+	// CharLS default_traits.h line 127-133
 	if err > 0 {
 		return (err + enc.near) / (2*enc.near + 1)
 	}
-	return -((-err + enc.near) / (2*enc.near + 1))
-}
-
-// moduloRange applies modulo range operation to keep error in valid range
-func (enc *Encoder) moduloRange(errorValue int) int {
-	return enc.traits.ModuloRange(errorValue)
+	return -(enc.near - err) / (2*enc.near + 1)
 }
 
 // fixReconstructedValue handles wraparound for reconstructed values
@@ -329,34 +326,33 @@ func (enc *Encoder) dequantizeError(qerr int) int {
 	return qerr * (2*enc.near + 1)
 }
 
-// correctPrediction applies bias correction
-func (enc *Encoder) correctPrediction(prediction, bias int) int {
-	prediction += bias
-
-	// Clamp to quantized range
-	if prediction < 0 {
-		prediction = 0
-	} else if prediction >= enc.traits.Range {
-		prediction = enc.traits.Range - 1
+// correctPrediction clamps predicted value to [0, MaxVal].
+// CharLS: default_traits.h correct_prediction() line 83-89
+func (enc *Encoder) correctPrediction(predicted int) int {
+	// if ((predicted & maximum_sample_value) == predicted) return predicted;
+	if (predicted & enc.maxVal) == predicted {
+		return predicted
 	}
 
-	return prediction
+	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
+	// This handles negative values by returning 0, and values > maxVal by clamping
+	if predicted < 0 {
+		return 0
+	}
+	return enc.maxVal
 }
 
-// getNeighbors gets neighboring pixels
+// getNeighbors gets neighboring pixels following CharLS edge handling
+// CharLS initializes edge pixels as:
+//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := enc.components
 	offset := comp
 
 	a, b, c, d := 0, 0, 0, 0
 
-	if x > 0 {
-		idx := (y*enc.width+(x-1))*stride + offset
-		if idx < len(pixels) {
-			a = pixels[idx]
-		}
-	}
-
+	// b: pixel above current position
 	if y > 0 {
 		idx := ((y-1)*enc.width+x)*stride + offset
 		if idx < len(pixels) {
@@ -364,6 +360,19 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 		}
 	}
 
+	// a: pixel to the left
+	// CharLS: when x=0, current_line_[-1] = previous_line_[0], so a = b
+	if x > 0 {
+		idx := (y*enc.width+(x-1))*stride + offset
+		if idx < len(pixels) {
+			a = pixels[idx]
+		}
+	} else if y > 0 {
+		// Left edge: a = b (pixel above)
+		a = b
+	}
+
+	// c: pixel diagonally above-left
 	if x > 0 && y > 0 {
 		idx := ((y-1)*enc.width+(x-1))*stride + offset
 		if idx < len(pixels) {
@@ -371,10 +380,17 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 		}
 	}
 
-	if x < enc.width-1 && y > 0 {
-		idx := ((y-1)*enc.width+(x+1))*stride + offset
-		if idx < len(pixels) {
-			d = pixels[idx]
+	// d: pixel above-right
+	// CharLS: previous_line_[width_] = previous_line_[width_ - 1]
+	if y > 0 {
+		if x < enc.width-1 {
+			idx := ((y-1)*enc.width+(x+1))*stride + offset
+			if idx < len(pixels) {
+				d = pixels[idx]
+			}
+		} else {
+			// Right edge: d = b (rightmost top pixel)
+			d = b
 		}
 	}
 
@@ -481,30 +497,32 @@ func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, com
 }
 
 // encodeRunInterruptionPixel encodes the pixel that interrupts a run
+// Matches CharLS encode_run_interruption_pixel (scan.h lines 779-791)
 func (enc *Encoder) encodeRunInterruptionPixel(gw *lossless.GolombWriter, x, ra, rb int) (int, error) {
+	// CharLS: if (std::abs(ra - rb) <= traits_.near_lossless)
 	if jpegcommon.Abs(ra-rb) <= enc.near {
 		// Use run mode context 1
-		errorValue := x - ra
-		quantizedError := enc.quantizeError(errorValue)
+		// CharLS: const int32_t error_value{traits_.compute_error_value(x - ra)};
+		errorValue := enc.computeErrorValue(x - ra)
 
-		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[1], quantizedError); err != nil {
+		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[1], errorValue); err != nil {
 			return 0, err
 		}
 
-		reconstructedError := enc.dequantizeError(quantizedError)
-		reconstructed := enc.traits.ComputeReconstructedSample(ra, reconstructedError)
+		// CharLS: return traits_.compute_reconstructed_sample(ra, error_value)
+		reconstructed := enc.traits.ComputeReconstructedSample(ra, errorValue)
 		return reconstructed, nil
 	}
 
 	// Use run mode context 0
-	errorValue := (x - rb) * jpegcommon.Sign(rb-ra)
-	quantizedError := enc.quantizeError(errorValue)
+	// CharLS: const int32_t error_value{traits_.compute_error_value((x - rb) * sign(rb - ra))};
+	errorValue := enc.computeErrorValue((x - rb) * jpegcommon.Sign(rb-ra))
 
-	if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], quantizedError); err != nil {
+	if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], errorValue); err != nil {
 		return 0, err
 	}
 
-	reconstructedError := enc.dequantizeError(quantizedError)
-	reconstructed := enc.traits.ComputeReconstructedSample(rb, reconstructedError*jpegcommon.Sign(rb-ra))
+	// CharLS: return traits_.compute_reconstructed_sample(rb, error_value * sign(rb - ra))
+	reconstructed := enc.traits.ComputeReconstructedSample(rb, errorValue*jpegcommon.Sign(rb-ra))
 	return reconstructed, nil
 }
