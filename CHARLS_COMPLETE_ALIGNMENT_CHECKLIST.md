@@ -149,7 +149,7 @@ jpegls/
 - [x] `compute_range_parameter()` - Range = (MaxVal+2*NEAR)/(2*NEAR+1)+1
 - [x] `compute_limit_parameter()` - Limit = 2*(qbpp + max(8, qbpp))
 - [x] `log2_ceil()` - Ceiling of log2
-- [ ] `initialization_value_for_a()` - A_init = max(2, (RANGE+32)/64)
+- [x] `initialization_value_for_a()` - A_init = max(2, (RANGE+32)/64)
 - [x] Threshold calculations (T1, T2, T3)
 
 ### 2. Context Management (context_regular_mode.h)
@@ -157,7 +157,7 @@ jpegls/
 - [x] `get_golomb_coding_parameter()` - k computation
 - [x] `get_error_correction()` - Sign of (2*B+N-1)
 - [x] `update_variables_and_bias()` - Update and reset logic
-- [ ] Overflow protection (limit = 65536*256)
+- [x] Overflow protection (limit = 65536*256)
 - [x] Bias update thresholds (min_c=-128, max_c=127)
 
 ### 3. Traits Implementation (default_traits.h)
@@ -191,18 +191,18 @@ jpegls/
 ### 6. Run Mode (scan.h do_run_mode, context_run_mode.h)
 - [x] Run length encoding with J table
 - [x] Run continuation check (is_near)
-- [ ] Run interruption encoding
-- [ ] Run interruption decoding
+- [x] Run interruption encoding (using computeErrorValue)
+- [x] Run interruption decoding
 - [x] Run index increment/decrement
-- [ ] End-of-line handling
+- [x] End-of-line handling
 
 ### 7. Line Processing (scan.h do_line)
 - [x] Line-by-line processing
 - [x] Neighbor pixel tracking (ra, rb, rc, rd)
 - [x] Context computation
 - [x] Run mode vs regular mode switching
-- [ ] First line handling
-- [ ] Left edge handling
+- [x] First line handling (y=0, b/c/d=0)
+- [x] Left edge handling (x=0, a=b per CharLS)
 
 ### 8. JPEG Markers (jpeg_stream_reader/writer)
 - [x] SOI (0xFFD8)
@@ -219,13 +219,13 @@ jpegls/
 - [x] Proper handling at byte boundaries
 
 ### 10. Edge Cases
-- [ ] First pixel in image (no left neighbor)
-- [ ] First line (no top neighbors)
-- [ ] Left column (no left neighbor)
-- [ ] Right column + line wrap
-- [ ] Single pixel images
-- [ ] Single line images
-- [ ] Very small Range values (NEAR close to MaxVal/2)
+- [x] First pixel in image (no left neighbor) - a=b=0
+- [x] First line (no top neighbors) - b/c/d=0
+- [x] Left column (no left neighbor) - a=b per CharLS
+- [x] Right column + line wrap - d=b per CharLS
+- [ ] Single pixel images (needs testing)
+- [ ] Single line images (needs testing)
+- [x] Very small Range values (NEAR close to MaxVal/2) - tested NEAR=100
 
 ## Priority Order
 
@@ -264,4 +264,36 @@ For each component:
 🔄 = Partially done
 ⬜ = Not started
 
-**Overall Progress: ~70% (core algorithm complete, edge cases remain)**
+**Overall Progress: ~95% (core algorithm complete, all NEAR values 0-100 tested and passing)**
+
+### Recent Fixes (2026-01-06)
+1. ✅ **CRITICAL**: Fixed Limit parameter calculation - uses `bits_per_pixel = log2_ceil(maxVal)` NOT `qbpp = log2_ceil(range)`
+   - Before: limit = 2 * (qbpp + max(8, qbpp)) - WRONG for near-lossless
+   - After: limit = 2 * (bitsPerPixel + max(8, bitsPerPixel)) - matches CharLS default_traits.h:43
+   - Location: `jpegls/lossless/context.go:195-199`
+
+2. ✅ Fixed run interruption encoding to use `computeErrorValue` (quantize + modulo_range) instead of just `quantizeError`
+   - Location: `jpegls/nearlossless/encoder.go:506, 519`
+
+3. ✅ Added overflow protection to context update (limit = 65536*256) matching CharLS
+   - Location: `jpegls/lossless/context.go:41-59`
+
+4. ✅ Fixed edge handling: left edge (a=b when x=0), right edge (d=b at right boundary)
+   - Location: `jpegls/nearlossless/encoder.go:365-395`, `decoder.go:396-422`
+
+5. ✅ Verified A_init formula matches CharLS: max(2, (RANGE+32)/64)
+   - Location: `jpegls/lossless/context.go:16`
+
+6. ✅ Added complete Traits methods matching CharLS default_traits.h:
+   - `IsNear(lhs, rhs)` - checks if values within NEAR distance
+   - `ComputeErrorValue(e)` - modulo_range(quantize(e))
+   - `quantize(errorValue)` - private quantization method
+   - Location: `jpegls/lossless/traits.go:153-181`
+
+7. ✅ Simplified encoder/decoder to delegate to Traits:
+   - `computeErrorValue()` → `traits.ComputeErrorValue()`
+   - `correctPrediction()` → `traits.CorrectPrediction()`
+   - Removed duplicate code, now uses centralized Traits implementation
+   - Location: `jpegls/nearlossless/encoder.go:290-300`, `decoder.go:350-354`
+
+8. ✅ All NEAR values 0-100 now pass round-trip tests perfectly

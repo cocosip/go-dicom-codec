@@ -149,3 +149,33 @@ func (t Traits) QuantizeGradient(d int) int {
 	}
 	return 4
 }
+
+// IsNear checks if two values are within NEAR distance.
+// Matches CharLS is_near (default_traits.h:66-69)
+func (t Traits) IsNear(lhs, rhs int) bool {
+	diff := lhs - rhs
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= t.Near
+}
+
+// ComputeErrorValue matches CharLS compute_error_value (default_traits.h:55-58)
+// Returns: modulo_range(quantize(e))
+func (t Traits) ComputeErrorValue(e int) int {
+	// quantize
+	quantized := t.quantize(e)
+	// modulo_range
+	return t.ModuloRange(quantized)
+}
+
+// quantize matches CharLS quantize (default_traits.h:127-133)
+func (t Traits) quantize(errorValue int) int {
+	if t.Near == 0 {
+		return errorValue
+	}
+	if errorValue > 0 {
+		return (errorValue + t.Near) / (2*t.Near + 1)
+	}
+	return -(t.Near - errorValue) / (2*t.Near + 1)
+}

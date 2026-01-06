@@ -287,59 +287,16 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 	return nil
 }
 
-// computeErrorValue matches CharLS traits_.compute_error_value(e)
-// which is: modulo_range(quantize(e))
+// computeErrorValue delegates to Traits.ComputeErrorValue
+// CharLS traits_.compute_error_value(e) = modulo_range(quantize(e))
 func (enc *Encoder) computeErrorValue(e int) int {
-	// quantize
-	quantized := enc.quantizeError(e)
-	// modulo_range
-	return enc.traits.ModuloRange(quantized)
+	return enc.traits.ComputeErrorValue(e)
 }
 
-// quantizeError quantizes prediction error (CharLS quantize)
-func (enc *Encoder) quantizeError(err int) int {
-	if enc.near == 0 {
-		return err
-	}
-
-	// CharLS default_traits.h line 127-133
-	if err > 0 {
-		return (err + enc.near) / (2*enc.near + 1)
-	}
-	return -(enc.near - err) / (2*enc.near + 1)
-}
-
-// fixReconstructedValue handles wraparound for reconstructed values
-func (enc *Encoder) fixReconstructedValue(value int) int {
-	return enc.traits.ComputeReconstructedSample(0, value)
-}
-
-// dequantizeError reconstructs error from quantized error (encoder version)
-// According to CharLS implementation and JPEG-LS standard T.87
-func (enc *Encoder) dequantizeError(qerr int) int {
-	if enc.near == 0 {
-		return qerr
-	}
-
-	// CharLS implementation: simple multiplication
-	// The NEAR offset is handled by modulo_range operation, not here
-	return qerr * (2*enc.near + 1)
-}
-
-// correctPrediction clamps predicted value to [0, MaxVal].
+// correctPrediction delegates to Traits.CorrectPrediction
 // CharLS: default_traits.h correct_prediction() line 83-89
 func (enc *Encoder) correctPrediction(predicted int) int {
-	// if ((predicted & maximum_sample_value) == predicted) return predicted;
-	if (predicted & enc.maxVal) == predicted {
-		return predicted
-	}
-
-	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
-	// This handles negative values by returning 0, and values > maxVal by clamping
-	if predicted < 0 {
-		return 0
-	}
-	return enc.maxVal
+	return enc.traits.CorrectPrediction(predicted)
 }
 
 // getNeighbors gets neighboring pixels following CharLS edge handling

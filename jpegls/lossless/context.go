@@ -175,22 +175,28 @@ type CodingParameters struct {
 	Reset  int
 }
 
-// ComputeCodingParameters computes derived JPEG-LS parameters similar to CharLS defaults.
-// - range_: per T.87 for NEAR>0
-// - qbpp: ceil(log2(range_))
-// - limit: 2 * (qbpp + max(8, qbpp))
-// - thresholds: default per MAXVAL with NEAR adjustment
+// ComputeCodingParameters computes derived JPEG-LS parameters matching CharLS defaults.
+// CharLS default_traits.h:
+// - range = compute_range_parameter(maximum_sample_value, near_lossless)
+// - quantized_bits_per_pixel = log2_ceil(range)
+// - bits_per_pixel = log2_ceil(maximum_sample_value)
+// - limit = compute_limit_parameter(bits_per_pixel)  // Uses bits_per_pixel, NOT qbpp!
 func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 	range_ := maxVal + 1
 	if near > 0 {
 		range_ = (maxVal+2*near)/(2*near+1) + 1
 	}
 
+	// qbpp (quantized_bits_per_pixel) = ceil(log2(range))
 	qbpp := bitsLen(range_)
 
-	// LIMIT: match CharLS (see util.h::compute_limit_parameter).
-	// Use qbpp instead of bitsPerSample to match CharLS implementation
-	limit := 2 * (qbpp + max(8, qbpp))
+	// bitsPerPixel = ceil(log2(maximum_sample_value))
+	// CharLS uses this for limit calculation, NOT qbpp!
+	bitsPerPixel := bitsLen(maxVal)
+
+	// LIMIT: CharLS uses bits_per_pixel (based on maxVal), not qbpp (based on range)
+	// See default_traits.h line 43: limit{compute_limit_parameter(bits_per_pixel)}
+	limit := 2 * (bitsPerPixel + max(8, bitsPerPixel))
 
 	t1, t2, t3 := computeThresholds(maxVal, near)
 

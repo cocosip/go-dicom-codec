@@ -347,32 +347,10 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 	return nil
 }
 
-// dequantizeError reconstructs error from quantized error
-// According to CharLS implementation and JPEG-LS standard T.87
-func (dec *Decoder) dequantizeError(qerr int) int {
-	if dec.near == 0 {
-		return qerr
-	}
-
-	// CharLS implementation: simple multiplication
-	// The NEAR offset is handled by modulo_range operation, not here
-	return qerr * (2*dec.near + 1)
-}
-
-// correctPrediction clamps predicted value to [0, MaxVal].
+// correctPrediction delegates to Traits.CorrectPrediction
 // CharLS: default_traits.h correct_prediction() line 83-89
 func (dec *Decoder) correctPrediction(predicted int) int {
-	// if ((predicted & maximum_sample_value) == predicted) return predicted;
-	if (predicted & dec.maxVal) == predicted {
-		return predicted
-	}
-
-	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
-	// This handles negative values by returning 0, and values > maxVal by clamping
-	if predicted < 0 {
-		return 0
-	}
-	return dec.maxVal
+	return dec.traits.CorrectPrediction(predicted)
 }
 
 // getNeighbors gets neighboring pixels following CharLS edge handling
