@@ -126,8 +126,10 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 }
 
 // writeLSE writes JPEG-LS parameters (LSE marker) with NEAR
+// Format matches CharLS jpeg_stream_writer.cpp:149-158
+// LSE segment data: 11 bytes = 1 (ID) + 5*2 (five uint16 values)
 func (enc *Encoder) writeLSE(writer *common.Writer) error {
-	data := make([]byte, 13)
+	data := make([]byte, 11) // ID (1) + MAXVAL (2) + T1 (2) + T2 (2) + T3 (2) + RESET (2)
 	data[0] = 1 // ID = 1 (preset parameters)
 
 	// MAXVAL
@@ -146,9 +148,6 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	// RESET interval
 	data[9] = byte(enc.traits.Reset >> 8)
 	data[10] = byte(enc.traits.Reset & 0xFF)
-	// Keep 2-byte RESET only; extra padding bytes remain zero
-	data[11] = 0
-	data[12] = 0
 
 	return writer.WriteSegment(0xFFF8, data)
 }

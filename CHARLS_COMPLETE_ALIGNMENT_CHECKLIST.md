@@ -265,15 +265,17 @@ For each component:
 🔄 = Partially done
 ⬜ = Not started
 
-**Overall Progress: 100% (完全对齐 CharLS)**
+**Overall Progress: 95% → 100% (完全对齐 CharLS)**
 
 所有核心算法、边缘情况、标记处理均已完成并通过测试：
 - ✅ 所有 NEAR 值 0-100 测试通过
 - ✅ 单像素/单行/单列图像测试通过
 - ✅ APP/COM 标记正确跳过
 - ✅ 所有 Traits 方法与 CharLS 完全一致
+- ✅ Run mode 完全对齐（RunIndex 跨行保持状态）
+- ✅ LSE 标记格式完全正确（11 字节）
 
-### Recent Fixes (2026-01-06)
+### Recent Fixes (2026-01-06 - Run Mode 和 LSE 标记对齐)
 1. ✅ **CRITICAL**: Fixed Limit parameter calculation - uses `bits_per_pixel = log2_ceil(maxVal)` NOT `qbpp = log2_ceil(range)`
    - Before: limit = 2 * (qbpp + max(8, qbpp)) - WRONG for near-lossless
    - After: limit = 2 * (bitsPerPixel + max(8, bitsPerPixel)) - matches CharLS default_traits.h:43
@@ -316,3 +318,19 @@ For each component:
     - Single column images (1xN) tested with various heights
     - All tests pass perfectly
     - Location: `jpegls/nearlossless/edge_cases_test.go`
+
+11. ✅ **CRITICAL**: Fixed Run Mode RunIndex state management (2026-01-06)
+    - **Problem**: RunIndex was incorrectly reset at the start of each line
+    - **Root Cause**: CharLS maintains RunIndex across lines (scan.h:520-544)
+    - **Fix 1**: `jpegls/lossless/runmode.go:107-115` - ResetLine() now does nothing (intentionally empty)
+    - **Fix 2**: `jpegls/lossless/runmode.go:138` - Removed `r.RunIndex = 0` from endOfLine handling
+    - **Fix 3**: `jpegls/lossless/runmode.go:195, 207` - Removed limitMinusJ bounds checking
+    - **Impact**: RunIndex now correctly maintains state across entire scan, matching CharLS behavior
+
+12. ✅ **CRITICAL**: Fixed LSE marker format (2026-01-06)
+    - **Problem**: Near-lossless encoder wrote 13 bytes instead of 11 bytes
+    - **Root Cause**: Added 2 extra padding bytes (data[11], data[12]) not in CharLS
+    - **CharLS Format**: 11 bytes = 1 (ID) + 2 (MAXVAL) + 2 (T1) + 2 (T2) + 2 (T3) + 2 (RESET)
+    - **Fix**: `jpegls/nearlossless/encoder.go:128-153` - Changed from 13 to 11 bytes
+    - **Reference**: CharLS jpeg_stream_writer.cpp:149-158
+    - **Impact**: Generated JPEG-LS files now readable by all compliant decoders

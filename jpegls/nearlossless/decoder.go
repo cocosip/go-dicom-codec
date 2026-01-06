@@ -145,7 +145,7 @@ func (dec *Decoder) parseLSE(reader *common.Reader) error {
 	}
 
 	id := data[0]
-	if id == 1 && len(data) >= 13 {
+	if id == 1 && len(data) >= 11 { // CharLS format: 11 bytes = ID + MAXVAL + T1 + T2 + T3 + RESET
 		// Read MAXVAL
 		maxVal := int(data[1])<<8 | int(data[2])
 		if maxVal > 0 {
