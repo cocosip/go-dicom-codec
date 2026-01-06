@@ -265,11 +265,11 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				correctionC := ApplySign(ctx.C, sign)
 				predicted_value := enc.traits.CorrectPrediction(predicted + correctionC)
 
-				// Compute error value (before sign) using signed narrow per bit depth (CharLS compute_error_value)
+				// Compute error value (CharLS: traits_.compute_error_value(apply_sign(x - predicted_value, sign)))
+				// CRITICAL: Sign must be applied BEFORE modulo/wrapping, not after!
 				rawErr := x_sample - predicted_value
-				error_value := enc.computeErrorValue(rawErr)
-				// Apply sign symmetry
-				error_value = ApplySign(error_value, sign)
+				signedErr := ApplySign(rawErr, sign)
+				error_value := enc.computeErrorValue(signedErr)
 
 				// Apply error correction and map (CharLS: map_error_value(context.get_error_correction(k | NEAR) ^ error_value))
 				errorCorrection := ctx.GetErrorCorrection(k, 0) // k|0 = k for lossless
