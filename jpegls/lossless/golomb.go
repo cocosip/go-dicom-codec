@@ -112,13 +112,28 @@ func (gw *GolombWriter) flush() error {
 
 // Flush flushes remaining bits and completes the bitstream (matches CharLS end_scan())
 func (gw *GolombWriter) Flush() error {
+	// JPEG-LS spec (ISO/IEC 14495-1, A.1): pad remaining bits with 1s
+	// Calculate how many bits remain in the current byte
+	if gw.freeBitCount < 32 && gw.freeBitCount > 0 {
+		bitsInPartialByte := (32 - gw.freeBitCount) % 8
+		if bitsInPartialByte > 0 {
+			// Pad to complete the byte with 1s
+			padBits := 8 - bitsInPartialByte
+			padValue := (uint32(1) << uint(padBits)) - 1 // All 1s
+			if err := gw.WriteBits(padValue, padBits); err != nil {
+				return err
+			}
+		}
+	}
+
 	if err := gw.flush(); err != nil {
 		return err
 	}
 
 	// If a 0xFF was written, flush() will force one unset bit anyway
 	if gw.isFFWritten {
-		if err := gw.WriteBits(0, (gw.freeBitCount-1)%8); err != nil {
+		padBits := (gw.freeBitCount - 1) % 8
+		if err := gw.WriteBits(0, padBits); err != nil {
 			return err
 		}
 	}
@@ -154,6 +169,13 @@ func (gw *GolombWriter) WriteZeros(n int) error {
 
 // EncodeMappedValue encodes a mapped error value with limit handling (CharLS encode_mapped_value).
 func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPerPixel int) error {
+	// Debug: log bit buffer state for pixel 1776
+	if mappedError == 3 && k == 10 {
+		fmt.Printf("EncodeMappedValue: k=%d, mappedError=%d\n", k, mappedError)
+		fmt.Printf("Bit buffer state: freeBitCount=%d, bitBuffer=0x%08X\n", gw.freeBitCount, gw.bitBuffer)
+		fmt.Printf("Bytes written so far: %d\n", gw.bytesWritten)
+	}
+
 	highBits := mappedError >> uint(k)
 
 	// Normal case: high_bits < limit - (qbpp + 1)

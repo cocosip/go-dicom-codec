@@ -136,11 +136,16 @@ func ComputeContextID(q1, q2, q3 int) int {
 }
 
 // BitwiseSign returns the sign bit of an integer
-// Matches CharLS: bit_wise_sign(i) = i >> 31
+// BitwiseSign matches CharLS: bit_wise_sign(i) = i >> 31
 // Returns -1 if i < 0, else 0
+// Note: In Go, int size is platform-dependent (32-bit or 64-bit)
+// We use a platform-independent implementation
 func BitwiseSign(i int) int {
-	// Arithmetic right shift propagates sign bit
-	return i >> 31
+	// Simple and portable: check if negative
+	if i < 0 {
+		return -1
+	}
+	return 0
 }
 
 // ApplySign applies sign symmetry

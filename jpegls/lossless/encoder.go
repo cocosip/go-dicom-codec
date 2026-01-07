@@ -247,6 +247,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 			q1, q2, q3 := enc.quantizer.ComputeContext(ra, rb, rc, rd)
 			qs := ComputeContextID(q1, q2, q3)
 
+
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
 				// Regular mode - matches CharLS do_regular
