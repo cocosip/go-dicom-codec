@@ -236,9 +236,13 @@ func (dec *Decoder) decodeScan(reader *common.Reader) ([]byte, error) {
 				return nil, err
 			}
 
-			if b2 == 0x00 {
-				// stuffed 0xFF
-				scanData.WriteByte(0xFF)
+			// JPEG-LS byte stuffing: after 0xFF, next byte has high bit = 0 (stuffed bit)
+			// If b2 < 0x80: scan data (write both bytes as-is, GolombReader handles bit stuffing)
+			// If b2 >= 0x80: marker
+			if b2 < 0x80 {
+				// Scan data with stuffed bit
+				scanData.WriteByte(b)
+				scanData.WriteByte(b2)
 				continue
 			}
 			if b2 == 0xD9 {

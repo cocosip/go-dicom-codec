@@ -5,20 +5,20 @@ import (
 	"io"
 )
 
-// GolombWriter writes Golomb-Rice encoded data
+// GolombWriter writes Golomb-Rice encoded data with JPEG-LS byte stuffing
 type GolombWriter struct {
-	w           io.Writer
-	buffer      uint32 // bit buffer
-	bufferSize  int    // number of bits in buffer
-	bytesPut    int    // number of bytes written
-	enableLimit bool   // enable byte-stuffing (0xFF -> 0xFF 0x00)
+	w            io.Writer
+	bitBuffer    uint32 // bit buffer (32 bits)
+	freeBitCount int    // number of free bits in buffer (32 initially)
+	isFFWritten  bool   // true if last byte written was 0xFF
+	bytesWritten int    // total bytes written
 }
 
 // NewGolombWriter creates a new Golomb-Rice writer
 func NewGolombWriter(w io.Writer) *GolombWriter {
 	return &GolombWriter{
-		w:           w,
-		enableLimit: true, // JPEG-LS uses byte-stuffing
+		w:            w,
+		freeBitCount: 32, // Start with 32 free bits
 	}
 }
 
@@ -51,71 +51,82 @@ func (gw *GolombWriter) WriteGolomb(value int, k int) error {
 
 // WriteBit writes a single bit
 func (gw *GolombWriter) WriteBit(bit int) error {
-	gw.buffer = (gw.buffer << 1) | uint32(bit&1)
-	gw.bufferSize++
-
-	if gw.bufferSize == 8 {
-		return gw.flushByte()
-	}
-	return nil
+	return gw.WriteBits(uint32(bit&1), 1)
 }
 
-// WriteBits writes n bits
-func (gw *GolombWriter) WriteBits(bits uint32, n int) error {
-	for n > 0 {
-		// How many bits can we fit in current byte
-		space := 8 - gw.bufferSize
-		if space > n {
-			space = n
+// WriteBits writes n bits (matches CharLS append_to_bit_stream)
+func (gw *GolombWriter) WriteBits(bits uint32, bitCount int) error {
+	gw.freeBitCount -= bitCount
+	if gw.freeBitCount >= 0 {
+		gw.bitBuffer |= bits << uint(gw.freeBitCount)
+	} else {
+		// Add as much bits in the remaining space as possible and flush
+		gw.bitBuffer |= bits >> uint(-gw.freeBitCount)
+		if err := gw.flush(); err != nil {
+			return err
 		}
 
-		// Extract the top 'space' bits
-		shift := uint(n - space)
-		value := (bits >> shift) & ((1 << uint(space)) - 1)
-
-		gw.buffer = (gw.buffer << uint(space)) | value
-		gw.bufferSize += space
-		n -= space
-
-		if gw.bufferSize == 8 {
-			if err := gw.flushByte(); err != nil {
+		// A second flush may be required if extra marker detect bits were needed
+		if gw.freeBitCount < 0 {
+			gw.bitBuffer |= bits >> uint(-gw.freeBitCount)
+			if err := gw.flush(); err != nil {
 				return err
 			}
 		}
+
+		gw.bitBuffer |= bits << uint(gw.freeBitCount)
 	}
 	return nil
 }
 
-// flushByte writes the buffered byte
-func (gw *GolombWriter) flushByte() error {
-	b := byte(gw.buffer)
-	gw.buffer = 0
-	gw.bufferSize = 0
+// flush writes buffered bits to output (matches CharLS flush())
+func (gw *GolombWriter) flush() error {
+	for i := 0; i < 4; i++ {
+		if gw.freeBitCount >= 32 {
+			gw.freeBitCount = 32
+			break
+		}
 
-	// Write byte
-	if _, err := gw.w.Write([]byte{b}); err != nil {
-		return err
-	}
-	gw.bytesPut++
+		var b byte
+		if gw.isFFWritten {
+			// JPEG-LS requirement (T.87, A.1): after 0xFF, insert a single 0 bit
+			// Write only 7 bits (top 7 bits of buffer)
+			b = byte(gw.bitBuffer >> 25)
+			gw.bitBuffer <<= 7
+			gw.freeBitCount += 7
+		} else {
+			// Normal case: write 8 bits
+			b = byte(gw.bitBuffer >> 24)
+			gw.bitBuffer <<= 8
+			gw.freeBitCount += 8
+		}
 
-	// Byte-stuffing: if byte is 0xFF, write 0x00 after it
-	if gw.enableLimit && b == 0xFF {
-		if _, err := gw.w.Write([]byte{0x00}); err != nil {
+		if _, err := gw.w.Write([]byte{b}); err != nil {
 			return err
 		}
-		gw.bytesPut++
+		gw.isFFWritten = (b == 0xFF)
+		gw.bytesWritten++
 	}
-
 	return nil
 }
 
-// Flush flushes remaining bits (pad with zeros)
+// Flush flushes remaining bits and completes the bitstream (matches CharLS end_scan())
 func (gw *GolombWriter) Flush() error {
-	if gw.bufferSize > 0 {
-		// Pad with zeros to make a full byte
-		gw.buffer <<= uint(8 - gw.bufferSize)
-		return gw.flushByte()
+	if err := gw.flush(); err != nil {
+		return err
 	}
+
+	// If a 0xFF was written, flush() will force one unset bit anyway
+	if gw.isFFWritten {
+		if err := gw.WriteBits(0, (gw.freeBitCount-1)%8); err != nil {
+			return err
+		}
+	}
+
+	if err := gw.flush(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -193,12 +204,13 @@ func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPe
 	return gw.WriteBits(uint32(value), quantizedBitsPerPixel)
 }
 
-// GolombReader reads Golomb-Rice encoded data
+// GolombReader reads Golomb-Rice encoded data with JPEG-LS byte stuffing
 type GolombReader struct {
-	r          io.Reader
-	buffer     uint32 // bit buffer
-	bufferSize int    // number of bits in buffer
-	bitsRead   int64  // debug counter
+	r            io.Reader
+	buffer       uint32 // bit buffer
+	bufferSize   int    // number of bits in buffer
+	bitsRead     int64  // debug counter
+	skipNextBit  bool   // true if we need to skip first bit of next byte
 }
 
 // NewGolombReader creates a new Golomb-Rice reader
@@ -321,9 +333,8 @@ func (gr *GolombReader) ReadBits(n int) (uint32, error) {
 	return result, nil
 }
 
-// fillBuffer reads next byte into buffer
-// Note: byte-stuffing (0xFF 0x00 -> 0xFF) is already handled by the decoder
-// before passing data to GolombReader, so we don't need to handle it here.
+// fillBuffer reads next byte into buffer with JPEG-LS byte stuffing handling
+// Matches CharLS fill_read_cache logic (decoder_strategy.h:242-250)
 func (gr *GolombReader) fillBuffer() error {
 	buf := make([]byte, 1)
 	_, err := io.ReadFull(gr.r, buf)
@@ -331,8 +342,27 @@ func (gr *GolombReader) fillBuffer() error {
 		return err
 	}
 
-	gr.buffer = uint32(buf[0])
-	gr.bufferSize = 8
+	b := buf[0]
+
+	// JPEG-LS byte stuffing (ISO/IEC 14495-1, A.1):
+	// After a 0xFF byte is written, a stuffed 0 bit is inserted
+	// This stuffed bit is the high bit of the next byte
+	// CharLS: read all 8 bits, add to cache, then decrement valid_bits if prev was 0xFF
+	if gr.skipNextBit {
+		// Previous byte was 0xFF, so skip the high bit of this byte
+		gr.buffer = uint32(b & 0x7F)  // Only keep lower 7 bits
+		gr.bufferSize = 7
+		gr.skipNextBit = false
+	} else {
+		// Normal byte: use all 8 bits
+		gr.buffer = uint32(b)
+		gr.bufferSize = 8
+	}
+
+	// If this byte is 0xFF, mark that we need to skip next byte's high bit
+	if b == 0xFF {
+		gr.skipNextBit = true
+	}
 
 	return nil
 }
