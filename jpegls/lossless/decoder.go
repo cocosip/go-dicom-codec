@@ -457,8 +457,15 @@ func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 		b = pixels[idx]
 	}
 
+	// c = top-left pixel (North-West)
+	// CharLS: when x=0, rc = previous_line_[-1], which gets updated at END of each row to current_line_[0]
+	// So for row y at x=0: previous_line_[-1] = current_line_[0] from row y-1 = pixels[y-1, 0]
 	if x > 0 && y > 0 {
 		idx := ((y-1)*dec.width+(x-1))*stride + offset
+		c = pixels[idx]
+	} else if x == 0 && y > 0 {
+		// Special case: x=0, y>0 - CharLS uses previous_line_[-1] = pixels[y-1, 0]
+		idx := ((y-1)*dec.width+0)*stride + offset
 		c = pixels[idx]
 	}
 

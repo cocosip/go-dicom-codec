@@ -52,7 +52,12 @@ func stats(path string) {
 }
 
 func main() {
-	stats(`D:\2.dcm`)
-	stats(`D:\222.dcm`)
-	stats(`D:\2_transcoded\2_jpeg_lossless_sv1.dcm`)
+	fmt.Println("Testing original file:")
+	stats(`D:\1.dcm`)
+
+	fmt.Println("\nTesting our JPEG-LS encoding:")
+	stats(`D:\1_transcoded\1_jpegls_lossless.dcm`)
+
+	fmt.Println("\nTesting fo-dicom JPEG-LS encoding:")
+	stats(`D:\11.dcm`)
 }

@@ -247,7 +247,6 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 			q1, q2, q3 := enc.quantizer.ComputeContext(ra, rb, rc, rd)
 			qs := ComputeContextID(q1, q2, q3)
 
-
 			// Check if we should use RUN mode (qs == 0 means flat region)
 			if qs != 0 {
 				// Regular mode - matches CharLS do_regular
@@ -425,8 +424,16 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 	}
 
 	// c = top-left pixel (North-West)
+	// CharLS: when x=0, rc = previous_line_[-1], which gets updated at END of each row to current_line_[0]
+	// So for row y at x=0: previous_line_[-1] = current_line_[0] from row y-1 = pixels[y-1, 0]
 	if x > 0 && y > 0 {
 		idx := ((y-1)*enc.width+(x-1))*stride + offset
+		if idx < len(pixels) {
+			c = pixels[idx]
+		}
+	} else if x == 0 && y > 0 {
+		// Special case: x=0, y>0 - CharLS uses previous_line_[-1] = pixels[y-1, 0]
+		idx := ((y-1)*enc.width+0)*stride + offset
 		if idx < len(pixels) {
 			c = pixels[idx]
 		}

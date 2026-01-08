@@ -112,25 +112,14 @@ func (gw *GolombWriter) flush() error {
 
 // Flush flushes remaining bits and completes the bitstream (matches CharLS end_scan())
 func (gw *GolombWriter) Flush() error {
-	// JPEG-LS spec (ISO/IEC 14495-1, A.1): pad remaining bits with 1s
-	// Calculate how many bits remain in the current byte
-	if gw.freeBitCount < 32 && gw.freeBitCount > 0 {
-		bitsInPartialByte := (32 - gw.freeBitCount) % 8
-		if bitsInPartialByte > 0 {
-			// Pad to complete the byte with 1s
-			padBits := 8 - bitsInPartialByte
-			padValue := (uint32(1) << uint(padBits)) - 1 // All 1s
-			if err := gw.WriteBits(padValue, padBits); err != nil {
-				return err
-			}
-		}
-	}
-
+	// CharLS end_scan logic - exactly matches encoder_strategy.h:79-91
+	// First flush: write out buffered data
 	if err := gw.flush(); err != nil {
 		return err
 	}
 
 	// If a 0xFF was written, flush() will force one unset bit anyway
+	// Add padding to align properly (CharLS line 86)
 	if gw.isFFWritten {
 		padBits := (gw.freeBitCount - 1) % 8
 		if err := gw.WriteBits(0, padBits); err != nil {
@@ -138,6 +127,7 @@ func (gw *GolombWriter) Flush() error {
 		}
 	}
 
+	// Second flush: write out any remaining data
 	if err := gw.flush(); err != nil {
 		return err
 	}
@@ -146,36 +136,52 @@ func (gw *GolombWriter) Flush() error {
 }
 
 // WriteUnary writes a unary code: n zeros followed by one 1
+// Matches CharLS append_to_bit_stream(1, n+1) which writes n zeros then one 1
 func (gw *GolombWriter) WriteUnary(n int) error {
-	// Write n zeros
-	for i := 0; i < n; i++ {
-		if err := gw.WriteBit(0); err != nil {
-			return err
-		}
-	}
-	// Write one 1
-	return gw.WriteBit(1)
+	// CharLS optimization: write all bits at once
+	// append_to_bit_stream(1, n+1) writes value 1 with n+1 bits
+	// This produces n zeros followed by one 1
+	return gw.WriteBits(1, n+1)
 }
 
 // WriteZeros writes n zero bits
 func (gw *GolombWriter) WriteZeros(n int) error {
-	for i := 0; i < n; i++ {
-		if err := gw.WriteBit(0); err != nil {
+	// Optimized: write zeros in chunks to avoid loop overhead
+	const maxChunk = 31 // Maximum safe bits per write
+	for n > 0 {
+		chunk := n
+		if chunk > maxChunk {
+			chunk = maxChunk
+		}
+		if err := gw.WriteBits(0, chunk); err != nil {
 			return err
 		}
+		n -= chunk
+	}
+	return nil
+}
+
+// WriteOnes writes n one bits (matches CharLS append_ones_to_bit_stream)
+func (gw *GolombWriter) WriteOnes(n int) error {
+	// CharLS: append_to_bit_stream((1U << length) - 1U, length)
+	// Creates a value with n one bits
+	const maxChunk = 31 // Maximum safe bits per write
+	for n > 0 {
+		chunk := n
+		if chunk > maxChunk {
+			chunk = maxChunk
+		}
+		value := (uint32(1) << uint(chunk)) - 1 // All ones
+		if err := gw.WriteBits(value, chunk); err != nil {
+			return err
+		}
+		n -= chunk
 	}
 	return nil
 }
 
 // EncodeMappedValue encodes a mapped error value with limit handling (CharLS encode_mapped_value).
 func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPerPixel int) error {
-	// Debug: log bit buffer state for pixel 1776
-	if mappedError == 3 && k == 10 {
-		fmt.Printf("EncodeMappedValue: k=%d, mappedError=%d\n", k, mappedError)
-		fmt.Printf("Bit buffer state: freeBitCount=%d, bitBuffer=0x%08X\n", gw.freeBitCount, gw.bitBuffer)
-		fmt.Printf("Bytes written so far: %d\n", gw.bytesWritten)
-	}
-
 	highBits := mappedError >> uint(k)
 
 	// Normal case: high_bits < limit - (qbpp + 1)
@@ -227,20 +233,49 @@ func (gw *GolombWriter) EncodeMappedValue(k, mappedError, limit, quantizedBitsPe
 }
 
 // GolombReader reads Golomb-Rice encoded data with JPEG-LS byte stuffing
+// Matches CharLS decoder_strategy implementation exactly
 type GolombReader struct {
-	r            io.Reader
-	buffer       uint32 // bit buffer
-	bufferSize   int    // number of bits in buffer
-	bitsRead     int64  // debug counter
-	skipNextBit  bool   // true if we need to skip first bit of next byte
+	readCache   uint64 // read_cache_ - bit buffer (64-bit like CharLS size_t on 64-bit systems)
+	validBits   int32  // valid_bits_ - number of valid bits in cache
+	data        []byte // scan data buffer
+	position    int    // position_ - current read position
+	endPosition int    // end_position_ - end of scan data
+	positionFF  int    // position_ff_ - position of next 0xFF byte (for optimization)
+	bitsRead    int64  // debug counter
 }
 
-// NewGolombReader creates a new Golomb-Rice reader
+const (
+	cacheTBitCount       = 64 // sizeof(uint64) * 8
+	maxReadableCacheBits = 56 // cacheTBitCount - 8
+	jpegMarkerStartByte  = 0xFF
+)
+
+// NewGolombReader creates a new Golomb-Rice reader matching CharLS
 func NewGolombReader(r io.Reader) *GolombReader {
-	return &GolombReader{
-		r:          r,
-		bufferSize: 0,
+	// Read all data upfront (CharLS operates on byte arrays)
+	data, err := io.ReadAll(r)
+	if err != nil {
+		// Shouldn't happen in normal usage
+		return &GolombReader{
+			data:        []byte{},
+			position:    0,
+			endPosition: 0,
+			positionFF:  0,
+			validBits:   0,
+		}
 	}
+
+	gr := &GolombReader{
+		data:        data,
+		position:    0,
+		endPosition: len(data),
+		validBits:   0,
+	}
+
+	// Initialize positionFF to first 0xFF or end
+	gr.findJPEGMarkerStartByte()
+
+	return gr
 }
 
 // DecodeValue reads a Golomb-encoded value with limit handling
@@ -317,74 +352,149 @@ func (gr *GolombReader) ReadGolomb(k int) (int, error) {
 }
 
 // ReadBit reads a single bit
+// Matches CharLS read_bit logic
 func (gr *GolombReader) ReadBit() (int, error) {
-	if gr.bufferSize == 0 {
-		if err := gr.fillBuffer(); err != nil {
-			return 0, fmt.Errorf("fillBuffer: %w", err)
+	if gr.validBits == 0 {
+		if err := gr.fillReadCache(); err != nil {
+			return 0, err
 		}
 	}
 
-	gr.bufferSize--
-	bit := int((gr.buffer >> uint(gr.bufferSize)) & 1)
+	gr.validBits--
+	// Extract top bit from cache
+	bit := int((gr.readCache >> uint(cacheTBitCount-1)) & 1)
+	gr.readCache <<= 1
 	gr.bitsRead++
 	return bit, nil
 }
 
-// ReadBits reads n bits
+// ReadBits reads n bits from the stream
+// Matches CharLS read_value logic
 func (gr *GolombReader) ReadBits(n int) (uint32, error) {
-	result := uint32(0)
-	for n > 0 {
-		if gr.bufferSize == 0 {
-			if err := gr.fillBuffer(); err != nil {
-				return 0, fmt.Errorf("fillBuffer: %w", err)
-			}
-		}
-
-		// Take as many bits as we can from current buffer
-		take := n
-		if take > gr.bufferSize {
-			take = gr.bufferSize
-		}
-
-		gr.bufferSize -= take
-		bits := (gr.buffer >> uint(gr.bufferSize)) & ((1 << uint(take)) - 1)
-		result = (result << uint(take)) | bits
-		n -= take
-		gr.bitsRead += int64(take)
+	if n == 0 {
+		return 0, nil
 	}
+
+	if n > 32 {
+		return 0, fmt.Errorf("cannot read more than 32 bits at once")
+	}
+
+	// Ensure we have enough bits in cache
+	if gr.validBits < int32(n) {
+		if err := gr.fillReadCache(); err != nil {
+			return 0, err
+		}
+		if gr.validBits < int32(n) {
+			// Debug: show state when we don't have enough bits
+			return 0, fmt.Errorf("not enough bits available: need %d, have %d (position=%d/%d)",
+				n, gr.validBits, gr.position, gr.endPosition)
+		}
+	}
+
+	// Extract top n bits from cache
+	result := uint32(gr.readCache >> uint(cacheTBitCount-n))
+	gr.readCache <<= uint(n)
+	gr.validBits -= int32(n)
+	gr.bitsRead += int64(n)
+
 	return result, nil
 }
 
-// fillBuffer reads next byte into buffer with JPEG-LS byte stuffing handling
-// Matches CharLS fill_read_cache logic (decoder_strategy.h:242-250)
-func (gr *GolombReader) fillBuffer() error {
-	buf := make([]byte, 1)
-	_, err := io.ReadFull(gr.r, buf)
-	if err != nil {
-		return err
+// findJPEGMarkerStartByte finds the next 0xFF byte for optimization
+// Matches CharLS find_jpeg_marker_start_byte (decoder_strategy.h:272-280)
+func (gr *GolombReader) findJPEGMarkerStartByte() {
+	// Search for next 0xFF byte from current position
+	for i := gr.position; i < gr.endPosition; i++ {
+		if gr.data[i] == jpegMarkerStartByte {
+			gr.positionFF = i
+			return
+		}
+	}
+	// No 0xFF found, set to end
+	gr.positionFF = gr.endPosition
+}
+
+// fillReadCacheOptimistic tries to read multiple bytes quickly when no 0xFF is nearby
+// Matches CharLS fill_read_cache_optimistic (decoder_strategy.h:257-270)
+func (gr *GolombReader) fillReadCacheOptimistic() bool {
+	// Fast path: if there's no 0xFF byte nearby, read multiple bytes at once
+	// positionFF points to next 0xFF, so we can safely read up to that point
+	if gr.position < gr.positionFF-7 { // Need at least 8 bytes safety margin
+		// Read up to 8 bytes (64 bits) at once
+		bytesToRead := (cacheTBitCount - int(gr.validBits)) / 8
+		if bytesToRead > gr.positionFF-gr.position {
+			bytesToRead = gr.positionFF - gr.position
+		}
+		if bytesToRead > 8 {
+			bytesToRead = 8
+		}
+
+		// Read bytes big-endian and add to cache
+		for i := 0; i < bytesToRead; i++ {
+			b := uint64(gr.data[gr.position])
+			gr.readCache |= b << (cacheTBitCount - 8 - int(gr.validBits))
+			gr.validBits += 8
+			gr.position++
+		}
+
+		return gr.validBits >= maxReadableCacheBits
+	}
+	return false
+}
+
+// fillReadCache fills the read cache with bits from the stream
+// Matches CharLS fill_read_cache (decoder_strategy.h:206-255)
+func (gr *GolombReader) fillReadCache() error {
+	// Try optimistic (fast) path first
+	if gr.fillReadCacheOptimistic() {
+		return nil
 	}
 
-	b := buf[0]
+	// Slow path: read byte by byte with marker detection and byte stuffing
+	for gr.validBits < maxReadableCacheBits {
+		// Check if we've reached end of data
+		if gr.position >= gr.endPosition {
+			if gr.validBits == 0 {
+				// Decoding expects at least some bits
+				return fmt.Errorf("unexpected end of data")
+			}
+			// Have some bits left, allow them to be consumed
+			return nil
+		}
 
-	// JPEG-LS byte stuffing (ISO/IEC 14495-1, A.1):
-	// After a 0xFF byte is written, a stuffed 0 bit is inserted
-	// This stuffed bit is the high bit of the next byte
-	// CharLS: read all 8 bits, add to cache, then decrement valid_bits if prev was 0xFF
-	if gr.skipNextBit {
-		// Previous byte was 0xFF, so skip the high bit of this byte
-		gr.buffer = uint32(b & 0x7F)  // Only keep lower 7 bits
-		gr.bufferSize = 7
-		gr.skipNextBit = false
-	} else {
-		// Normal byte: use all 8 bits
-		gr.buffer = uint32(b)
-		gr.bufferSize = 8
+		newByteValue := gr.data[gr.position]
+
+		// JPEG-LS marker detection: if 0xFF is followed by high bit set, it's a marker
+		if newByteValue == jpegMarkerStartByte &&
+			(gr.position == gr.endPosition-1 || (gr.data[gr.position+1]&0x80) != 0) {
+			// Marker detected
+			if gr.validBits <= 0 {
+				// Decoding expects at least some bits
+				return fmt.Errorf("marker encountered with no bits in cache")
+			}
+			// Stop reading but allow remaining bits to be consumed
+			return nil
+		}
+
+		// Add byte to cache (big-endian: new bits go to high end)
+		gr.readCache |= uint64(newByteValue) << (maxReadableCacheBits - int(gr.validBits))
+		gr.validBits += 8
+		gr.position++
+
+		// JPEG-LS byte stuffing: after 0xFF, decrement valid_bits
+		// The stuffed bit is the high bit of the NEXT byte
+		if newByteValue == jpegMarkerStartByte {
+			gr.validBits--
+		}
 	}
 
-	// If this byte is 0xFF, mark that we need to skip next byte's high bit
-	if b == 0xFF {
-		gr.skipNextBit = true
-	}
+	// Update positionFF to next 0xFF for optimization
+	gr.findJPEGMarkerStartByte()
 
 	return nil
+}
+
+// BitsRead returns the total number of bits read from the stream
+func (gr *GolombReader) BitsRead() int64 {
+	return gr.bitsRead
 }

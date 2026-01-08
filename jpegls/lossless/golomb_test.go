@@ -74,12 +74,12 @@ func TestGolombRoundTrip(t *testing.T) {
 				t.Fatalf("Flush failed: %v", err)
 			}
 
-			// Simulate decoder's byte-unstuffing (0xFF 0x00 -> 0xFF)
+			// Read back directly from stuffed data (CharLS way)
+			// The new GolombReader handles byte stuffing and markers internally
 			stuffedData := buf.Bytes()
-			unstuffedData := unstuffBytes(stuffedData)
 
 			// Read back
-			reader := NewGolombReader(bytes.NewReader(unstuffedData))
+			reader := NewGolombReader(bytes.NewReader(stuffedData))
 			decoded, err := reader.ReadGolomb(k)
 			if err != nil {
 				t.Fatalf("ReadGolomb(k=%d) failed: %v", k, err)
