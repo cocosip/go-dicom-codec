@@ -81,10 +81,7 @@ func (t Traits) correctPrediction(predicted int) int {
 
 // CorrectPrediction clamps prediction to [0, MaxVal] (CharLS correct_prediction).
 func (t Traits) CorrectPrediction(pred int) int {
-	// Fast path: Near=0 and Range is power-of-two -> wrap using mask (CharLS lossless_traits)
-	if t.Near == 0 && ((t.MaxVal+1)&t.MaxVal) == 0 {
-		return pred & t.MaxVal
-	}
+	// CharLS uses clamping, not wrapping, even for power-of-two ranges
 	if pred < 0 {
 		return 0
 	}

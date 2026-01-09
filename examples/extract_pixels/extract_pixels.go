@@ -1,0 +1,55 @@
+package main
+
+import (
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
+	"os"
+
+	"github.com/cocosip/go-dicom/pkg/dicom/parser"
+	"github.com/cocosip/go-dicom/pkg/imaging"
+
+	// Register codecs
+	_ "github.com/cocosip/go-dicom-codec/jpeg/baseline"
+	_ "github.com/cocosip/go-dicom-codec/jpeg/extended"
+	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless"
+	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
+	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
+	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
+	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+)
+
+func main() {
+	path := `D:\1.dcm`
+	outRaw := `D:\raw_pixels.bin`
+
+	res, err := parser.ParseFile(path, parser.WithReadOption(parser.ReadAll))
+	if err != nil {
+		panic(err)
+	}
+	ds := res.Dataset
+	pd, err := imaging.CreatePixelData(ds)
+	if err != nil {
+		panic(err)
+	}
+	frame0, err := pd.GetFrame(0)
+	if err != nil {
+		panic(err)
+	}
+
+	info := pd.Info
+	fmt.Printf("width=%d height=%d comps=%d bitsStored=%d bitsAllocated=%d pixelRep=%d frames=%d len=%d crc32=%08x\n",
+		info.Width, info.Height, info.SamplesPerPixel, info.BitsStored, info.BitsAllocated, info.PixelRepresentation, pd.FrameCount(), len(frame0), crc32.ChecksumIEEE(frame0))
+
+	fmt.Printf("first 10 samples (little endian): ")
+	for i := 0; i < 10 && (i*2+1) < len(frame0); i++ {
+		v := binary.LittleEndian.Uint16(frame0[i*2 : i*2+2])
+		fmt.Printf("%d ", v)
+	}
+	fmt.Println()
+
+	if err := os.WriteFile(outRaw, frame0, 0644); err != nil {
+		panic(err)
+	}
+	fmt.Println("wrote", outRaw)
+}
