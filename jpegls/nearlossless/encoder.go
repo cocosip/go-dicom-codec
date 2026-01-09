@@ -107,7 +107,7 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 // Format matches CharLS jpeg_stream_writer.cpp:96
 // SOF55 data: 6 (fixed header) + components*3 (component specs)
 func (enc *Encoder) writeSOF55(writer *common.Writer) error {
-	length := 6 + enc.components*3  // Fixed: was 8, should be 6
+	length := 6 + enc.components*3 // Fixed: was 8, should be 6
 	data := make([]byte, length)
 
 	data[0] = byte(enc.bitDepth)      // P = Sample precision
@@ -133,7 +133,7 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 // LSE segment data: 11 bytes = 1 (ID) + 5*2 (five uint16 values)
 func (enc *Encoder) writeLSE(writer *common.Writer) error {
 	data := make([]byte, 11) // ID (1) + MAXVAL (2) + T1 (2) + T2 (2) + T3 (2) + RESET (2)
-	data[0] = 1 // ID = 1 (preset parameters)
+	data[0] = 1              // ID = 1 (preset parameters)
 
 	// MAXVAL
 	maxVal := uint16(enc.maxVal)
@@ -212,6 +212,9 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 	stride := enc.components
 	offset := comp
 
+	prevFirstPrev := 0 // previous line first pixel
+	prevNeg1 := 0      // previous_line[-1] (line-2 first pixel)
+
 	for y := 0; y < enc.height; y++ {
 		// Reset run index at start of each line (JPEG-LS standard)
 		enc.runModeScanner.ResetLine()
@@ -227,7 +230,27 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 			sample := pixels[idx]
 
 			// Get neighbors
-			a, b, c, d := enc.getNeighbors(pixels, x, y, comp)
+			var a, b, c, d int
+			if x == 0 {
+				a = prevFirstPrev
+				b = 0
+				if y > 0 {
+					b = prevFirstPrev
+				}
+				c = prevNeg1
+				if y > 0 && enc.width > 1 {
+					rdIdx := ((y-1)*enc.width+(x+1))*stride + offset
+					if rdIdx < len(pixels) {
+						d = pixels[rdIdx]
+					} else {
+						d = b
+					}
+				} else {
+					d = b
+				}
+			} else {
+				a, b, c, d = enc.getNeighbors(pixels, x, y, comp)
+			}
 
 			// Compute context on ORIGINAL values (before quantization)
 			// This ensures thresholds work correctly
@@ -277,12 +300,19 @@ func (enc *Encoder) encodeComponent(gw *lossless.GolombWriter, pixels []int, com
 				x++
 			} else {
 				// RUN mode (qs == 0, flat region)
-				pixelsProcessed, err := enc.doRunMode(gw, pixels, x, y, comp)
+				pixelsProcessed, err := enc.doRunMode(gw, pixels, x, y, comp, a)
 				if err != nil {
 					return err
 				}
 				x += pixelsProcessed
 			}
+		}
+
+		firstIdx := (y*enc.width+0)*stride + offset
+		if firstIdx < len(pixels) {
+			nextFirst := pixels[firstIdx]
+			prevNeg1 = prevFirstPrev
+			prevFirstPrev = nextFirst
 		}
 	}
 
@@ -377,19 +407,12 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 }
 
 // doRunMode handles encoding in run mode (when qs == 0) for near-lossless
-func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, comp int) (int, error) {
+func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, comp int, ra int) (int, error) {
 	stride := enc.components
 	offset := comp
 
 	startIdx := y*enc.width + x
 	remainingInLine := enc.width - x
-
-	// Get ra (left pixel)
-	raIdx := (startIdx-1)*stride + offset
-	ra := 0
-	if raIdx >= 0 && raIdx < len(pixels) {
-		ra = pixels[raIdx]
-	}
 
 	// Count run length
 	// In JPEG-LS standard, RUN mode continues while |x - ra| <= NEAR

@@ -279,6 +279,9 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 	stride := dec.components
 	offset := comp
 
+	prevFirstPrev := 0 // previous line first pixel
+	prevNeg1 := 0      // previous_line[-1]
+
 	for y := 0; y < dec.height; y++ {
 		// Reset run index at start of each line (JPEG-LS standard)
 		dec.runModeScanner.ResetLine()
@@ -288,7 +291,27 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 			idx := (y*dec.width+x)*stride + offset
 
 			// Get neighbors
-			a, b, c, d := dec.getNeighbors(pixels, x, y, comp)
+			var a, b, c, d int
+			if x == 0 {
+				a = prevFirstPrev
+				b = 0
+				if y > 0 {
+					b = prevFirstPrev
+				}
+				c = prevNeg1
+				if y > 0 && dec.width > 1 {
+					rdIdx := ((y-1)*dec.width+(x+1))*stride + offset
+					if rdIdx < len(pixels) {
+						d = pixels[rdIdx]
+					} else {
+						d = b
+					}
+				} else {
+					d = b
+				}
+			} else {
+				a, b, c, d = dec.getNeighbors(pixels, x, y, comp)
+			}
 
 			// Compute context on ORIGINAL values (before quantization)
 			// This ensures thresholds work correctly
@@ -342,12 +365,19 @@ func (dec *Decoder) decodeComponent(gr *lossless.GolombReader, pixels []int, com
 				x++
 			} else {
 				// RUN mode (qs == 0, flat region)
-				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
+				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp, a)
 				if err != nil {
 					return fmt.Errorf("decode run mode error at x=%d y=%d comp=%d: %w", x, y, comp, err)
 				}
 				x += pixelsProcessed
 			}
+		}
+
+		firstIdx := (y*dec.width+0)*stride + offset
+		if firstIdx < len(pixels) {
+			nextFirst := pixels[firstIdx]
+			prevNeg1 = prevFirstPrev
+			prevFirstPrev = nextFirst
 		}
 	}
 
@@ -437,19 +467,12 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 }
 
 // doRunMode handles decoding in run mode (when qs == 0) for near-lossless
-func (dec *Decoder) doRunMode(gr *lossless.GolombReader, pixels []int, x, y, comp int) (int, error) {
+func (dec *Decoder) doRunMode(gr *lossless.GolombReader, pixels []int, x, y, comp int, ra int) (int, error) {
 	stride := dec.components
 	offset := comp
 
 	startIdx := y*dec.width + x
 	remainingInLine := dec.width - x
-
-	// Get ra (left pixel)
-	raIdx := (startIdx-1)*stride + offset
-	ra := 0
-	if raIdx >= 0 && raIdx < len(pixels) {
-		ra = pixels[raIdx]
-	}
 
 	// Decode run length using RunModeScanner
 	runLength, err := dec.runModeScanner.DecodeRunLength(gr, remainingInLine)

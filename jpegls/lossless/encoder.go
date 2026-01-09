@@ -222,6 +222,10 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 	stride := enc.components
 	offset := comp
 
+	// Track edge state to mimic CharLS current_line[-1]/previous_line[-1].
+	prevFirstPrev := 0 // first pixel of previous line (y-1), or 0 when y=0
+	prevNeg1 := 0      // stored value for rc when x=0: line (y-2) first pixel, or 0
+
 	// Process line by line
 	for y := 0; y < enc.height; y++ {
 		// Reset run index at start of each line (JPEG-LS standard)
@@ -238,7 +242,28 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 			x_sample := pixels[idx] // Current sample value
 
 			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
-			ra, rb, rc, rd := enc.getNeighbors(pixels, x, y, comp)
+			var ra, rb, rc, rd int
+			if x == 0 {
+				// CharLS: current_line[-1] = previous_line[0]; previous_line[-1] carries line-2 first pixel.
+				ra = prevFirstPrev
+				rb = 0
+				if y > 0 {
+					rb = prevFirstPrev
+				}
+				rc = prevNeg1
+				if y > 0 && enc.width > 1 {
+					rdIdx := ((y-1)*enc.width+(x+1))*stride + offset
+					if rdIdx < len(pixels) {
+						rd = pixels[rdIdx]
+					} else {
+						rd = rb
+					}
+				} else {
+					rd = rb
+				}
+			} else {
+				ra, rb, rc, rd = enc.getNeighbors(pixels, x, y, comp)
+			}
 
 			// Compute prediction using MED predictor
 			predicted := Predict(ra, rb, rc)
@@ -289,12 +314,20 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				x++
 			} else {
 				// RUN mode (qs == 0, flat region)
-				pixelsProcessed, err := enc.doRunMode(gw, pixels, x, y, comp)
+				pixelsProcessed, err := enc.doRunMode(gw, pixels, x, y, comp, ra)
 				if err != nil {
 					return err
 				}
 				x += pixelsProcessed
 			}
+		}
+
+		// Update edge state for next line
+		firstIdx := (y*enc.width+0)*stride + offset
+		if firstIdx < len(pixels) {
+			nextFirst := pixels[firstIdx]
+			prevNeg1 = prevFirstPrev
+			prevFirstPrev = nextFirst
 		}
 	}
 
@@ -321,19 +354,12 @@ func (enc *Encoder) encodeRunInterruptionPixel(gw *GolombWriter, x, ra, rb int) 
 
 // doRunMode handles encoding in run mode (when qs == 0)
 // This matches CharLS do_run_mode for encoder
-func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int) (int, error) {
+func (enc *Encoder) doRunMode(gw *GolombWriter, pixels []int, x, y, comp int, ra int) (int, error) {
 	stride := enc.components
 	offset := comp
 
 	startIdx := y*enc.width + x
 	remainingInLine := enc.width - x
-
-	// Get ra (left pixel) - CharLS: pixel_type ra{type_cur_x[-1]}
-	raIdx := (startIdx-1)*stride + offset
-	ra := 0
-	if raIdx >= 0 && raIdx < len(pixels) {
-		ra = pixels[raIdx]
-	}
 
 	// Count run length - CharLS: while (traits_.is_near(type_cur_x[run_length], ra))
 	runLength := 0
@@ -432,11 +458,8 @@ func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 			c = pixels[idx]
 		}
 	} else if x == 0 && y > 0 {
-		// Special case: x=0, y>0 - CharLS uses previous_line_[-1] = pixels[y-1, 0]
-		idx := ((y-1)*enc.width+0)*stride + offset
-		if idx < len(pixels) {
-			c = pixels[idx]
-		}
+		// Special case: x=0, y>0 - CharLS uses previous_line_[-1] which is kept at 0
+		c = 0
 	}
 
 	// d = top-right pixel (North-East)

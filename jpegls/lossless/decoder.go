@@ -277,6 +277,9 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 	stride := dec.components
 	offset := comp
 
+	prevFirstPrev := 0 // first pixel of previous line (y-1)
+	prevNeg1 := 0      // stored previous_line[-1] value (line y-2 first pixel)
+
 	// Process line by line
 	for y := 0; y < dec.height; y++ {
 		// Reset run index at start of each line (JPEG-LS standard)
@@ -287,7 +290,27 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 			idx := (y*dec.width+x)*stride + offset
 
 			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
-			ra, rb, rc, rd := dec.getNeighbors(pixels, x, y, comp)
+			var ra, rb, rc, rd int
+			if x == 0 {
+				ra = prevFirstPrev
+				rb = 0
+				if y > 0 {
+					rb = prevFirstPrev
+				}
+				rc = prevNeg1
+				if y > 0 && dec.width > 1 {
+					rdIdx := ((y-1)*dec.width+(x+1))*stride + offset
+					if rdIdx < len(pixels) {
+						rd = pixels[rdIdx]
+					} else {
+						rd = rb
+					}
+				} else {
+					rd = rb
+				}
+			} else {
+				ra, rb, rc, rd = dec.getNeighbors(pixels, x, y, comp)
+			}
 
 			// Compute prediction
 			predicted := Predict(ra, rb, rc)
@@ -340,12 +363,19 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 				x++
 			} else {
 				// RUN mode (qs == 0, flat region)
-				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp)
+				pixelsProcessed, err := dec.doRunMode(gr, pixels, x, y, comp, ra)
 				if err != nil {
 					return fmt.Errorf("decode run at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
 				}
 				x += pixelsProcessed
 			}
+		}
+
+		firstIdx := (y*dec.width+0)*stride + offset
+		if firstIdx < len(pixels) {
+			nextFirst := pixels[firstIdx]
+			prevNeg1 = prevFirstPrev
+			prevFirstPrev = nextFirst
 		}
 	}
 
@@ -374,19 +404,12 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *GolombReader, ra, rb int) (in
 }
 
 // doRunMode handles decoding in run mode (when qs == 0) - CharLS: do_run_mode for decoder
-func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int) (int, error) {
+func (dec *Decoder) doRunMode(gr *GolombReader, pixels []int, x, y, comp int, ra int) (int, error) {
 	stride := dec.components
 	offset := comp
 
 	startIdx := y*dec.width + x
 	remainingInLine := dec.width - x
-
-	// Get ra (left pixel) - CharLS: pixel_type ra{current_line_[start_index - 1]}
-	raIdx := (startIdx-1)*stride + offset
-	ra := 0
-	if raIdx >= 0 && raIdx < len(pixels) {
-		ra = pixels[raIdx]
-	}
 
 	// Decode run length using RunModeScanner - CharLS: decode_run_pixels(ra, current_line_ + start_index, width_ - start_index)
 	runLength, err := dec.runModeScanner.DecodeRunLength(gr, remainingInLine)
@@ -464,9 +487,8 @@ func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, i
 		idx := ((y-1)*dec.width+(x-1))*stride + offset
 		c = pixels[idx]
 	} else if x == 0 && y > 0 {
-		// Special case: x=0, y>0 - CharLS uses previous_line_[-1] = pixels[y-1, 0]
-		idx := ((y-1)*dec.width+0)*stride + offset
-		c = pixels[idx]
+		// Special case: x=0, y>0 - CharLS keeps previous_line_[-1] at 0
+		c = 0
 	}
 
 	// d = top-right pixel (North-East)
