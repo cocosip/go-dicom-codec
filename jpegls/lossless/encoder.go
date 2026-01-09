@@ -14,6 +14,8 @@ type Encoder struct {
 	height     int
 	components int
 	bitDepth   int
+	isSigned   bool
+	minVal     int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 
 	traits         Traits
@@ -24,17 +26,23 @@ type Encoder struct {
 
 // NewEncoder creates a new JPEG-LS encoder
 func NewEncoder(width, height, components, bitDepth int) *Encoder {
-	maxVal := (1 << uint(bitDepth)) - 1
-	traits := NewTraits(maxVal, 0, 64)
+	return NewEncoderWithPixelRep(width, height, components, bitDepth, false)
+}
+
+// NewEncoderWithPixelRep creates a new JPEG-LS encoder with explicit pixel representation (signed/unsigned).
+func NewEncoderWithPixelRep(width, height, components, bitDepth int, isSigned bool) *Encoder {
+	traits := NewTraitsWithPixelRep(bitDepth, 0, 64, isSigned)
 
 	return &Encoder{
 		width:          width,
 		height:         height,
 		components:     components,
 		bitDepth:       bitDepth,
-		maxVal:         maxVal,
+		isSigned:       isSigned,
+		minVal:         traits.MinVal,
+		maxVal:         traits.MaxVal,
 		traits:         traits,
-		contextTable:   NewContextTable(maxVal, 0, traits.Reset),
+		contextTable:   NewContextTable(traits.Range-1, 0, traits.Reset),
 		quantizer:      NewGradientQuantizer(traits.T1, traits.T2, traits.T3, traits.Near),
 		runModeScanner: NewRunModeScanner(traits),
 	}
@@ -44,6 +52,11 @@ func NewEncoder(width, height, components, bitDepth int) *Encoder {
 // pixelData: raw pixel values (interleaved for multi-component)
 // Returns: JPEG-LS compressed data
 func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, error) {
+	return EncodeWithPixelRep(pixelData, width, height, components, bitDepth, false)
+}
+
+// EncodeWithPixelRep encodes pixel data to JPEG-LS format with explicit pixel representation (signed/unsigned).
+func EncodeWithPixelRep(pixelData []byte, width, height, components, bitDepth int, isSigned bool) ([]byte, error) {
 	if width <= 0 || height <= 0 {
 		return nil, common.ErrInvalidDimensions
 	}
@@ -56,7 +69,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		return nil, fmt.Errorf("invalid bit depth: %d (must be 2-16)", bitDepth)
 	}
 
-	encoder := NewEncoder(width, height, components, bitDepth)
+	encoder := NewEncoderWithPixelRep(width, height, components, bitDepth, isSigned)
 	return encoder.encode(pixelData)
 }
 
@@ -487,7 +500,11 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 		// 8-bit or less: one byte per sample
 		pixels := make([]int, len(pixelData))
 		for i, b := range pixelData {
-			pixels[i] = int(b)
+			if enc.isSigned {
+				pixels[i] = int(int8(b))
+			} else {
+				pixels[i] = int(b)
+			}
 		}
 		return pixels
 	}
@@ -498,13 +515,14 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	pixels := make([]int, numPixels)
 	for i := 0; i < numPixels; i++ {
 		idx := i * 2
-		// Read as little-endian uint16 first
-		val := uint16(pixelData[idx]) | (uint16(pixelData[idx+1]) << 8)
-
-		// JPEG-LS uses unsigned values [0, MAXVAL]
-		// The data is already in the correct unsigned representation
-		// (signed values are stored in two's complement, which maps correctly to unsigned range)
-		pixels[i] = int(val)
+		if enc.isSigned {
+			val := int16(pixelData[idx]) | (int16(pixelData[idx+1]) << 8)
+			pixels[i] = int(val)
+		} else {
+			// Read as little-endian uint16 first
+			val := uint16(pixelData[idx]) | (uint16(pixelData[idx+1]) << 8)
+			pixels[i] = int(val)
+		}
 	}
 	return pixels
 }

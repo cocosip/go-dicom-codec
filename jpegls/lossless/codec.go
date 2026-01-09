@@ -72,12 +72,13 @@ func (c *JPEGLSLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixel
 		// DO NOT shift pixel data for lossless encoding.
 
 		// Encode using the JPEG-LS encoder
-		jpegData, err := Encode(
+		jpegData, err := EncodeWithPixelRep(
 			frameData, // No adjustment needed
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
 			int(frameInfo.BitsStored),
+			frameInfo.PixelRepresentation != 0,
 		)
 		if err != nil {
 			return fmt.Errorf("JPEG-LS Lossless encode failed for frame %d: %w", frameIndex, err)
@@ -118,7 +119,7 @@ func (c *JPEGLSLosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixel
 		}
 
 		// Decode using the JPEG-LS decoder
-		pixelData, width, height, _, _, err := Decode(frameData)
+		pixelData, width, height, _, _, err := DecodeWithPixelRep(frameData, frameInfo.PixelRepresentation != 0)
 		if err != nil {
 			return fmt.Errorf("JPEG-LS Lossless decode failed for frame %d: %w", frameIndex, err)
 		}

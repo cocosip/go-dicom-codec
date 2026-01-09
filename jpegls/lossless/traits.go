@@ -2,30 +2,46 @@ package lossless
 
 // Traits captures derived JPEG-LS parameters (CharLS defaults).
 type Traits struct {
-	MaxVal int
-	Near   int
-	Range  int
-	Qbpp   int
-	Limit  int
-	Reset  int
-	T1     int
-	T2     int
-	T3     int
+	// MinVal/MaxVal define the valid sample domain. For signed pixels MinVal is negative.
+	MinVal   int
+	MaxVal   int
+	Near     int
+	Range    int
+	Qbpp     int
+	Limit    int
+	Reset    int
+	T1       int
+	T2       int
+	T3       int
+	IsSigned bool
 }
 
-// NewTraits computes derived parameters using ComputeCodingParameters (Annex C defaults).
+// NewTraits computes derived parameters using ComputeCodingParameters (Annex C defaults) for unsigned pixels.
 func NewTraits(maxVal, near, reset int) Traits {
-	params := ComputeCodingParameters(maxVal, near, reset)
+	// Keep existing API: assume unsigned with MaxVal provided.
+	params := ComputeCodingParametersWithPixelRep(bitsLen(maxVal+1), near, reset, false)
+	return traitsFromParams(params, near, false)
+}
+
+// NewTraitsWithPixelRep computes derived parameters with explicit pixel representation.
+func NewTraitsWithPixelRep(bitDepth, near, reset int, isSigned bool) Traits {
+	params := ComputeCodingParametersWithPixelRep(bitDepth, near, reset, isSigned)
+	return traitsFromParams(params, near, isSigned)
+}
+
+func traitsFromParams(params CodingParameters, near int, isSigned bool) Traits {
 	return Traits{
-		MaxVal: maxVal,
-		Near:   near,
-		Range:  params.Range,
-		Qbpp:   params.Qbpp,
-		Limit:  params.Limit,
-		Reset:  params.Reset,
-		T1:     params.T1,
-		T2:     params.T2,
-		T3:     params.T3,
+		MinVal:   params.MinVal,
+		MaxVal:   params.MaxVal,
+		Near:     near,
+		Range:    params.Range,
+		Qbpp:     params.Qbpp,
+		Limit:    params.Limit,
+		Reset:    params.Reset,
+		T1:       params.T1,
+		T2:       params.T2,
+		T3:       params.T3,
+		IsSigned: isSigned,
 	}
 }
 
@@ -44,6 +60,10 @@ func (t Traits) fixReconstructedValue(value int) int {
 	// Lossless power-of-two optimization
 	rangeIsPowerOfTwo := (t.MaxVal+1)&t.MaxVal == 0
 	if t.Near == 0 && rangeIsPowerOfTwo {
+		// For signed data, wrap around the full Range then shift back to signed domain.
+		if t.IsSigned {
+			return ((value - t.MinVal) & (t.Range - 1)) + t.MinVal
+		}
 		return value & t.MaxVal
 	}
 
@@ -67,12 +87,22 @@ func (t Traits) dequantize(errorValue int) int {
 // correctPrediction matches CharLS correct_prediction (default_traits.h:83-89)
 func (t Traits) correctPrediction(predicted int) int {
 	// if ((predicted & maximum_sample_value) == predicted) return predicted;
-	if (predicted & t.MaxVal) == predicted {
+	if !t.IsSigned && (predicted&t.MaxVal) == predicted {
 		return predicted
 	}
 
 	// return (~(predicted >> (int32_t_bit_count - 1))) & maximum_sample_value;
 	// Handles negative by returning 0, and > maxVal by returning maxVal
+	if t.IsSigned {
+		if predicted < t.MinVal {
+			return t.MinVal
+		}
+		if predicted > t.MaxVal {
+			return t.MaxVal
+		}
+		return predicted
+	}
+
 	if predicted < 0 {
 		return 0
 	}
@@ -83,7 +113,20 @@ func (t Traits) correctPrediction(predicted int) int {
 func (t Traits) CorrectPrediction(pred int) int {
 	// Fast path: Near=0 and Range is power-of-two -> wrap using mask (CharLS lossless_traits)
 	if t.Near == 0 && ((t.MaxVal+1)&t.MaxVal) == 0 {
+		if t.IsSigned {
+			// Wrap around full range in signed domain
+			return ((pred - t.MinVal) & (t.Range - 1)) + t.MinVal
+		}
 		return pred & t.MaxVal
+	}
+	if t.IsSigned {
+		if pred < t.MinVal {
+			return t.MinVal
+		}
+		if pred > t.MaxVal {
+			return t.MaxVal
+		}
+		return pred
 	}
 	if pred < 0 {
 		return 0

@@ -15,6 +15,8 @@ type Decoder struct {
 	height     int
 	components int
 	bitDepth   int
+	isSigned   bool
+	minVal     int
 	maxVal     int
 	traits     Traits
 
@@ -39,7 +41,13 @@ func (dec *Decoder) computeErrorValue(delta int) int {
 // Decode decodes JPEG-LS compressed data
 // Returns: pixelData, width, height, components, bitDepth, error
 func Decode(jpegLSData []byte) ([]byte, int, int, int, int, error) {
+	return DecodeWithPixelRep(jpegLSData, false)
+}
+
+// DecodeWithPixelRep decodes JPEG-LS compressed data with explicit pixel representation (signed/unsigned).
+func DecodeWithPixelRep(jpegLSData []byte, isSigned bool) ([]byte, int, int, int, int, error) {
 	decoder := NewDecoder()
+	decoder.isSigned = isSigned
 	return decoder.decode(jpegLSData)
 }
 
@@ -132,8 +140,9 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 		return common.ErrInvalidComponents
 	}
 
-	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
-	dec.traits = NewTraits(dec.maxVal, 0, 64)
+	dec.traits = NewTraitsWithPixelRep(dec.bitDepth, 0, 64, dec.isSigned)
+	dec.maxVal = dec.traits.MaxVal
+	dec.minVal = dec.traits.MinVal
 	dec.initCodingParameters(0, 0, 0)
 
 	return nil
@@ -141,14 +150,14 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 
 // initCodingParameters recomputes derived parameters and contexts (legacy/bitDepth-based).
 func (dec *Decoder) initCodingParameters(t1, t2, t3 int) {
-	params := ComputeCodingParameters(dec.maxVal, 0, dec.traits.Reset)
+	params := ComputeCodingParametersWithPixelRep(dec.bitDepth, dec.traits.Near, dec.traits.Reset, dec.isSigned)
 	if t1 == 0 || t2 == 0 || t3 == 0 {
 		t1, t2, t3 = params.T1, params.T2, params.T3
 	}
 
-	dec.traits = NewTraits(dec.maxVal, 0, params.Reset)
+	dec.traits = NewTraitsWithPixelRep(dec.bitDepth, dec.traits.Near, params.Reset, dec.isSigned)
 	dec.quantizer = NewGradientQuantizer(t1, t2, t3, dec.traits.Near)
-	dec.contextTable = NewContextTable(dec.maxVal, 0, dec.traits.Reset)
+	dec.contextTable = NewContextTable(dec.traits.Range-1, dec.traits.Near, dec.traits.Reset)
 	dec.runModeScanner = NewRunModeScanner(dec.traits)
 }
 
@@ -512,12 +521,16 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 		// 8-bit: one byte per sample
 		pixelData := make([]byte, len(pixels))
 		for i, val := range pixels {
-			if val < 0 {
-				val = 0
+			if val < dec.minVal {
+				val = dec.minVal
 			} else if val > dec.maxVal {
 				val = dec.maxVal
 			}
-			pixelData[i] = byte(val)
+			if dec.isSigned {
+				pixelData[i] = byte(int8(val))
+			} else {
+				pixelData[i] = byte(val)
+			}
 		}
 		return pixelData
 	}
@@ -525,14 +538,28 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 	// 9-16 bit: two bytes per sample (little-endian)
 	pixelData := make([]byte, len(pixels)*2)
 	for i, val := range pixels {
-		if val < 0 {
-			val = 0
-		} else if val > dec.maxVal {
-			val = dec.maxVal
+		if dec.isSigned {
+			// Clamp to signed range
+			if val > dec.maxVal {
+				val = dec.maxVal
+			} else if val < dec.minVal {
+				val = dec.minVal
+			}
+			u := uint16(int16(val))
+			idx := i * 2
+			pixelData[idx] = byte(u & 0xFF)
+			pixelData[idx+1] = byte((u >> 8) & 0xFF)
+		} else {
+			if val < dec.minVal {
+				val = dec.minVal
+			} else if val > dec.maxVal {
+				val = dec.maxVal
+			}
+			idx := i * 2
+			unsignedVal := val - dec.minVal
+			pixelData[idx] = byte(unsignedVal & 0xFF)
+			pixelData[idx+1] = byte((unsignedVal >> 8) & 0xFF)
 		}
-		idx := i * 2
-		pixelData[idx] = byte(val & 0xFF)
-		pixelData[idx+1] = byte((val >> 8) & 0xFF)
 	}
 	return pixelData
 }
