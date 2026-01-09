@@ -16,9 +16,7 @@ type Decoder struct {
 	height     int
 	components int
 	bitDepth   int
-	isSigned   bool
 	maxVal     int
-	minVal     int
 	near       int // NEAR parameter
 	t1         int
 	t2         int
@@ -38,13 +36,6 @@ func NewDecoder() *Decoder {
 // Decode decodes JPEG-LS near-lossless compressed data
 func Decode(jpegLSData []byte) ([]byte, int, int, int, int, int, error) {
 	decoder := NewDecoder()
-	return decoder.decode(jpegLSData)
-}
-
-// DecodeWithPixelRep decodes JPEG-LS near-lossless data with explicit pixel representation (signed/unsigned).
-func DecodeWithPixelRep(jpegLSData []byte, isSigned bool) ([]byte, int, int, int, int, int, error) {
-	decoder := NewDecoder()
-	decoder.isSigned = isSigned
 	return decoder.decode(jpegLSData)
 }
 
@@ -136,11 +127,8 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 		return common.ErrInvalidComponents
 	}
 
-	reset := 64
-	dec.traits = lossless.NewTraitsWithPixelRep(dec.bitDepth, 0, reset, dec.isSigned)
-	dec.maxVal = dec.traits.MaxVal
-	dec.minVal = dec.traits.MinVal
-	dec.traits.Reset = reset
+	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
+	dec.traits.Reset = 64
 
 	return nil
 }
@@ -185,7 +173,7 @@ func (dec *Decoder) applyCodingParameters() {
 	if dec.traits.Reset > 0 {
 		reset = dec.traits.Reset
 	}
-	params := lossless.ComputeCodingParametersWithPixelRep(dec.bitDepth, dec.near, reset, dec.isSigned)
+	params := lossless.ComputeCodingParameters(dec.maxVal, dec.near, reset)
 	if dec.t1 > 0 {
 		params.T1 = dec.t1
 	}
@@ -196,11 +184,9 @@ func (dec *Decoder) applyCodingParameters() {
 		params.T3 = dec.t3
 	}
 
-	dec.traits = lossless.NewTraitsWithPixelRep(dec.bitDepth, dec.near, params.Reset, dec.isSigned)
-	dec.maxVal = dec.traits.MaxVal
-	dec.minVal = dec.traits.MinVal
+	dec.traits = lossless.NewTraits(dec.maxVal, dec.near, params.Reset)
 	dec.quantizer = lossless.NewGradientQuantizer(params.T1, params.T2, params.T3, dec.near)
-	dec.contextTable = lossless.NewContextTable(dec.traits.Range-1, dec.near, params.Reset)
+	dec.contextTable = lossless.NewContextTable(dec.maxVal, dec.near, params.Reset)
 	dec.runModeScanner = lossless.NewRunModeScanner(dec.traits)
 }
 
@@ -406,9 +392,8 @@ func (dec *Decoder) correctPrediction(predicted int) int {
 
 // getNeighbors gets neighboring pixels following CharLS edge handling
 // CharLS initializes edge pixels as:
-//
-//	current_line_[-1] = previous_line_[0]  (left edge = pixel above)
-//	previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
+//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := dec.components
 	offset := comp
@@ -457,37 +442,26 @@ func (dec *Decoder) integersToPixels(pixels []int) []byte {
 	if dec.bitDepth <= 8 {
 		pixelData := make([]byte, len(pixels))
 		for i, val := range pixels {
-			if val < dec.minVal {
-				val = dec.minVal
+			if val < 0 {
+				val = 0
 			} else if val > dec.maxVal {
 				val = dec.maxVal
 			}
-			if dec.isSigned {
-				pixelData[i] = byte(int8(val))
-			} else {
-				pixelData[i] = byte(val)
-			}
+			pixelData[i] = byte(val)
 		}
 		return pixelData
 	}
 
 	pixelData := make([]byte, len(pixels)*2)
 	for i, val := range pixels {
-		if val < dec.minVal {
-			val = dec.minVal
+		if val < 0 {
+			val = 0
 		} else if val > dec.maxVal {
 			val = dec.maxVal
 		}
 		idx := i * 2
-		if dec.isSigned {
-			u := uint16(int16(val))
-			pixelData[idx] = byte(u & 0xFF)
-			pixelData[idx+1] = byte((u >> 8) & 0xFF)
-		} else {
-			unsignedVal := val - dec.minVal
-			pixelData[idx] = byte(unsignedVal & 0xFF)
-			pixelData[idx+1] = byte((unsignedVal >> 8) & 0xFF)
-		}
+		pixelData[idx] = byte(val & 0xFF)
+		pixelData[idx+1] = byte((val >> 8) & 0xFF)
 	}
 	return pixelData
 }

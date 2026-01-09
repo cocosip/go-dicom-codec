@@ -101,14 +101,13 @@ func (c *JPEGLSNearLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newP
 		}
 
 		// Encode using the JPEG-LS near-lossless encoder
-		jpegData, err := EncodeWithPixelRep(
+		jpegData, err := Encode(
 			frameData,
 			int(frameInfo.Width),
 			int(frameInfo.Height),
 			int(frameInfo.SamplesPerPixel),
 			int(frameInfo.BitsStored),
 			near,
-			frameInfo.PixelRepresentation != 0,
 		)
 		if err != nil {
 			return fmt.Errorf("JPEG-LS Near-Lossless encode failed for frame %d: %w", frameIndex, err)
@@ -149,7 +148,7 @@ func (c *JPEGLSNearLosslessCodec) Decode(oldPixelData imagetypes.PixelData, newP
 		}
 
 		// Decode using the JPEG-LS near-lossless decoder
-		pixelData, width, height, _, _, near, err := DecodeWithPixelRep(frameData, frameInfo.PixelRepresentation != 0)
+		pixelData, width, height, _, _, near, err := Decode(frameData)
 		if err != nil {
 			return fmt.Errorf("JPEG-LS Near-Lossless decode failed for frame %d: %w", frameIndex, err)
 		}

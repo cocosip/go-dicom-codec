@@ -74,8 +74,8 @@ func TestEncodeDecode8BitRGB(t *testing.T) {
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			idx := (y*width + x) * components
-			pixelData[idx+0] = byte((x * 8) % 256)       // R
-			pixelData[idx+1] = byte((y * 8) % 256)       // G
+			pixelData[idx+0] = byte((x * 8) % 256)      // R
+			pixelData[idx+1] = byte((y * 8) % 256)      // G
 			pixelData[idx+2] = byte(((x + y) * 4) % 256) // B
 		}
 	}
@@ -374,45 +374,5 @@ func TestLargeImage16Bit(t *testing.T) {
 			errors, width*height, errorPercent, maxError, firstError)
 	} else {
 		t.Logf("Large image: Perfect lossless reconstruction! (0 errors)")
-	}
-}
-
-// TestEncodeDecode16BitSigned ensures signed pixel representation round-trips.
-func TestEncodeDecode16BitSigned(t *testing.T) {
-	width, height := 8, 8
-	bitDepth := 16
-	components := 1
-	values := []int16{-32768, -12345, -1, 0, 1, 1234, 20000, -20000}
-
-	pixelData := make([]byte, width*height*components*2)
-	for i := 0; i < width*height*components; i++ {
-		v := values[i%len(values)]
-		u := uint16(v)
-		pixelData[2*i] = byte(u & 0xFF)
-		pixelData[2*i+1] = byte(u >> 8)
-	}
-
-	encoded, err := EncodeWithPixelRep(pixelData, width, height, components, bitDepth, true)
-	if err != nil {
-		t.Fatalf("EncodeWithPixelRep failed: %v", err)
-	}
-
-	decoded, w, h, c, bd, err := DecodeWithPixelRep(encoded, true)
-	if err != nil {
-		t.Fatalf("DecodeWithPixelRep failed: %v", err)
-	}
-
-	if w != width || h != height || c != components || bd != bitDepth {
-		t.Fatalf("decoded frame info mismatch: got %dx%d c=%d bd=%d", w, h, c, bd)
-	}
-
-	if len(decoded) != len(pixelData) {
-		t.Fatalf("decoded length mismatch: got %d want %d", len(decoded), len(pixelData))
-	}
-
-	for i := range pixelData {
-		if decoded[i] != pixelData[i] {
-			t.Fatalf("pixel mismatch at %d: got %d want %d", i, decoded[i], pixelData[i])
-		}
 	}
 }

@@ -15,8 +15,6 @@ type Encoder struct {
 	height     int
 	components int
 	bitDepth   int
-	isSigned   bool
-	minVal     int
 	maxVal     int // Maximum sample value (2^bitDepth - 1)
 	near       int // NEAR parameter (maximum error bound)
 
@@ -28,24 +26,18 @@ type Encoder struct {
 
 // NewEncoder creates a new JPEG-LS near-lossless encoder
 func NewEncoder(width, height, components, bitDepth, near int) *Encoder {
-	return NewEncoderWithPixelRep(width, height, components, bitDepth, near, false)
-}
-
-// NewEncoderWithPixelRep creates a new JPEG-LS near-lossless encoder with explicit pixel representation.
-func NewEncoderWithPixelRep(width, height, components, bitDepth, near int, isSigned bool) *Encoder {
-	traits := lossless.NewTraitsWithPixelRep(bitDepth, near, 64, isSigned)
+	maxVal := (1 << uint(bitDepth)) - 1
+	traits := lossless.NewTraits(maxVal, near, 64)
 
 	return &Encoder{
 		width:          width,
 		height:         height,
 		components:     components,
 		bitDepth:       bitDepth,
-		isSigned:       isSigned,
-		minVal:         traits.MinVal,
-		maxVal:         traits.MaxVal,
+		maxVal:         maxVal,
 		near:           near,
 		traits:         traits,
-		contextTable:   lossless.NewContextTable(traits.Range-1, near, traits.Reset),
+		contextTable:   lossless.NewContextTable(maxVal, near, traits.Reset),
 		quantizer:      lossless.NewGradientQuantizer(traits.T1, traits.T2, traits.T3, near),
 		runModeScanner: lossless.NewRunModeScanner(traits),
 	}
@@ -53,11 +45,6 @@ func NewEncoderWithPixelRep(width, height, components, bitDepth, near int, isSig
 
 // Encode encodes pixel data to JPEG-LS near-lossless format
 func Encode(pixelData []byte, width, height, components, bitDepth, near int) ([]byte, error) {
-	return EncodeWithPixelRep(pixelData, width, height, components, bitDepth, near, false)
-}
-
-// EncodeWithPixelRep encodes with explicit pixel representation (signed/unsigned).
-func EncodeWithPixelRep(pixelData []byte, width, height, components, bitDepth, near int, isSigned bool) ([]byte, error) {
 	if width <= 0 || height <= 0 {
 		return nil, common.ErrInvalidDimensions
 	}
@@ -74,7 +61,7 @@ func EncodeWithPixelRep(pixelData []byte, width, height, components, bitDepth, n
 		return nil, fmt.Errorf("invalid NEAR parameter: %d (must be 0-255)", near)
 	}
 
-	encoder := NewEncoderWithPixelRep(width, height, components, bitDepth, near, isSigned)
+	encoder := NewEncoder(width, height, components, bitDepth, near)
 	return encoder.encode(pixelData)
 }
 
@@ -346,9 +333,8 @@ func (enc *Encoder) correctPrediction(predicted int) int {
 
 // getNeighbors gets neighboring pixels following CharLS edge handling
 // CharLS initializes edge pixels as:
-//
-//	current_line_[-1] = previous_line_[0]  (left edge = pixel above)
-//	previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
+//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := enc.components
 	offset := comp
@@ -405,11 +391,7 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	if enc.bitDepth <= 8 {
 		pixels := make([]int, len(pixelData))
 		for i, b := range pixelData {
-			if enc.isSigned {
-				pixels[i] = int(int8(b))
-			} else {
-				pixels[i] = int(b)
-			}
+			pixels[i] = int(b)
 		}
 		return pixels
 	}
@@ -418,13 +400,8 @@ func (enc *Encoder) pixelsToIntegers(pixelData []byte) []int {
 	pixels := make([]int, numPixels)
 	for i := 0; i < numPixels; i++ {
 		idx := i * 2
-		if enc.isSigned {
-			val := int16(pixelData[idx]) | (int16(pixelData[idx+1]) << 8)
-			pixels[i] = int(val)
-		} else {
-			val := int(pixelData[idx]) | (int(pixelData[idx+1]) << 8)
-			pixels[i] = val
-		}
+		val := int(pixelData[idx]) | (int(pixelData[idx+1]) << 8)
+		pixels[i] = val
 	}
 	return pixels
 }

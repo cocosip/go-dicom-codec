@@ -165,7 +165,6 @@ func (ct *ContextTable) GetContext(q1, q2, q3 int) *Context {
 // CodingParameters capture derived values needed for JPEG-LS coding.
 type CodingParameters struct {
 	MaxVal int
-	MinVal int
 	Near   int
 	Range  int
 	Qbpp   int
@@ -176,29 +175,27 @@ type CodingParameters struct {
 	Reset  int
 }
 
-// ComputeCodingParametersWithPixelRep computes derived JPEG-LS parameters matching CharLS defaults,
-// honoring signed pixel representation. BitDepth is required to correctly size the dynamic range.
-func ComputeCodingParametersWithPixelRep(bitDepth, near int, reset int, isSigned bool) CodingParameters {
-	var maxVal, minVal int
-	if isSigned {
-		maxVal = (1 << (bitDepth - 1)) - 1
-		minVal = -1 << (bitDepth - 1)
-	} else {
-		maxVal = (1 << bitDepth) - 1
-		minVal = 0
-	}
-	range_ := maxVal - minVal + 1
+// ComputeCodingParameters computes derived JPEG-LS parameters matching CharLS defaults.
+// CharLS default_traits.h:
+// - range = compute_range_parameter(maximum_sample_value, near_lossless)
+// - quantized_bits_per_pixel = log2_ceil(range)
+// - bits_per_pixel = log2_ceil(maximum_sample_value)
+// - limit = compute_limit_parameter(bits_per_pixel)  // Uses bits_per_pixel, NOT qbpp!
+func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
+	range_ := maxVal + 1
 	if near > 0 {
-		range_ = (range_-1+2*near)/(2*near+1) + 1
+		range_ = (maxVal+2*near)/(2*near+1) + 1
 	}
 
 	// qbpp (quantized_bits_per_pixel) = ceil(log2(range))
 	qbpp := bitsLen(range_)
 
-	// bitsPerPixel = actual stored bit depth (CharLS uses bits_per_pixel for limit calc)
-	bitsPerPixel := bitDepth
+	// bitsPerPixel = ceil(log2(maximum_sample_value))
+	// CharLS uses this for limit calculation, NOT qbpp!
+	bitsPerPixel := bitsLen(maxVal)
 
-	// LIMIT: CharLS uses bits_per_pixel, not qbpp (default_traits.h)
+	// LIMIT: CharLS uses bits_per_pixel (based on maxVal), not qbpp (based on range)
+	// See default_traits.h line 43: limit{compute_limit_parameter(bits_per_pixel)}
 	limit := 2 * (bitsPerPixel + max(8, bitsPerPixel))
 
 	t1, t2, t3 := computeThresholds(maxVal, near)
@@ -209,7 +206,6 @@ func ComputeCodingParametersWithPixelRep(bitDepth, near int, reset int, isSigned
 
 	return CodingParameters{
 		MaxVal: maxVal,
-		MinVal: minVal,
 		Near:   near,
 		Range:  range_,
 		Qbpp:   qbpp,
