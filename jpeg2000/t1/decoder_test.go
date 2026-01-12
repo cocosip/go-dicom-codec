@@ -266,10 +266,11 @@ func TestUpdateNeighborFlags(t *testing.T) {
 // TestContextTables tests the initialization of context lookup tables
 func TestContextTables(t *testing.T) {
 	t.Run("Sign Context LUT", func(t *testing.T) {
-		// All values should be in valid range [0, 4] (relative to CTX_SC_START)
+		// All values should be in valid absolute range [9, 13] (CTX_SC_START to CTX_SC_END)
+		// Updated: lut_ctxno_sc now stores absolute values from OpenJPEG
 		for i, v := range lut_ctxno_sc {
-			if v > 4 {
-				t.Errorf("lut_ctxno_sc[%d] = %d, out of range [0, 4]", i, v)
+			if v < CTX_SC_START || v > CTX_SC_END {
+				t.Errorf("lut_ctxno_sc[%d] = %d, out of range [%d, %d]", i, v, CTX_SC_START, CTX_SC_END)
 			}
 		}
 	})

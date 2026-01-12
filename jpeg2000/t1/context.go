@@ -75,21 +75,111 @@ const (
 
 // lut_ctxno_zc - Zero Coding context lookup
 // Maps neighbor significance to context 0-8
-// Indexed by: (h << 2) | v, where:
-//   h = horizontal significance contribution (0-2)
-//   v = vertical significance contribution (0-2)
-// Currently unused - context is computed dynamically in getZeroCodingContext
-// var lut_ctxno_zc = [16]uint8{
-// 	0, 1, 1, 2, 1, 2, 2, 2,
-// 	1, 2, 2, 2, 2, 2, 2, 2,
-// }
+// Full table size: 2048 entries = 4 orientations × 512 neighbor configurations
+// Each orientation is 512 entries for all 9-bit neighbor significance patterns
+// Index: orientation_offset + (flags & T1_SIGMA_NEIGHBOURS)
+//   where orientation_offset = orientation * 512
+// Reference: OpenJPEG t1_luts.h
+var lut_ctxno_zc = [2048]uint8{
+	// Orientation 0 (0-511)
+	0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7, 0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7,
+	5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	2, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 2, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	// Orientation 1 (512-1023)
+	0, 1, 5, 6, 1, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7, 0, 1, 5, 6, 1, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7,
+	3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7, 3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7,
+	1, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7, 1, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7,
+	3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7, 3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7,
+	5, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 5, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	1, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7, 1, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7,
+	3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7, 3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7,
+	2, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7, 2, 2, 6, 6, 2, 2, 6, 6, 3, 3, 7, 7, 3, 3, 7, 7,
+	3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7, 3, 3, 7, 7, 3, 3, 7, 7, 4, 4, 7, 7, 4, 4, 7, 7,
+	6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 6, 6, 8, 8, 6, 6, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8, 7, 7, 8, 8,
+	// Orientation 2 (1024-1535)
+	0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7, 0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7,
+	5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 1, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	2, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 2, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7,
+	6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 6, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7, 3, 3, 4, 4, 3, 3, 4, 4, 7, 7, 7, 7, 7, 7, 7, 7,
+	7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
+	// Orientation 3 (1536-2047)
+	0, 3, 1, 4, 3, 6, 4, 7, 1, 4, 2, 5, 4, 7, 5, 7, 0, 3, 1, 4, 3, 6, 4, 7, 1, 4, 2, 5, 4, 7, 5, 7,
+	1, 4, 2, 5, 4, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7, 1, 4, 2, 5, 4, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7,
+	3, 6, 4, 7, 6, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 3, 6, 4, 7, 6, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8,
+	4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	1, 4, 2, 5, 4, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7, 1, 4, 2, 5, 4, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7,
+	2, 5, 2, 5, 5, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7, 2, 5, 2, 5, 5, 7, 5, 7,
+	4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	3, 6, 4, 7, 6, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 3, 6, 4, 7, 6, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8,
+	4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	6, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 6, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8,
+	7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8,
+	4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 4, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8, 5, 7, 5, 7, 7, 8, 7, 8,
+	7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8,
+	7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8,
+}
 
 // lut_ctxno_sc - Sign Coding context lookup
 // Maps neighbor signs to context 9-13
-// Indexed by neighbor sign configuration
+// Indexed by OpenJPEG bit layout (8 bits):
+//   Bit 0: T1_LUT_SGN_W - West neighbor sign
+//   Bit 1: T1_LUT_SIG_N - North neighbor significance
+//   Bit 2: T1_LUT_SGN_E - East neighbor sign
+//   Bit 3: T1_LUT_SIG_W - West neighbor significance
+//   Bit 4: T1_LUT_SGN_N - North neighbor sign
+//   Bit 5: T1_LUT_SIG_E - East neighbor significance
+//   Bit 6: T1_LUT_SGN_S - South neighbor sign
+//   Bit 7: T1_LUT_SIG_S - South neighbor significance
+// Reference: OpenJPEG t1_luts.h
 var lut_ctxno_sc = [256]uint8{
-	// Pre-computed based on horizontal and vertical sign contributions
-	// This table is filled during initialization
+	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb,
+	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd,
+	0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0x9, 0xd, 0xa, 0x9, 0xc, 0xa, 0xb,
+	0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0x9, 0xb, 0xa, 0x9, 0xc, 0xa, 0xd,
+	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb,
+	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd,
+	0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0x9, 0xd, 0xa, 0x9, 0xc, 0xa, 0xb,
+	0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0x9, 0xb, 0xa, 0x9, 0xc, 0xa, 0xd,
+	0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb,
+	0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc,
+	0xd, 0xd, 0xd, 0xd, 0xb, 0xb, 0xb, 0xb, 0xd, 0xa, 0xd, 0xa, 0xa, 0xb, 0xa, 0xb,
+	0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xa, 0xc, 0x9, 0xa, 0xb, 0x9, 0xc,
+	0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc,
+	0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd,
+	0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xa, 0xc, 0x9, 0xa, 0xd, 0x9, 0xc,
+	0xb, 0xb, 0xb, 0xb, 0xd, 0xd, 0xd, 0xd, 0xb, 0xa, 0xb, 0xa, 0xa, 0xd, 0xa, 0xd,
 }
 
 // lut_ctxno_mag - Magnitude Refinement context lookup
@@ -102,9 +192,18 @@ var lut_ctxno_sc = [256]uint8{
 
 // lut_spb - Sign bit prediction lookup
 // Predicts the sign bit based on neighbor signs
+// Uses same indexing as lut_ctxno_sc (OpenJPEG bit layout)
+// 0 = predict positive, 1 = predict negative
+// Reference: OpenJPEG t1_luts.h
 var lut_spb = [256]int{
-	// Pre-computed based on horizontal and vertical sign contributions
-	// 0 = predict positive, 1 = predict negative
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+	0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+	0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1,
+	0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
+	1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+	0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
 }
 
 // lut_nmsedec_sig - Normalized Mean Square Error reduction for significance
@@ -115,218 +214,92 @@ var lut_spb = [256]int{
 // Used in rate-distortion optimization (for future encoder implementation)
 // var lut_nmsedec_ref = [1 << 14]int32{}
 
-// init initializes the lookup tables
-func init() {
-	initSignContextLUT()
-	initSignPredictionLUT()
-}
-
-// initSignContextLUT initializes the sign coding context lookup table
-func initSignContextLUT() {
-	for i := 0; i < 256; i++ {
-		// Extract neighbor sign contributions
-		// Horizontal contribution: east and west neighbors
-		h := 0
-		if i&1 != 0 { // East positive
-			h++
-		}
-		if i&2 != 0 { // East negative
-			h--
-		}
-		if i&4 != 0 { // West positive
-			h++
-		}
-		if i&8 != 0 { // West negative
-			h--
-		}
-
-		// Vertical contribution: north and south neighbors
-		v := 0
-		if i&16 != 0 { // North positive
-			v++
-		}
-		if i&32 != 0 { // North negative
-			v--
-		}
-		if i&64 != 0 { // South positive
-			v++
-		}
-		if i&128 != 0 { // South negative
-			v--
-		}
-
-		// Map (h, v) to context 0-4 (relative to CTX_SC_START)
-		if h < 0 {
-			// h is negative, use absolute value for context determination
-			if v < 0 {
-				lut_ctxno_sc[i] = 4 // Absolute: 13
-			} else if v == 0 {
-				lut_ctxno_sc[i] = 3 // Absolute: 12
-			} else {
-				lut_ctxno_sc[i] = 2 // Absolute: 11
-			}
-		} else if h == 0 {
-			if v < 0 {
-				lut_ctxno_sc[i] = 3 // Absolute: 12
-			} else if v == 0 {
-				lut_ctxno_sc[i] = 2 // Absolute: 11
-			} else {
-				lut_ctxno_sc[i] = 1 // Absolute: 10
-			}
-		} else {
-			if v < 0 {
-				lut_ctxno_sc[i] = 2 // Absolute: 11
-			} else if v == 0 {
-				lut_ctxno_sc[i] = 1 // Absolute: 10
-			} else {
-				lut_ctxno_sc[i] = 0 // Absolute: 9
-			}
-		}
-	}
-}
-
-// initSignPredictionLUT initializes the sign prediction lookup table
-func initSignPredictionLUT() {
-	for i := 0; i < 256; i++ {
-		// Extract neighbor sign contributions
-		h := 0
-		if i&1 != 0 { // East positive
-			h++
-		}
-		if i&2 != 0 { // East negative
-			h--
-		}
-		if i&4 != 0 { // West positive
-			h++
-		}
-		if i&8 != 0 { // West negative
-			h--
-		}
-
-		v := 0
-		if i&16 != 0 { // North positive
-			v++
-		}
-		if i&32 != 0 { // North negative
-			v--
-		}
-		if i&64 != 0 { // South positive
-			v++
-		}
-		if i&128 != 0 { // South negative
-			v--
-		}
-
-		// Sign prediction based on neighbor signs
-		// Predict the most common sign
-		if h+v < 0 {
-			lut_spb[i] = 1 // Predict negative
-		} else {
-			lut_spb[i] = 0 // Predict positive
-		}
-	}
-}
+// Note: lut_ctxno_sc and lut_spb are now pre-initialized with OpenJPEG values
+// No init() function needed
 
 // getSignCodingContext returns the sign coding context for a coefficient
-// based on its neighbor signs
+// based on its neighbor signs and significance
+// Uses OpenJPEG bit layout for LUT indexing:
+//   Bit 0: West sign, Bit 1: North sig, Bit 2: East sign, Bit 3: West sig
+//   Bit 4: North sign, Bit 5: East sig, Bit 6: South sign, Bit 7: South sig
 func getSignCodingContext(flags uint32) uint8 {
-	// Extract neighbor sign bits
-	idx := 0
-	if flags&T1_SIGN_E != 0 {
-		if flags&T1_SIG_E != 0 {
-			idx |= 1 // East positive
-		} else {
-			idx |= 2 // East negative
-		}
-	}
-	if flags&T1_SIGN_W != 0 {
-		if flags&T1_SIG_W != 0 {
-			idx |= 4 // West positive
-		} else {
-			idx |= 8 // West negative
-		}
-	}
-	if flags&T1_SIGN_N != 0 {
-		if flags&T1_SIG_N != 0 {
-			idx |= 16 // North positive
-		} else {
-			idx |= 32 // North negative
-		}
-	}
-	if flags&T1_SIGN_S != 0 {
-		if flags&T1_SIG_S != 0 {
-			idx |= 64 // South positive
-		} else {
-			idx |= 128 // South negative
+	idx := uint8(0)
+
+	// West neighbor: Bit 0 (sign), Bit 3 (significance)
+	if flags&T1_SIG_W != 0 {
+		idx |= (1 << 3) // West is significant
+		if flags&T1_SIGN_W != 0 {
+			idx |= (1 << 0) // West sign (negative)
 		}
 	}
 
-	return lut_ctxno_sc[idx] + CTX_SC_START
+	// North neighbor: Bit 4 (sign), Bit 1 (significance)
+	if flags&T1_SIG_N != 0 {
+		idx |= (1 << 1) // North is significant
+		if flags&T1_SIGN_N != 0 {
+			idx |= (1 << 4) // North sign (negative)
+		}
+	}
+
+	// East neighbor: Bit 2 (sign), Bit 5 (significance)
+	if flags&T1_SIG_E != 0 {
+		idx |= (1 << 5) // East is significant
+		if flags&T1_SIGN_E != 0 {
+			idx |= (1 << 2) // East sign (negative)
+		}
+	}
+
+	// South neighbor: Bit 6 (sign), Bit 7 (significance)
+	if flags&T1_SIG_S != 0 {
+		idx |= (1 << 7) // South is significant
+		if flags&T1_SIGN_S != 0 {
+			idx |= (1 << 6) // South sign (negative)
+		}
+	}
+
+	return lut_ctxno_sc[idx]
 }
 
 // getZeroCodingContext returns the zero coding context for a coefficient
 // based on its neighbor significance
+// Uses OpenJPEG lut_ctxno_zc table with orientation 0 (simplest approach)
+// 9-bit neighbor significance index layout:
+//   Bit 0: NW, Bit 1: N, Bit 2: NE
+//   Bit 3: W,  Bit 4: (unused), Bit 5: E
+//   Bit 6: SW, Bit 7: S, Bit 8: SE
 func getZeroCodingContext(flags uint32) uint8 {
-	// Count significant neighbors in each direction
-	h := 0 // Horizontal
-	v := 0 // Vertical
-	d := 0 // Diagonal
+	// Build 9-bit index according to OpenJPEG layout
+	idx := uint16(0)
 
-	if flags&T1_SIG_E != 0 {
-		h++
-	}
-	if flags&T1_SIG_W != 0 {
-		h++
+	if flags&T1_SIG_NW != 0 {
+		idx |= (1 << 0)
 	}
 	if flags&T1_SIG_N != 0 {
-		v++
+		idx |= (1 << 1)
 	}
-	if flags&T1_SIG_S != 0 {
-		v++
-	}
-
 	if flags&T1_SIG_NE != 0 {
-		d++
+		idx |= (1 << 2)
 	}
-	if flags&T1_SIG_NW != 0 {
-		d++
+	if flags&T1_SIG_W != 0 {
+		idx |= (1 << 3)
 	}
-	if flags&T1_SIG_SE != 0 {
-		d++
+	// Bit 4 is unused (current position)
+	if flags&T1_SIG_E != 0 {
+		idx |= (1 << 5)
 	}
 	if flags&T1_SIG_SW != 0 {
-		d++
+		idx |= (1 << 6)
+	}
+	if flags&T1_SIG_S != 0 {
+		idx |= (1 << 7)
+	}
+	if flags&T1_SIG_SE != 0 {
+		idx |= (1 << 8)
 	}
 
-	// Compute context based on weighted contributions
-	// h, v have weight 2, d has weight 1
-	sum := h + h + v + v + d
-
-	if sum >= 9 {
-		return 8 + CTX_ZC_START
-	}
-	if sum >= 7 {
-		return 7 + CTX_ZC_START
-	}
-	if sum >= 5 {
-		return 6 + CTX_ZC_START
-	}
-	if sum >= 4 {
-		return 5 + CTX_ZC_START
-	}
-	if sum >= 3 {
-		return 4 + CTX_ZC_START
-	}
-	if sum >= 2 {
-		return 3 + CTX_ZC_START
-	}
-	if sum == 1 {
-		if h != 0 {
-			return 2 + CTX_ZC_START
-		}
-		return 1 + CTX_ZC_START
-	}
-	return 0 + CTX_ZC_START
+	// Use orientation 0 (offset = 0)
+	// For full orientation support, add: orientation * 512
+	return lut_ctxno_zc[idx]
 }
 
 // getMagRefinementContext returns the magnitude refinement context
@@ -368,35 +341,39 @@ func getMagRefinementContext(flags uint32) uint8 {
 }
 
 // getSignPrediction returns the predicted sign based on neighbor signs
+// Uses same OpenJPEG bit layout as getSignCodingContext
 func getSignPrediction(flags uint32) int {
-	// Extract neighbor sign bits (same as in getSignCodingContext)
-	idx := 0
-	if flags&T1_SIGN_E != 0 {
-		if flags&T1_SIG_E != 0 {
-			idx |= 1
-		} else {
-			idx |= 2
+	idx := uint8(0)
+
+	// West neighbor: Bit 0 (sign), Bit 3 (significance)
+	if flags&T1_SIG_W != 0 {
+		idx |= (1 << 3) // West is significant
+		if flags&T1_SIGN_W != 0 {
+			idx |= (1 << 0) // West sign (negative)
 		}
 	}
-	if flags&T1_SIGN_W != 0 {
-		if flags&T1_SIG_W != 0 {
-			idx |= 4
-		} else {
-			idx |= 8
+
+	// North neighbor: Bit 4 (sign), Bit 1 (significance)
+	if flags&T1_SIG_N != 0 {
+		idx |= (1 << 1) // North is significant
+		if flags&T1_SIGN_N != 0 {
+			idx |= (1 << 4) // North sign (negative)
 		}
 	}
-	if flags&T1_SIGN_N != 0 {
-		if flags&T1_SIG_N != 0 {
-			idx |= 16
-		} else {
-			idx |= 32
+
+	// East neighbor: Bit 2 (sign), Bit 5 (significance)
+	if flags&T1_SIG_E != 0 {
+		idx |= (1 << 5) // East is significant
+		if flags&T1_SIGN_E != 0 {
+			idx |= (1 << 2) // East sign (negative)
 		}
 	}
-	if flags&T1_SIGN_S != 0 {
-		if flags&T1_SIG_S != 0 {
-			idx |= 64
-		} else {
-			idx |= 128
+
+	// South neighbor: Bit 6 (sign), Bit 7 (significance)
+	if flags&T1_SIG_S != 0 {
+		idx |= (1 << 7) // South is significant
+		if flags&T1_SIGN_S != 0 {
+			idx |= (1 << 6) // South sign (negative)
 		}
 	}
 

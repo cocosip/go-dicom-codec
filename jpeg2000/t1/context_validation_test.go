@@ -31,7 +31,7 @@ func TestSignContextLUTAlignment(t *testing.T) {
 	errorCount := 0
 	for i := 0; i < 256; i++ {
 		expected := openjpeg_lut_ctxno_sc[i]
-		actual := lut_ctxno_sc[i] + CTX_SC_START // 注意：go实现返回相对值，需要加上CTX_SC_START(9)
+		actual := lut_ctxno_sc[i] // lut_ctxno_sc now stores absolute values directly
 
 		if actual != expected {
 			t.Errorf("lut_ctxno_sc[%d]: 期望 0x%x, 得到 0x%x", i, expected, actual)
@@ -99,29 +99,29 @@ func TestZeroCodingContextLogic(t *testing.T) {
 			expected: 0, // 上下文 0
 		},
 		{
-			name:     "仅左邻居",
+			name:     "仅左邻居(W)",
 			flags:    T1_SIG_W,
-			expected: 2, // 水平贡献
+			expected: 5, // idx=(1<<3)=8, lut_ctxno_zc[8]=5
 		},
 		{
-			name:     "仅上邻居",
+			name:     "仅上邻居(N)",
 			flags:    T1_SIG_N,
-			expected: 1, // 垂直贡献
+			expected: 3, // idx=(1<<1)=2, lut_ctxno_zc[2]=3
 		},
 		{
-			name:     "左右邻居",
+			name:     "左右邻居(W+E)",
 			flags:    T1_SIG_W | T1_SIG_E,
-			expected: 3, // h=2, v=0, d=0 → sum=4
+			expected: 8, // idx=(1<<3)|(1<<5)=40, lut_ctxno_zc[40]=8
 		},
 		{
-			name:     "上下邻居",
+			name:     "上下邻居(N+S)",
 			flags:    T1_SIG_N | T1_SIG_S,
-			expected: 3, // h=0, v=2, d=0 → sum=4
+			expected: 4, // idx=(1<<1)|(1<<7)=130, lut_ctxno_zc[130]=4
 		},
 		{
-			name:     "四周邻居",
+			name:     "四周邻居(N+S+W+E)",
 			flags:    T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E,
-			expected: 7, // h=2, v=2, d=0 → sum=8
+			expected: 8, // idx=(1<<1)|(1<<3)|(1<<5)|(1<<7)=170, lut_ctxno_zc[170]=8
 		},
 		{
 			name:     "所有8个邻居",
@@ -192,14 +192,14 @@ func TestSignCodingContextExtraction(t *testing.T) {
 		expected uint8
 	}{
 		{
-			name:     "全正邻居 h=2,v=2",
-			flags:    T1_SIG_E | T1_SIG_W | T1_SIG_N | T1_SIG_S | T1_SIGN_E | T1_SIGN_W | T1_SIGN_N | T1_SIGN_S,
-			expected: 9, // h=2, v=2 → context 0 (absolute 9)
+			name:     "全正邻居 (all significant, all positive)",
+			flags:    T1_SIG_E | T1_SIG_W | T1_SIG_N | T1_SIG_S, // No SIGN flags = all positive
+			expected: 0xd, // idx=170 (0xaa), lut_ctxno_sc[170]=0xd (13)
 		},
 		{
-			name:     "东负西负 h=-2",
-			flags:    T1_SIG_E | T1_SIG_W,
-			expected: 12, // h=-2, v=0 → context 3 (absolute 12)
+			name:     "东负西负 (E+W both negative)",
+			flags:    T1_SIG_E | T1_SIG_W | T1_SIGN_E | T1_SIGN_W, // Both SIGN flags set = both negative
+			expected: 0xc, // idx=45 (0x2d), lut_ctxno_sc[45]=0xc (12)
 		},
 	}
 
