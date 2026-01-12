@@ -379,3 +379,18 @@ func getSignPrediction(flags uint32) int {
 
 	return lut_spb[idx]
 }
+
+// GetSignContextLUT returns the sign context lookup table for validation
+func GetSignContextLUT() [256]uint8 {
+	return lut_ctxno_sc
+}
+
+// GetZeroCodingLUT returns the zero coding context lookup table for validation
+func GetZeroCodingLUT() [2048]uint8 {
+	return lut_ctxno_zc
+}
+
+// GetSignPredictionLUT returns the sign prediction lookup table for validation
+func GetSignPredictionLUT() [256]int {
+	return lut_spb
+}

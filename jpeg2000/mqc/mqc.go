@@ -372,3 +372,23 @@ var switchTable = [47]uint8{
 	0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0,
 }
+
+// GetQeTable returns the Qe probability estimation table for validation
+func GetQeTable() [47]uint32 {
+	return qeTable
+}
+
+// GetNmpsTable returns the NMPS state transition table for validation
+func GetNmpsTable() [47]uint8 {
+	return nmpsTable
+}
+
+// GetNlpsTable returns the NLPS state transition table for validation
+func GetNlpsTable() [47]uint8 {
+	return nlpsTable
+}
+
+// GetSwitchTable returns the MPS/LPS switch table for validation
+func GetSwitchTable() [47]uint8 {
+	return switchTable
+}
