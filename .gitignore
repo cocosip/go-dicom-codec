@@ -35,4 +35,4 @@ testdata/output/
 /.claude
 
 /fo-dicom-codec-code
-/tools
+/toolstmpclaude-*

@@ -270,9 +270,14 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 	h.expPredictor.SetQuadExponents(qx, qy, maxExponent, sigCount)
 
 	// Reconstruct samples
+	// OpenJPH sample ordering (column-major within 2x2 quad):
+	// bit 0: (x0, y0)     - left column, top row
+	// bit 1: (x0, y0+1)   - left column, bottom row
+	// bit 2: (x0+1, y0)   - right column, top row
+	// bit 3: (x0+1, y0+1) - right column, bottom row
 	positions := [][2]int{
-		{x0, y0}, {x0 + 1, y0},
-		{x0, y0 + 1}, {x0 + 1, y0 + 1},
+		{x0, y0}, {x0, y0 + 1},
+		{x0 + 1, y0}, {x0 + 1, y0 + 1},
 	}
 
 	for i, pos := range positions {
