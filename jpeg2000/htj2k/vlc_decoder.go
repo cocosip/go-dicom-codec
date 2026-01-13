@@ -200,6 +200,21 @@ func (v *VLCDecoder) HasMore() bool {
 	return v.bitCount > 0 || v.pos > 0
 }
 
+// DecodeUVLCWithTable 尝试使用 UVLC 表驱动解码（单 quad 视角）。
+// isInitialRow 表示是否初始行对，melBit 为当前 quad 的 MEL 事件（0/1，未用时可传 0）。
+// 返回 (u, ok)；ok=false 表示未能解码，应回退其它路径。
+func (v *VLCDecoder) DecodeUVLCWithTable(isInitialRow bool, melBit int) (uint32, bool) {
+	decoder := NewUVLCDecoder(v)
+	u, ok := decoder.DecodeWithTable(1, isInitialRow, melBit)
+	return u, ok
+}
+
+// DecodeUVLC 使用逐步解析方式解码 U-VLC（无初始行对偏置）。
+func (v *VLCDecoder) DecodeUVLC() (uint32, error) {
+	decoder := NewUVLCDecoder(v)
+	return decoder.DecodeUnsignedResidual()
+}
+
 // DecodeQuad decodes a quad (simplified compatibility method)
 // Returns: (significance_pattern, magnitudes, found)
 func (v *VLCDecoder) DecodeQuad() (uint8, []uint32, bool) {

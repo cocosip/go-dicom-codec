@@ -237,3 +237,77 @@ func (u *UVLCEncoder) EncodeUVLCSimplified(value int) error {
 	}
 	return nil
 }
+
+// EncodeWithTable 尝试使用 UVLC 表驱动编码；若无法匹配返回 ok=false。
+// 这里采用表提供的 prefix/suffix 长度进行编码，偏置按公式处理。
+func (u *UVLCEncoder) EncodeWithTable(value int, uOff uint8, isInitialPair bool, melBit int) (bool, error) {
+	if uOff == 0 || u.writer == nil {
+		return false, nil
+	}
+
+	// 使用表信息推导前缀/后缀长度（单 quad 视角）
+	mode := 1
+	if isInitialPair {
+		if melBit == 0 {
+			mode = 3
+		} else {
+			mode = 4
+		}
+	}
+
+	// 选择任意有效表项
+	entry := UVLCDecodeEntry(0)
+	for head := 0; head < 64; head++ {
+		if isInitialPair {
+			entry = UVLCTbl0[(mode<<6)|head]
+		} else {
+			entry = UVLCTbl1[(mode<<6)|head]
+		}
+		if entry != 0 {
+			break
+		}
+	}
+	if entry == 0 {
+		return false, nil
+	}
+
+	u0Prefix := entry.U0Prefix()
+	u0SufLen := entry.U0SuffixLen()
+
+	// 计算有效 u 值（初始行对减 2）
+	uVal := value
+	if isInitialPair {
+		uVal -= 2
+	}
+	if uVal < 0 {
+		return false, nil
+	}
+
+	// 写 prefix
+	prefixBits, prefixLen := EncodePrefixBits(uint8(u0Prefix))
+	if prefixLen == 0 {
+		return false, nil
+	}
+	if err := u.writer.WriteBits(prefixBits, prefixLen); err != nil {
+		return true, err
+	}
+
+	// 写 suffix
+	if u0SufLen > 0 {
+		u0suf := uint32(uVal - u0Prefix)
+		u0suf &= (1 << u0SufLen) - 1
+		if err := u.writer.WriteBits(u0suf, u0SufLen); err != nil {
+			return true, err
+		}
+	}
+
+	// 初始行对扩展（近似：当 uVal >=28 时写 4bit ext）
+	if isInitialPair && uVal >= 28 {
+		ext := uint32((uVal - 28) / 4)
+		if err := u.writer.WriteBits(ext, 4); err != nil {
+			return true, err
+		}
+	}
+
+	return true, nil
+}

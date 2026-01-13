@@ -30,6 +30,16 @@ var (
 	VLCDecodeTbl1 [1024]VLCDecoderEntry
 )
 
+// Ensure lookup表在包加载时生成并校验，避免运行期遗漏。
+func init() {
+	if err := GenerateVLCTables(); err != nil {
+		panic(fmt.Sprintf("generate VLC tables: %v", err))
+	}
+	if err := ValidateVLCTables(); err != nil {
+		panic(fmt.Sprintf("validate VLC tables: %v", err))
+	}
+}
+
 // GenerateVLCTables generates the complete 1024-entry lookup tables
 // from the compact source tables VLC_tbl0 and VLC_tbl1
 //
@@ -48,8 +58,8 @@ var (
 func GenerateVLCTables() error {
 	// Generate VLC_tbl0 (for initial quad rows)
 	for i := 0; i < 1024; i++ {
-		cwd := i & 0x7F     // Extract 7-bit codeword
-		context := i >> 7   // Extract 3-bit context (0-7)
+		cwd := i & 0x7F   // Extract 7-bit codeword
+		context := i >> 7 // Extract 3-bit context (0-7)
 
 		// Search source table VLC_tbl0 for matching entry
 		found := false

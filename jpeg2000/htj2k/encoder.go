@@ -203,19 +203,13 @@ func (h *HTEncoder) encodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 	if hasQ2 {
 		info2 := h.getQuadInfo(q2, qy)
 
-		// Disable simplified U-VLC for lossless encoding
-		// TODO: Enable simplified U-VLC only when it's beneficial and lossless
-		// Simplified encoding requires second quad's u <= 2 when first quad's u > 2
-		// For now, always use regular or initial-pair U-VLC
-		useSimplified := false
-
 		// Encode MEL bit for quad2
 		h.mel.EncodeBit(info2.MelBit)
 
 		// Encode quad2 VLC/UVLC/MagSgn if significant
 		if info2.MelBit == 1 {
 			// Pass first quad's ULF for initial pair formula decision
-			if err := h.encodeQuadData(info2, isInitialLinePair, useSimplified, int(info1.ULF)); err != nil {
+			if err := h.encodeQuadData(info2, isInitialLinePair, false, int(info1.ULF)); err != nil {
 				return err
 			}
 			// Update context with quad2 significance
@@ -364,7 +358,6 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 		// Encode U-VLC (may use simplified or regular encoding)
 		if useSimplifiedUVLC {
 			// Simplified coding only supports values 1 or 2
-			// Clamp u for transmission AND for MagSgn encoding
 			if u < 1 {
 				u = 1
 			} else if u > 2 {
@@ -374,13 +367,8 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo, isInitialLinePair bool, useSi
 				return fmt.Errorf("encode simplified U-VLC: %w", err)
 			}
 		} else {
-			// FIXME: Initial pair formula disabled due to issues with u < 3
-			// Use initial pair formula ONLY when:
-			// 1. This is a quad in the initial line-pair (isInitialLinePair=true)
-			// 2. First quad has ULF=1 (firstQuadULF==1)
-			// 3. Current quad also has ULF=1 (info.ULF==1, which is already checked above)
-			// 4. u >= 3 (initial pair formula minimum, since 2 + 1 + 0 + 0 = 3)
-			useInitialPairFormula := false // Disabled: isInitialLinePair && firstQuadULF == 1 && u >= 3
+			// 启用初始行对公式（公式 4）：当处于初始行对且前一 quad ULF=1 时，对 u 应用减 2 的偏置编码。
+			useInitialPairFormula := isInitialLinePair && firstQuadULF == 1 && u >= 2
 			if err := h.uvlc.EncodeUVLC(u, useInitialPairFormula); err != nil {
 				return fmt.Errorf("encode U-VLC: %w", err)
 			}

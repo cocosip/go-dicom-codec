@@ -188,7 +188,7 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 
 	// Decode first quad if significant
 	if melBit1 == 1 {
-		rho1, _, uOff1, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0)
+		rho1, _, uOff1, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0, melBit1)
 		if err != nil {
 			return err
 		}
@@ -202,7 +202,7 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 	if hasQ2 && melBit2 == 1 {
 		// Disable simplified U-VLC for lossless decoding (matches encoder)
 		useSimplified := false
-		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, ulf1)
+		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, ulf1, melBit2)
 		if err != nil {
 			return err
 		}
@@ -215,7 +215,7 @@ func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool
 
 // decodeQuad decodes a single quad using complete VLC decoding
 // Returns the rho pattern, maxExponent for context updates, and uOff (ULF flag: 0 or 1)
-func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadULF int) (uint8, int, int, error) {
+func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadULF int, melBit int) (uint8, int, int, error) {
 	// Calculate positions
 	x0 := qx * 2
 	y0 := qy * 2
@@ -246,10 +246,8 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 		var err error
 		if useSimplifiedUVLC {
 			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
-		} else if false && isInitialLinePair && firstQuadULF == 1 {
-			// FIXME: Initial pair formula disabled due to encoder/decoder mismatch with u < 3
-			// Initial pair formula: only for second quad when both quads in initial line have ulf=1
-			// firstQuadULF == 1 means first quad had uOff=1 (and this is second quad with uOff=1)
+		} else if isInitialLinePair && firstQuadULF == 1 {
+			// 初始行对公式（公式 4）
 			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()
 		} else {
 			// Regular U-VLC decoding
