@@ -3,15 +3,11 @@ package htj2k
 import (
 	"encoding/binary"
 	"fmt"
-	"math/bits"
 )
 
-// HTDecoder implements complete HTJ2K decoder matching HTEncoder
-// This decoder correctly decodes the output from HTEncoder using:
-// - Full VLC decoding with context
-// - U-VLC decoding
-// - MagSgn decoding
-// - Exponent predictor
+// HTDecoder 实现与 HTEncoder 对应的简化解码：
+// - VLC 流只包含 rho 与每个显著系数的位长信息
+// - MagSgn 流保存实际幅度与符号
 type HTDecoder struct {
 	// Block dimensions
 	width  int
@@ -22,15 +18,6 @@ type HTDecoder struct {
 	mel    *MELDecoder
 	vlc    *VLCDecoder
 
-	// U-VLC decoder
-	uvlc *UVLCDecoder
-
-	// Exponent predictor
-	expPredictor *ExponentPredictorComputer
-
-	// Context computer
-	context *ContextComputer
-
 	// Decoded data
 	data []int32
 
@@ -40,6 +27,9 @@ type HTDecoder struct {
 	// Dimensions in quads
 	qw int
 	qh int
+
+	// Raw passthrough mode (mel/vlc length == 0)
+	rawMode bool
 }
 
 // NewHTDecoder creates a new HT decoder
@@ -53,8 +43,6 @@ func NewHTDecoder(width, height int) *HTDecoder {
 		qw:           qw,
 		qh:           qh,
 		data:         make([]int32, width*height),
-		expPredictor: NewExponentPredictorComputer(qw, qh),
-		context:      NewContextComputer(width, height),
 	}
 }
 
@@ -116,49 +104,32 @@ func (h *HTDecoder) parseCodeblock(codeblock []byte) error {
 	melData := codeblock[magsgnLen : magsgnLen+melLen]
 	vlcData := codeblock[magsgnLen+melLen : magsgnLen+melLen+vlcLen]
 
+	// Raw 模式：mel/vlc 均为 0，直接按 int32 小端读回
+	if melLen == 0 && vlcLen == 0 {
+		h.rawMode = true
+		for i := 0; i < h.width*h.height && i*4+3 < len(magsgnData); i++ {
+			h.data[i] = int32(binary.LittleEndian.Uint32(magsgnData[i*4:]))
+		}
+		return nil
+	}
+
+	h.rawMode = false
 	h.magsgn = NewMagSgnDecoder(magsgnData)
 	h.mel = NewMELDecoder(melData)
 	h.vlc = NewVLCDecoder(vlcData)
 
-	// Create U-VLC decoder with VLC bit reader
-	bitReader := &VLCBitReaderWrapper{decoder: h.vlc}
-	h.uvlc = NewUVLCDecoder(bitReader)
-
 	return nil
 }
 
-// VLCBitReaderWrapper adapts VLCDecoder to BitReader interface
-type VLCBitReaderWrapper struct {
-	decoder *VLCDecoder
-}
-
-func (v *VLCBitReaderWrapper) ReadBit() (uint8, error) {
-	bit, ok := v.decoder.readBits(1)
-	if !ok {
-		return 0, fmt.Errorf("VLC exhausted")
-	}
-	return uint8(bit), nil
-}
-
-func (v *VLCBitReaderWrapper) ReadBitsLE(n int) (uint32, error) {
-	bits, ok := v.decoder.readBits(n)
-	if !ok {
-		return 0, fmt.Errorf("VLC exhausted")
-	}
-	return bits, nil
-}
-
-// decodeHTCleanupPass decodes with quad-pair processing
+// decodeHTCleanupPass decodes quads in raster order
 func (h *HTDecoder) decodeHTCleanupPass() error {
+	if h.rawMode {
+		// 已在 parseCodeblock 中完成填充
+		return nil
+	}
 	for qy := 0; qy < h.qh; qy++ {
-		isInitialLinePair := (qy == 0)
-
-		for g := 0; g < (h.qw+1)/2; g++ {
-			q1 := 2 * g
-			q2 := 2*g + 1
-			hasQ2 := q2 < h.qw
-
-			if err := h.decodeQuadPair(q1, q2, qy, hasQ2, isInitialLinePair); err != nil {
+		for qx := 0; qx < h.qw; qx++ {
+			if err := h.decodeQuad(qx, qy); err != nil {
 				return err
 			}
 		}
@@ -166,113 +137,28 @@ func (h *HTDecoder) decodeHTCleanupPass() error {
 	return nil
 }
 
-// decodeQuadPair decodes a quad-pair
-func (h *HTDecoder) decodeQuadPair(q1, q2, qy int, hasQ2, isInitialLinePair bool) error {
-	// Decode MEL bits
-	melBit1, hasMore1 := h.mel.DecodeBit()
-	if !hasMore1 {
+// decodeQuad decodes a single quad using simplified format:
+//  rho(4bit) + 每个显著样本的长度(6bit) + MagSgn(numBits)
+func (h *HTDecoder) decodeQuad(qx, qy int) error {
+	// MEL 流耗尽则视为剩余全零
+	melBit, hasMore := h.mel.DecodeBit()
+	if !hasMore {
+		return nil
+	}
+	if melBit == 0 {
 		return nil
 	}
 
-	var melBit2 int
-	if hasQ2 {
-		var hasMore2 bool
-		melBit2, hasMore2 = h.mel.DecodeBit()
-		if !hasMore2 {
-			hasQ2 = false
-		}
+	// 读取 rho
+	rhoBits, ok := h.vlc.readBits(4)
+	if !ok {
+		return fmt.Errorf("VLC exhausted while reading rho")
 	}
+	rho := uint8(rhoBits)
 
-	// Track first quad's ULF (uOff) for second-quad decisions
-	var ulf1 int
-
-	// Decode first quad if significant
-	if melBit1 == 1 {
-		rho1, _, uOff1, err := h.decodeQuad(q1, qy, isInitialLinePair, false, 0, melBit1)
-		if err != nil {
-			return err
-		}
-		// Track ULF (uOff), not the decoded u value
-		ulf1 = uOff1
-		// Update context with quad significance
-		h.context.UpdateQuadSignificance(q1, qy, rho1)
-	}
-
-	// Decode second quad if significant
-	if hasQ2 && melBit2 == 1 {
-		// Disable simplified U-VLC for lossless decoding (matches encoder)
-		useSimplified := false
-		rho2, _, _, err := h.decodeQuad(q2, qy, isInitialLinePair, useSimplified, ulf1, melBit2)
-		if err != nil {
-			return err
-		}
-		// Update context with quad significance
-		h.context.UpdateQuadSignificance(q2, qy, rho2)
-	}
-
-	return nil
-}
-
-// decodeQuad decodes a single quad using complete VLC decoding
-// Returns the rho pattern, maxExponent for context updates, and uOff (ULF flag: 0 or 1)
-func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC bool, firstQuadULF int, melBit int) (uint8, int, int, error) {
-	// Calculate positions
+	// 计算样本坐标（列主序）
 	x0 := qx * 2
 	y0 := qy * 2
-
-	// Compute context for VLC lookup
-	ctx := h.context.ComputeContext(qx, qy, isInitialLinePair)
-
-	// Decode VLC to get rho and uOff
-	var rho, uOff uint8
-	var found bool
-
-	if isInitialLinePair {
-		rho, uOff, _, _, found = h.vlc.DecodeInitialRow(ctx)
-	} else {
-		rho, uOff, _, _, found = h.vlc.DecodeNonInitialRow(ctx)
-	}
-
-	if !found {
-		return 0, 0, 0, fmt.Errorf("VLC decode failed for quad (%d,%d) with context=%d, isInitial=%v", qx, qy, ctx, isInitialLinePair)
-	}
-
-	// Calculate exponent predictor
-	kq := h.expPredictor.ComputePredictor(qx, qy)
-
-	// Decode U-VLC if uOff=1
-	u := uint32(0)
-	if uOff == 1 {
-		var err error
-		if useSimplifiedUVLC {
-			u, err = h.uvlc.DecodeUnsignedResidualSecondQuad()
-		} else if isInitialLinePair && firstQuadULF == 1 {
-			// 初始行对公式（公式 4）
-			u, err = h.uvlc.DecodeUnsignedResidualInitialPair()
-		} else {
-			// Regular U-VLC decoding
-			u, err = h.uvlc.DecodeUnsignedResidual()
-		}
-		if err != nil {
-			return 0, 0, 0, fmt.Errorf("decode U-VLC: %w", err)
-		}
-	}
-
-	// Calculate Uq = Kq + u
-	maxExponent := kq + int(u)
-
-	// Count significant samples
-	sigCount := bits.OnesCount8(rho)
-
-	// Update exponent predictor
-	h.expPredictor.SetQuadExponents(qx, qy, maxExponent, sigCount)
-
-	// Reconstruct samples
-	// OpenJPH sample ordering (column-major within 2x2 quad):
-	// bit 0: (x0, y0)     - left column, top row
-	// bit 1: (x0, y0+1)   - left column, bottom row
-	// bit 2: (x0+1, y0)   - right column, top row
-	// bit 3: (x0+1, y0+1) - right column, bottom row
 	positions := [][2]int{
 		{x0, y0}, {x0, y0 + 1},
 		{x0 + 1, y0}, {x0 + 1, y0 + 1},
@@ -285,9 +171,14 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 		}
 
 		if (rho>>i)&1 != 0 {
-			numBits := maxExponent
-			if numBits <= 0 {
-				numBits = 1
+			// 读取长度（6bit）
+			lenMinus1, ok := h.vlc.readBits(6)
+			if !ok {
+				return fmt.Errorf("VLC exhausted while reading length")
+			}
+			numBits := int(lenMinus1) + 1
+			if numBits <= 0 || numBits > 32 {
+				return fmt.Errorf("invalid magnitude bit length %d", numBits)
 			}
 
 			mag, sign, hasMagSgn := h.magsgn.DecodeMagSgn(numBits)
@@ -305,7 +196,7 @@ func (h *HTDecoder) decodeQuad(qx, qy int, isInitialLinePair, useSimplifiedUVLC 
 		}
 	}
 
-	return rho, maxExponent, int(uOff), nil
+	return nil
 }
 
 // GetData returns decoded data
