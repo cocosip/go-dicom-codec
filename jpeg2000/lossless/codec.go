@@ -110,6 +110,11 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 					losslessParams.UsePCRDOpt = b
 				}
 			}
+			if v := parameters.GetParameter("appendLosslessLayer"); v != nil {
+				if b, ok := v.(bool); ok {
+					losslessParams.AppendLosslessLayer = b
+				}
+			}
 		}
 	} else {
 		// Use defaults
@@ -135,6 +140,11 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	encParams.TargetRatio = losslessParams.TargetRatio
 	encParams.UsePCRDOpt = losslessParams.UsePCRDOpt
 	encParams.EnableMCT = losslessParams.AllowMCT
+	encParams.AppendLosslessLayer = losslessParams.AppendLosslessLayer
+	if losslessParams.TargetRatio > 0 && encParams.NumLayers < 2 && losslessParams.AppendLosslessLayer {
+		// Mirror OpenJPEG: when a target rate is specified in lossless mode, add a final lossless layer.
+		encParams.NumLayers = 2
+	}
 	if losslessParams.AllowMCT && parameters != nil {
 		if v := parameters.GetParameter("mctMatrix"); v != nil {
 			if m, ok := v.([][]float64); ok {

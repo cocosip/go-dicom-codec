@@ -62,6 +62,9 @@ type EncodeParams struct {
 	LayerBudgetStrategy string
 	LambdaTolerance     float64
 
+	// AppendLosslessLayer will append a final lossless layer (rate=0) after target-rate layers.
+	AppendLosslessLayer bool
+
 	// Region of Interest (ROI)
 	ROI *ROIParams // Optional single-rectangle ROI with MaxShift
 	// ROIConfig supports multiple ROI entries (MVP: multiple rectangles, MaxShift only)
@@ -128,6 +131,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		UsePCRDOpt:          false,
 		LayerBudgetStrategy: "EXPONENTIAL",
 		LambdaTolerance:     0.01,
+		AppendLosslessLayer: false,
 		ROI:                 nil,
 		EnableMCT:           true,
 	}
@@ -1743,6 +1747,7 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 	if numLayers <= 0 {
 		numLayers = 1
 	}
+	appendLossless := e.params.AppendLosslessLayer && numLayers > 1
 	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
 	totalRate := 0.0
 	for _, cb := range blocks {
@@ -1802,6 +1807,17 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
 			prevEnd = end
 		}
+		if appendLossless && len(cb.Passes) > 0 {
+			last := numLayers - 1
+			cb.LayerPasses[last] = len(cb.Passes)
+			if prevEnd < 0 {
+				prevEnd = 0
+			}
+			if prevEnd > len(cb.CompleteData) {
+				prevEnd = len(cb.CompleteData)
+			}
+			cb.LayerData[last] = cb.CompleteData[prevEnd:]
+		}
 		cb.Data = cb.CompleteData
 		cb.UseTERMALL = true
 	}
@@ -1813,6 +1829,7 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 	if numLayers <= 0 {
 		numLayers = 1
 	}
+	appendLossless := e.params.AppendLosslessLayer && numLayers > 1
 	if len(blocks) == 0 {
 		return
 	}
@@ -1938,6 +1955,18 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 
 			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
 			prevEnd = end
+		}
+
+		if appendLossless && len(cb.Passes) > 0 {
+			last := numLayers - 1
+			cb.LayerPasses[last] = len(cb.Passes)
+			if prevEnd < 0 {
+				prevEnd = 0
+			}
+			if prevEnd > len(cb.CompleteData) {
+				prevEnd = len(cb.CompleteData)
+			}
+			cb.LayerData[last] = cb.CompleteData[prevEnd:]
 		}
 
 		// Keep full data for compatibility

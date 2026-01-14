@@ -39,6 +39,10 @@ type JPEG2000LosslessParameters struct {
 	// UsePCRDOpt toggles PCRD-style layer allocation when layering/TargetRatio is requested.
 	UsePCRDOpt bool
 
+	// AppendLosslessLayer adds a final lossless layer (rate=0) after target-rate layers,
+	// mirroring OpenJPEG behavior when Rate>0 in lossless syntax.
+	AppendLosslessLayer bool
+
 	// internal storage for compatibility with generic parameter interface
 	params map[string]interface{}
 }
@@ -46,13 +50,14 @@ type JPEG2000LosslessParameters struct {
 // NewLosslessParameters creates a new JPEG2000LosslessParameters with default values
 func NewLosslessParameters() *JPEG2000LosslessParameters {
 	return &JPEG2000LosslessParameters{
-		NumLevels:         5,  // Default 5 decomposition levels (recommended)
-		AllowMCT:          true,
-		ProgressionOrder:  0,  // LRCP
-		NumLayers:         1,  // Single layer by default
-		TargetRatio:       0,  // No target ratio
-		UsePCRDOpt:        false,
-		params:            make(map[string]interface{}),
+		NumLevels:           5,  // Default 5 decomposition levels (recommended)
+		AllowMCT:            true,
+		ProgressionOrder:    0,  // LRCP
+		NumLayers:           1,  // Single layer by default
+		TargetRatio:         0,  // No target ratio
+		UsePCRDOpt:          false,
+		AppendLosslessLayer: false,
+		params:              make(map[string]interface{}),
 	}
 }
 
@@ -71,6 +76,8 @@ func (p *JPEG2000LosslessParameters) GetParameter(name string) interface{} {
 		return p.TargetRatio
 	case "usePCRDOpt":
 		return p.UsePCRDOpt
+	case "appendLosslessLayer":
+		return p.AppendLosslessLayer
 	default:
 		// Check custom parameters
 		return p.params[name]
@@ -114,6 +121,10 @@ func (p *JPEG2000LosslessParameters) SetParameter(name string, value interface{}
 		if v, ok := value.(bool); ok {
 			p.UsePCRDOpt = v
 		}
+	case "appendLosslessLayer":
+		if v, ok := value.(bool); ok {
+			p.AppendLosslessLayer = v
+		}
 	default:
 		// Store as custom parameter
 		p.params[name] = value
@@ -134,6 +145,10 @@ func (p *JPEG2000LosslessParameters) Validate() error {
 	}
 	if p.TargetRatio < 0 {
 		p.TargetRatio = 0
+	}
+	if p.AppendLosslessLayer && p.NumLayers < 2 && p.TargetRatio > 0 {
+		// Ensure at least two layers when requesting a final lossless layer with a target ratio
+		p.NumLayers = 2
 	}
 	return nil
 }
@@ -171,6 +186,12 @@ func (p *JPEG2000LosslessParameters) WithTargetRatio(ratio float64) *JPEG2000Los
 // WithPCRD enables PCRD optimization flag
 func (p *JPEG2000LosslessParameters) WithPCRD(enable bool) *JPEG2000LosslessParameters {
 	p.UsePCRDOpt = enable
+	return p
+}
+
+// WithAppendLosslessLayer toggles adding a final lossless layer (rate=0)
+func (p *JPEG2000LosslessParameters) WithAppendLosslessLayer(enable bool) *JPEG2000LosslessParameters {
+	p.AppendLosslessLayer = enable
 	return p
 }
 
