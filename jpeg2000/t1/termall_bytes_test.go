@@ -54,7 +54,7 @@ func TestTERMALLBytesComparison(t *testing.T) {
 	// Encode WITH TERMALL
 	encoder2 := NewT1Encoder(width, height, 0)
 	layerBoundaries := []int{numPasses}
-	passes, completeData, err := encoder2.EncodeLayered(data, numPasses, 0, layerBoundaries, true)
+	passes, completeData, err := encoder2.EncodeLayered(data, numPasses, 0, layerBoundaries, 0x04)
 	if err != nil {
 		t.Fatalf("TERMALL encode failed: %v", err)
 	}

@@ -83,11 +83,11 @@ func TestForwardInverse53_2D(t *testing.T) {
 			data := make([]int32, size)
 			copy(data, original)
 
-			// Forward transform
-			Forward53_2D(data, tt.width, tt.height)
+			// Forward transform (stride = width for single-level)
+			Forward53_2D(data, tt.width, tt.height, tt.width)
 
-			// Inverse transform
-			Inverse53_2D(data, tt.width, tt.height)
+			// Inverse transform (stride = width for single-level)
+			Inverse53_2D(data, tt.width, tt.height, tt.width)
 
 			// Verify perfect reconstruction
 			errors := 0
@@ -182,8 +182,8 @@ func TestSubbandEnergy(t *testing.T) {
 		}
 	}
 
-	// Forward transform
-	Forward53_2D(data, width, height)
+	// Forward transform (stride = width for single-level)
+	Forward53_2D(data, width, height, width)
 
 	// Calculate energy in each subband
 	wL := (width + 1) / 2
@@ -258,8 +258,8 @@ func TestEdgeCases(t *testing.T) {
 		data := []int32{42}
 		original := []int32{42}
 
-		Forward53_2D(data, 1, 1)
-		Inverse53_2D(data, 1, 1)
+		Forward53_2D(data, 1, 1, 1)
+		Inverse53_2D(data, 1, 1, 1)
 
 		if data[0] != original[0] {
 			t.Errorf("Size 1x1 failed: got %d, want %d", data[0], original[0])
@@ -402,7 +402,7 @@ func BenchmarkForward53_2D(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				Forward53_2D(data, size.width, size.height)
+				Forward53_2D(data, size.width, size.height, size.width)
 			}
 		})
 	}

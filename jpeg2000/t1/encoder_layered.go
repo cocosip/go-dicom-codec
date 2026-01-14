@@ -30,19 +30,31 @@ func isLayerBoundary(passIdx int, layerBoundaries []int) bool {
 }
 
 // shouldTerminatePass determines if a pass should be terminated (flushed)
-// For multi-layer encoding, always terminate all passes to ensure proper boundaries
-// Context reset is controlled separately by the lossless parameter
-func shouldTerminatePass(passIdx int, layerBoundaries []int, lossless bool) bool {
-	// For multi-layer (len(layerBoundaries) > 1), terminate all passes
-	if len(layerBoundaries) > 1 {
+// Matches OpenJPEG's opj_t1_enc_is_term_pass logic
+// Parameters:
+//   - passIdx: current pass index (0-based)
+//   - numPasses: total number of passes to encode
+//   - layerBoundaries: pass indices that end each layer
+//   - cblksty: code-block style flags (0x04 = TERMALL)
+func shouldTerminatePass(passIdx int, numPasses int, layerBoundaries []int, cblksty uint8) bool {
+	// Last pass is always terminated (matches: passtype==2 && bpno==0)
+	if passIdx == numPasses-1 {
 		return true
 	}
-	// For single-layer lossless, also terminate all passes
-	if lossless {
+
+	// TERMALL flag (0x04): terminate all passes
+	if (cblksty & 0x04) != 0 {
 		return true
 	}
-	// Single-layer lossy: selective termination at layer boundaries
-	return isLayerBoundary(passIdx, layerBoundaries)
+
+	// For multi-layer encoding without explicit TERMALL, terminate at layer boundaries
+	if len(layerBoundaries) > 1 && isLayerBoundary(passIdx, layerBoundaries) {
+		return true
+	}
+
+	// Note: LAZY flag (0x01) handling not implemented yet
+	// For now, only last pass terminates in single-layer mode without TERMALL
+	return false
 }
 
 // EncodeLayered encodes a code-block with per-pass data separation
@@ -54,13 +66,13 @@ func shouldTerminatePass(passIdx int, layerBoundaries []int, lossless bool) bool
 // - numPasses: number of passes to encode
 // - roishift: ROI bitplane shift
 // - layerBoundaries: pass indices that end each layer (for selective termination)
-// - lossless: if true, use TERMALL mode (terminate all passes for accurate boundaries)
+// - cblksty: code-block style flags (0x04 = TERMALL, 0x02 = RESET)
 //
 // Returns:
 // - passes: array of PassData with rate/distortion info
 // - encodedData: complete MQ-encoded data for all passes
 // - error: any encoding error
-func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, lossless bool) ([]PassData, []byte, error) {
+func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, cblksty uint8) ([]PassData, []byte, error) {
 	if len(data) != t1.width*t1.height {
 		return nil, nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			t1.width*t1.height, len(data))
@@ -95,6 +107,13 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 	// Initialize MQ encoder
 	t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
 
+	// Set initial context states (match OpenJPEG's opj_mqc_setstate calls)
+	// These initial states optimize encoding by providing better probability estimates
+	// State byte format: bits 0-6 = state number, bit 7 = MPS value
+	t1.mqe.SetContextState(CTX_UNI, 46) // Uniform context: state 46, MPS=0
+	t1.mqe.SetContextState(CTX_RL, 3)   // Run-length/Aggregate context: state 3, MPS=0
+	t1.mqe.SetContextState(0, 4)        // Zero-coding context 0: state 4, MPS=0
+
 	// Result array
 	passes := make([]PassData, 0, numPasses)
 
@@ -126,10 +145,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			}
 
 			// Determine if this pass should be terminated
-			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				if lossless {
+				// RESET flag (0x02): reset contexts after each pass
+				if (cblksty & 0x02) != 0 {
 					t1.mqe.ResetContexts()
 				}
 			}
@@ -162,10 +182,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 
-			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				if lossless {
+				// RESET flag (0x02): reset contexts after each pass
+				if (cblksty & 0x02) != 0 {
 					t1.mqe.ResetContexts()
 				}
 			}
@@ -198,10 +219,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
 
-			shouldTerminate := shouldTerminatePass(passIdx, layerBoundaries, lossless)
+			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				if lossless {
+				// RESET flag (0x02): reset contexts after each pass
+				if (cblksty & 0x02) != 0 {
 					t1.mqe.ResetContexts()
 				}
 			}
@@ -236,18 +258,13 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Get final MQ data
 	var fullMQData []byte
-	// For multi-layer encoding (both lossless and lossy), all passes have been
-	// terminated with FlushToOutput(), so just get the buffer
-	// For single-layer lossy with selective termination, non-terminated passes
-	// need final flush
-	if len(layerBoundaries) > 1 {
-		// Multi-layer: all passes already flushed
-		fullMQData = t1.mqe.GetBuffer()
-	} else if lossless {
-		// Single-layer lossless: all passes already flushed
+	// If TERMALL is set or multi-layer, all passes have been terminated with FlushToOutput()
+	// Otherwise, final flush needed for non-terminated passes
+	if (cblksty&0x04) != 0 || len(layerBoundaries) > 1 {
+		// TERMALL mode or multi-layer: all passes already flushed
 		fullMQData = t1.mqe.GetBuffer()
 	} else {
-		// Single-layer lossy with selective termination: final flush needed
+		// Single-layer without TERMALL: final flush needed
 		fullMQData = t1.mqe.Flush()
 	}
 

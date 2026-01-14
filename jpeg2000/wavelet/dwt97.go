@@ -209,9 +209,13 @@ func Inverse97_1D(data []float64) {
 
 // Forward97_2D performs the forward 9/7 wavelet transform on a 2D image
 // Applies 1D transform to rows, then to columns (separable transform)
-// Input: data (row-major order), width, height
+// Input: data (row-major order), width, height, stride
 // Output: LL (top-left), HL (top-right), LH (bottom-left), HH (bottom-right)
-func Forward97_2D(data []float64, width, height int) {
+//
+// The stride parameter is the full width of the data array (important for multi-level transforms)
+// For the first level, stride == width
+// For subsequent levels, stride remains the original width while width shrinks
+func Forward97_2D(data []float64, width, height, stride int) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -220,17 +224,17 @@ func Forward97_2D(data []float64, width, height int) {
 	if width > 1 {
 		row := make([]float64, width)
 		for y := 0; y < height; y++ {
-			// Extract row
+			// Extract row (use stride for indexing)
 			for x := 0; x < width; x++ {
-				row[x] = data[y*width+x]
+				row[x] = data[y*stride+x]
 			}
 
 			// Transform row
 			Forward97_1D(row)
 
-			// Write back
+			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
-				data[y*width+x] = row[x]
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
@@ -239,17 +243,17 @@ func Forward97_2D(data []float64, width, height int) {
 	if height > 1 {
 		col := make([]float64, height)
 		for x := 0; x < width; x++ {
-			// Extract column
+			// Extract column (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				col[y] = data[y*width+x]
+				col[y] = data[y*stride+x]
 			}
 
 			// Transform column
 			Forward97_1D(col)
 
-			// Write back
+			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				data[y*width+x] = col[y]
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
@@ -257,9 +261,9 @@ func Forward97_2D(data []float64, width, height int) {
 
 // Inverse97_2D performs the inverse 9/7 wavelet transform on a 2D image
 // Applies inverse 1D transform to columns, then to rows
-// Input: data with subbands (LL, HL, LH, HH), width, height
+// Input: data with subbands (LL, HL, LH, HH), width, height, stride
 // Output: reconstructed image
-func Inverse97_2D(data []float64, width, height int) {
+func Inverse97_2D(data []float64, width, height, stride int) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -268,17 +272,17 @@ func Inverse97_2D(data []float64, width, height int) {
 	if height > 1 {
 		col := make([]float64, height)
 		for x := 0; x < width; x++ {
-			// Extract column
+			// Extract column (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				col[y] = data[y*width+x]
+				col[y] = data[y*stride+x]
 			}
 
 			// Inverse transform column
 			Inverse97_1D(col)
 
-			// Write back
+			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				data[y*width+x] = col[y]
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
@@ -287,17 +291,17 @@ func Inverse97_2D(data []float64, width, height int) {
 	if width > 1 {
 		row := make([]float64, width)
 		for y := 0; y < height; y++ {
-			// Extract row
+			// Extract row (use stride for indexing)
 			for x := 0; x < width; x++ {
-				row[x] = data[y*width+x]
+				row[x] = data[y*stride+x]
 			}
 
 			// Inverse transform row
 			Inverse97_1D(row)
 
-			// Write back
+			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
-				data[y*width+x] = row[x]
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
@@ -307,6 +311,12 @@ func Inverse97_2D(data []float64, width, height int) {
 // levels: number of decomposition levels (1 = one level, 2 = two levels, etc.)
 // After each level, only the LL subband is further decomposed
 func ForwardMultilevel97(data []float64, width, height, levels int) {
+	// Keep the original stride (full width) throughout all levels
+	// This is critical: after level 1, the LL subband is stored in the top-left,
+	// but the row stride remains the original full width
+	originalStride := width
+
+	// Current resolution dimensions
 	curWidth := width
 	curHeight := height
 
@@ -315,21 +325,13 @@ func ForwardMultilevel97(data []float64, width, height, levels int) {
 			break
 		}
 
-		// Create temporary buffer for this level
-		temp := make([]float64, curWidth*curHeight)
-		for i := 0; i < curWidth*curHeight; i++ {
-			temp[i] = data[i]
-		}
+		// Transform current level in-place with original stride
+		// For level 0: curWidth == originalStride
+		// For level 1+: curWidth < originalStride (only process LL subband)
+		Forward97_2D(data, curWidth, curHeight, originalStride)
 
-		// Transform this level
-		Forward97_2D(temp, curWidth, curHeight)
-
-		// Copy result back to data
-		for i := 0; i < curWidth*curHeight; i++ {
-			data[i] = temp[i]
-		}
-
-		// Next level works only on LL subband (top-left quarter)
+		// Next level will work only on LL subband (top-left region)
+		// Update dimensions for next iteration
 		curWidth = (curWidth + 1) / 2
 		curHeight = (curHeight + 1) / 2
 	}
@@ -337,8 +339,11 @@ func ForwardMultilevel97(data []float64, width, height, levels int) {
 
 // InverseMultilevel97 performs multilevel 9/7 wavelet reconstruction
 // levels: number of decomposition levels to inverse
-// Reconstructs from coarsest to finest level
+// Reconstructs from coarsest to finest
 func InverseMultilevel97(data []float64, width, height, levels int) {
+	// Keep the original stride (full width) throughout all levels
+	originalStride := width
+
 	// Calculate dimensions at each level
 	levelWidths := make([]int, levels+1)
 	levelHeights := make([]int, levels+1)
@@ -355,19 +360,8 @@ func InverseMultilevel97(data []float64, width, height, levels int) {
 		curWidth := levelWidths[level]
 		curHeight := levelHeights[level]
 
-		// Create temporary buffer
-		temp := make([]float64, curWidth*curHeight)
-		for i := 0; i < curWidth*curHeight; i++ {
-			temp[i] = data[i]
-		}
-
-		// Inverse transform this level
-		Inverse97_2D(temp, curWidth, curHeight)
-
-		// Copy result back
-		for i := 0; i < curWidth*curHeight; i++ {
-			data[i] = temp[i]
-		}
+		// Inverse transform this level in-place with original stride
+		Inverse97_2D(data, curWidth, curHeight, originalStride)
 	}
 }
 

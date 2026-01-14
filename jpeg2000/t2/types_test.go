@@ -82,15 +82,15 @@ func TestTagTreeReset(t *testing.T) {
 	// Reset
 	tree.Reset()
 
-	// Verify all values are reset to 0
-	if tree.GetValue(0, 0) != 0 {
-		t.Errorf("After reset, GetValue(0, 0) = %d, want 0", tree.GetValue(0, 0))
+	// Verify all values are reset to 999 (matches OpenJPEG's opj_tgt_reset)
+	if tree.GetValue(0, 0) != 999 {
+		t.Errorf("After reset, GetValue(0, 0) = %d, want 999", tree.GetValue(0, 0))
 	}
-	if tree.GetValue(1, 1) != 0 {
-		t.Errorf("After reset, GetValue(1, 1) = %d, want 0", tree.GetValue(1, 1))
+	if tree.GetValue(1, 1) != 999 {
+		t.Errorf("After reset, GetValue(1, 1) = %d, want 999", tree.GetValue(1, 1))
 	}
-	if tree.GetValue(2, 2) != 0 {
-		t.Errorf("After reset, GetValue(2, 2) = %d, want 0", tree.GetValue(2, 2))
+	if tree.GetValue(2, 2) != 999 {
+		t.Errorf("After reset, GetValue(2, 2) = %d, want 999", tree.GetValue(2, 2))
 	}
 }
 

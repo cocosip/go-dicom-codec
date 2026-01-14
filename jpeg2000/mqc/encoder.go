@@ -146,14 +146,11 @@ func (mqe *MQEncoder) byteout() {
 // Flush finalizes encoding and returns the encoded data
 func (mqe *MQEncoder) Flush() []byte {
 	// setbits: fill remaining bits with 1's for flushing
-	// The mask should only affect the ct unused bits, not the whole 16 bits
+	// Mirror OpenJPEG's opj_mqc_setbits() - always fill 0xFFFF
 	tempC := mqe.c + mqe.a
 
-	// Fill only the remaining ct bits with 1s
-	// If ct=8, we need to fill 8 bits: mask = (1<<8)-1 = 0xFF
-	// If ct=12, we need to fill 12 bits: mask = (1<<12)-1 = 0xFFF
-	mask := uint32((1 << uint(mqe.ct)) - 1)
-	mqe.c |= mask
+	// Fill with 0xFFFF to match OpenJPEG exactly
+	mqe.c |= 0xFFFF
 
 	if mqe.c >= tempC {
 		mqe.c -= 0x8000
@@ -189,11 +186,11 @@ func (mqe *MQEncoder) NumBytes() int {
 // This is used for pass termination in multi-layer encoding
 func (mqe *MQEncoder) FlushToOutput() {
 	// setbits: fill remaining bits with 1's for flushing
+	// Mirror OpenJPEG's opj_mqc_setbits() - always fill 0xFFFF
 	tempC := mqe.c + mqe.a
 
-	// Fill only the remaining ct bits with 1s
-	mask := uint32((1 << uint(mqe.ct)) - 1)
-	mqe.c |= mask
+	// Fill with 0xFFFF to match OpenJPEG exactly
+	mqe.c |= 0xFFFF
 
 	if mqe.c >= tempC {
 		mqe.c -= 0x8000

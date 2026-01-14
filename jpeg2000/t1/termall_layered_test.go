@@ -38,7 +38,7 @@ func TestTERMALLLayered(t *testing.T) {
 	// Encode with TERMALL mode
 	encoder := NewT1Encoder(width, height, 0)
 	layerBoundaries := []int{numPasses} // Single layer
-	passes, completeData, err := encoder.EncodeLayered(data, numPasses, 0, layerBoundaries, true) // lossless=true enables TERMALL
+	passes, completeData, err := encoder.EncodeLayered(data, numPasses, 0, layerBoundaries, 0x04) // 0x04 = TERMALL flag
 	if err != nil {
 		t.Fatalf("TERMALL encode failed: %v", err)
 	}

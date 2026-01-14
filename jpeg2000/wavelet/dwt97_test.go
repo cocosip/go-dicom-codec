@@ -84,10 +84,10 @@ func TestForwardInverse97_2D(t *testing.T) {
 			copy(data, original)
 
 			// Forward transform
-			Forward97_2D(data, tt.width, tt.height)
+			Forward97_2D(data, tt.width, tt.height, tt.width)
 
 			// Inverse transform
-			Inverse97_2D(data, tt.width, tt.height)
+			Inverse97_2D(data, tt.width, tt.height, tt.width)
 
 			// Check reconstruction
 			maxError := 0.0
@@ -177,7 +177,7 @@ func TestSubbandEnergy97(t *testing.T) {
 	}
 
 	// Forward transform
-	Forward97_2D(data, width, height)
+	Forward97_2D(data, width, height, width)
 
 	// Calculate energy in each subband
 	nL := (width + 1) / 2
@@ -432,7 +432,7 @@ func Benchmark97_2D(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				Forward97_2D(data, tt.width, tt.height)
+				Forward97_2D(data, tt.width, tt.height, tt.width)
 			}
 		})
 	}

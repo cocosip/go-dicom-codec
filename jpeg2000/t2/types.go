@@ -46,6 +46,14 @@ type Precinct struct {
 	Height     int                  // Precinct height
 	SubbandIdx int                  // Subband index (0=LL, 1=HL, 2=LH, 3=HH)
 	CodeBlocks []*PrecinctCodeBlock // Code-blocks in this precinct
+
+	// Tag-tree dimensions (for packet header encoding)
+	NumCodeBlocksX int // Number of code-blocks in X direction
+	NumCodeBlocksY int // Number of code-blocks in Y direction
+
+	// Tag-trees for encoding (created per-packet)
+	InclTree *TagTree // Inclusion tag-tree
+	ZBPTree  *TagTree // Zero-bitplane tag-tree
 }
 
 // PrecinctCodeBlock represents a code-block within a precinct
@@ -53,6 +61,7 @@ type PrecinctCodeBlock struct {
 	Index          int    // Code-block index within precinct
 	X0, Y0         int    // Top-left coordinates
 	X1, Y1         int    // Bottom-right coordinates
+	CBX, CBY       int    // Code-block grid position within precinct
 	Included       bool   // Has been included in at least one packet
 	NumPassesTotal int    // Total number of passes decoded so far
 	ZeroBitPlanes  int    // Number of missing MSB bit-planes

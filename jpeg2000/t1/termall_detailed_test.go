@@ -37,7 +37,7 @@ func TestTERMALLDetailed(t *testing.T) {
 	// Encode with TERMALL
 	encoder := NewT1Encoder(width, height, 0)
 	layerBoundaries := []int{numPasses}
-	passes, completeData, err := encoder.EncodeLayered(data, numPasses, 0, layerBoundaries, true)
+	passes, completeData, err := encoder.EncodeLayered(data, numPasses, 0, layerBoundaries, 0x04)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}

@@ -121,8 +121,12 @@ func Inverse53_1D(data []int32) {
 
 // Forward53_2D performs the forward 5/3 wavelet transform on a 2D image
 // Applies 1D transform to rows, then to columns (separable transform)
-// Input: data (row-major order), width, height
+// Input: data (row-major order), width, height, stride
 // Output: LL (top-left), HL (top-right), LH (bottom-left), HH (bottom-right)
+//
+// The stride parameter is the full width of the data array (important for multi-level transforms)
+// For the first level, stride == width
+// For subsequent levels, stride remains the original width while width shrinks
 //
 // Performance notes:
 // - Separable transform: rows first, then columns
@@ -131,7 +135,7 @@ func Inverse53_1D(data []int32) {
 // - Column processing less cache-friendly (strided access)
 // - Typical performance: ~13µs for 64x64, ~102µs for 256x256
 // - Potential optimization: transpose for better column access pattern
-func Forward53_2D(data []int32, width, height int) {
+func Forward53_2D(data []int32, width, height, stride int) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -142,17 +146,17 @@ func Forward53_2D(data []int32, width, height int) {
 	// Step 1: Transform rows
 	if width > 1 {
 		for y := 0; y < height; y++ {
-			// Extract row
+			// Extract row (use stride for indexing)
 			for x := 0; x < width; x++ {
-				row[x] = data[y*width+x]
+				row[x] = data[y*stride+x]
 			}
 
 			// Transform row
 			Forward53_1D(row)
 
-			// Write back
+			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
-				data[y*width+x] = row[x]
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
@@ -161,17 +165,17 @@ func Forward53_2D(data []int32, width, height int) {
 	if height > 1 {
 		col := make([]int32, height)
 		for x := 0; x < width; x++ {
-			// Extract column
+			// Extract column (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				col[y] = data[y*width+x]
+				col[y] = data[y*stride+x]
 			}
 
 			// Transform column
 			Forward53_1D(col)
 
-			// Write back
+			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				data[y*width+x] = col[y]
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
@@ -179,9 +183,9 @@ func Forward53_2D(data []int32, width, height int) {
 
 // Inverse53_2D performs the inverse 5/3 wavelet transform on a 2D image
 // Applies inverse 1D transform to columns, then to rows
-// Input: data with subbands (LL, HL, LH, HH), width, height
+// Input: data with subbands (LL, HL, LH, HH), width, height, stride
 // Output: reconstructed image
-func Inverse53_2D(data []int32, width, height int) {
+func Inverse53_2D(data []int32, width, height, stride int) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -190,17 +194,17 @@ func Inverse53_2D(data []int32, width, height int) {
 	if height > 1 {
 		col := make([]int32, height)
 		for x := 0; x < width; x++ {
-			// Extract column
+			// Extract column (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				col[y] = data[y*width+x]
+				col[y] = data[y*stride+x]
 			}
 
 			// Inverse transform column
 			Inverse53_1D(col)
 
-			// Write back
+			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
-				data[y*width+x] = col[y]
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
@@ -209,17 +213,17 @@ func Inverse53_2D(data []int32, width, height int) {
 	if width > 1 {
 		row := make([]int32, width)
 		for y := 0; y < height; y++ {
-			// Extract row
+			// Extract row (use stride for indexing)
 			for x := 0; x < width; x++ {
-				row[x] = data[y*width+x]
+				row[x] = data[y*stride+x]
 			}
 
 			// Inverse transform row
 			Inverse53_1D(row)
 
-			// Write back
+			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
-				data[y*width+x] = row[x]
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
@@ -229,6 +233,12 @@ func Inverse53_2D(data []int32, width, height int) {
 // levels: number of decomposition levels (1 = one level, 2 = two levels, etc.)
 // After each level, only the LL subband is further decomposed
 func ForwardMultilevel(data []int32, width, height, levels int) {
+	// Keep the original stride (full width) throughout all levels
+	// This is critical: after level 1, the LL subband is stored in the top-left,
+	// but the row stride remains the original full width
+	originalStride := width
+
+	// Current resolution dimensions
 	curWidth := width
 	curHeight := height
 
@@ -237,21 +247,13 @@ func ForwardMultilevel(data []int32, width, height, levels int) {
 			break
 		}
 
-		// Create temporary buffer for this level
-		temp := make([]int32, curWidth*curHeight)
-		for i := 0; i < curWidth*curHeight; i++ {
-			temp[i] = data[i]
-		}
+		// Transform current level in-place with original stride
+		// For level 0: curWidth == originalStride
+		// For level 1+: curWidth < originalStride (only process LL subband)
+		Forward53_2D(data, curWidth, curHeight, originalStride)
 
-		// Transform this level
-		Forward53_2D(temp, curWidth, curHeight)
-
-		// Copy result back to data
-		for i := 0; i < curWidth*curHeight; i++ {
-			data[i] = temp[i]
-		}
-
-		// Next level works only on LL subband (top-left quarter)
+		// Next level will work only on LL subband (top-left region)
+		// Update dimensions for next iteration
 		curWidth = (curWidth + 1) / 2
 		curHeight = (curHeight + 1) / 2
 	}
@@ -259,8 +261,11 @@ func ForwardMultilevel(data []int32, width, height, levels int) {
 
 // InverseMultilevel performs multilevel 5/3 wavelet reconstruction
 // levels: number of decomposition levels to inverse
-// Reconstructs from finest to coarsest level
+// Reconstructs from coarsest to finest
 func InverseMultilevel(data []int32, width, height, levels int) {
+	// Keep the original stride (full width) throughout all levels
+	originalStride := width
+
 	// Calculate dimensions at each level
 	levelWidths := make([]int, levels+1)
 	levelHeights := make([]int, levels+1)
@@ -277,18 +282,7 @@ func InverseMultilevel(data []int32, width, height, levels int) {
 		curWidth := levelWidths[level]
 		curHeight := levelHeights[level]
 
-		// Create temporary buffer
-		temp := make([]int32, curWidth*curHeight)
-		for i := 0; i < curWidth*curHeight; i++ {
-			temp[i] = data[i]
-		}
-
-		// Inverse transform this level
-		Inverse53_2D(temp, curWidth, curHeight)
-
-		// Copy result back
-		for i := 0; i < curWidth*curHeight; i++ {
-			data[i] = temp[i]
-		}
+		// Inverse transform this level in-place with original stride
+		Inverse53_2D(data, curWidth, curHeight, originalStride)
 	}
 }

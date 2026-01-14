@@ -89,6 +89,9 @@ type EncodeParams struct {
 	// Block encoder factory (for HTJ2K support)
 	// If nil, defaults to EBCOT T1 encoder
 	BlockEncoderFactory func(width, height int) BlockEncoder
+
+	// Debug mode (prints codeblock counts and structure info)
+	DebugMode bool
 }
 
 // BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
@@ -1132,17 +1135,37 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 
 	if p.Lossless {
 		// Lossless mode: no quantization (style 0)
-		// Sqcd - bits 0-4: guard bits (2), bits 5-7: quantization type (0 = no quantization)
-		sqcd := uint8(0<<5 | 2) // No quantization, 2 guard bits
+		// Sqcd - bits 0-4: quantization type (0 = no quantization), bits 5-7: guard bits (2)
+		// Match OpenJPEG: qntsty + (numgbits << 5) = 0 + (2 << 5) = 0x40
+		sqcd := uint8(2<<5 | 0) // 2 guard bits in upper 3 bits, no quantization in lower 5 bits = 0x40
 		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
 		// SPqcd - Quantization step size for each subband
 		// For lossless: exponent only (8 bits), no mantissa
-		numSubbands := 3*p.NumLevels + 1
-		for i := 0; i < numSubbands; i++ {
-			// Exponent = bitDepth (shifted left by 3 bits)
-			expn := uint8(p.BitDepth << 3)
-			_ = binary.Write(qcdData, binary.BigEndian, expn)
+		// Exponent varies by subband due to DWT filter gains (5/3 reversible):
+		//   LL band: bitDepth + 0
+		//   HL, LH bands: bitDepth + 1
+		//   HH band: bitDepth + 2
+		// Values are shifted left by 3 bits when encoded
+		for res := 0; res <= p.NumLevels; res++ {
+			numBands := 1
+			if res == 0 {
+				numBands = 1 // LL band only for lowest resolution
+			} else {
+				numBands = 3 // HL, LH, HH for each resolution
+			}
+			for band := 0; band < numBands; band++ {
+				var log2Gain int
+				if res == 0 {
+					log2Gain = 0 // LL band
+				} else if band == 2 {
+					log2Gain = 2 // HH band
+				} else {
+					log2Gain = 1 // HL, LH bands
+				}
+				expn := uint8((p.BitDepth + log2Gain) << 3)
+				_ = binary.Write(qcdData, binary.BigEndian, expn)
+			}
 		}
 	} else {
 		// Lossy mode: scalar expounded quantization (style 2)
@@ -1465,8 +1488,27 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 			transformed[c] = make([]int32, len(tileData[c]))
 			copy(transformed[c], tileData[c])
 
+			if e.params.DebugMode && c == 0 {
+				fmt.Printf("[DEBUG] Before DWT (first 16 pixels): ")
+				for i := 0; i < 16 && i < len(transformed[c]); i++ {
+					fmt.Printf("%d ", transformed[c][i])
+				}
+				fmt.Printf("\n")
+			}
+
 			// Apply forward multilevel DWT
 			wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
+
+			if e.params.DebugMode && c == 0 {
+				// Calculate LL subband size after 5 levels
+				llWidth := (width + 31) / 32 // After 5 levels: /2/2/2/2/2 = /32
+				llHeight := (height + 31) / 32
+				fmt.Printf("[DEBUG] After DWT (first 16 LL coeffs from DWT array): ")
+				for i := 0; i < 16 && i < llWidth*llHeight; i++ {
+					fmt.Printf("%d ", transformed[c][i])
+				}
+				fmt.Printf("\n")
+			}
 		}
 		return transformed, nil
 	} else {
@@ -1596,6 +1638,9 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	)
 	allBlocks := make([]*t2.PrecinctCodeBlock, 0)
 
+	// Debug counters
+	cbCountByRes := make([]int, e.params.NumLevels+1)
+
 	// Process each component
 	for comp := 0; comp < e.params.Components; comp++ {
 		// Global code-block index across all resolutions
@@ -1629,9 +1674,24 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 					packetEnc.AddCodeBlock(comp, res, precinctIdx, encodedCB)
 					allBlocks = append(allBlocks, encodedCB)
 					globalCBIdx++
+
+					// Count codeblocks per resolution
+					cbCountByRes[res]++
 				}
 			}
 		}
+	}
+
+	// Debug: Print codeblock counts
+	if e.params.DebugMode {
+		fmt.Printf("\n[DEBUG] 码块统计:\n")
+		total := 0
+		for res := 0; res <= e.params.NumLevels; res++ {
+			fmt.Printf("  分辨率 %d: %d 码块\n", res, cbCountByRes[res])
+			total += cbCountByRes[res]
+		}
+		fmt.Printf("  总计: %d 码块\n", total)
+		fmt.Printf("  预期: 454 码块 (Res0:1, Res1:3, Res2:6, Res3:24, Res4:84, Res5:336)\n")
 	}
 
 	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
@@ -1819,7 +1879,7 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 			cb.LayerData[last] = cb.CompleteData[prevEnd:]
 		}
 		cb.Data = cb.CompleteData
-		cb.UseTERMALL = true
+		cb.UseTERMALL = numLayers > 1 // Only use TERMALL for multi-layer
 	}
 }
 
@@ -1971,7 +2031,7 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 
 		// Keep full data for compatibility
 		cb.Data = cb.CompleteData
-		cb.UseTERMALL = true
+		cb.UseTERMALL = numLayers > 1 // Only use TERMALL for multi-layer
 	}
 }
 
@@ -2019,18 +2079,24 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 
 	if resolution == 0 {
 		// LL subband (top-left quadrant after all decompositions)
-		llWidth := width >> e.params.NumLevels
-		llHeight := height >> e.params.NumLevels
-		scale := 1 << e.params.NumLevels
+		// Use ceiling division to match JPEG2000 standard and OpenJPEG
+		divisor := 1 << e.params.NumLevels
+		llWidth := (width + divisor - 1) / divisor   // Ceiling division
+		llHeight := (height + divisor - 1) / divisor // Ceiling division
+		scale := divisor
 
 		llData := make([]int32, llWidth*llHeight)
 		for y := 0; y < llHeight; y++ {
 			for x := 0; x < llWidth; x++ {
-				llData[y*llWidth+x] = data[y*width+x]
+				srcIdx := y*width + x
+				if srcIdx < len(data) && y < height && x < width {
+					llData[y*llWidth+x] = data[srcIdx]
+				}
+				// else: pad with zero (already initialized to 0)
 			}
 		}
 
-		subbands = append(subbands, subbandInfo{
+		sb := subbandInfo{
 			data:   llData,
 			x0:     0,
 			y0:     0,
@@ -2039,7 +2105,17 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			band:   0, // LL
 			res:    0,
 			scale:  scale,
-		})
+		}
+		if e.params.DebugMode && resolution == 0 {
+			fmt.Printf("[DEBUG] LL subband: %dx%d (from DWT output %dx%d)\n",
+				llWidth, llHeight, width, height)
+			fmt.Printf("[DEBUG] DWT output (first 28 LL coeffs): ")
+			for i := 0; i < 28 && i < len(llData); i++ {
+				fmt.Printf("%d ", llData[i])
+			}
+			fmt.Printf("\n")
+		}
+		subbands = append(subbands, sb)
 	} else {
 		// For resolution r, extract HL, LH, HH from decomposition level (numLevels - r + 1)
 		level := e.params.NumLevels - resolution + 1
@@ -2047,15 +2123,21 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			level = 0
 		}
 
-		sbWidth := width >> level
-		sbHeight := height >> level
-		scale := 1 << level
+		// Use ceiling division to match JPEG2000 standard and OpenJPEG
+		divisor := 1 << level
+		sbWidth := (width + divisor - 1) / divisor   // Ceiling division
+		sbHeight := (height + divisor - 1) / divisor // Ceiling division
+		scale := divisor
 
 		// HL (high-low): right half of top half
 		hlData := make([]int32, sbWidth*sbHeight)
 		for y := 0; y < sbHeight; y++ {
 			for x := 0; x < sbWidth; x++ {
-				hlData[y*sbWidth+x] = data[y*width+(sbWidth+x)]
+				srcIdx := y*width + (sbWidth + x)
+				if srcIdx < len(data) && sbWidth+x < width {
+					hlData[y*sbWidth+x] = data[srcIdx]
+				}
+				// else: pad with zero (already initialized to 0)
 			}
 		}
 		subbands = append(subbands, subbandInfo{
@@ -2073,7 +2155,11 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		lhData := make([]int32, sbWidth*sbHeight)
 		for y := 0; y < sbHeight; y++ {
 			for x := 0; x < sbWidth; x++ {
-				lhData[y*sbWidth+x] = data[(sbHeight+y)*width+x]
+				srcIdx := (sbHeight + y) * width + x
+				if srcIdx < len(data) && sbHeight+y < height {
+					lhData[y*sbWidth+x] = data[srcIdx]
+				}
+				// else: pad with zero (already initialized to 0)
 			}
 		}
 		subbands = append(subbands, subbandInfo{
@@ -2091,7 +2177,11 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		hhData := make([]int32, sbWidth*sbHeight)
 		for y := 0; y < sbHeight; y++ {
 			for x := 0; x < sbWidth; x++ {
-				hhData[y*sbWidth+x] = data[(sbHeight+y)*width+(sbWidth+x)]
+				srcIdx := (sbHeight + y) * width + (sbWidth + x)
+				if srcIdx < len(data) && sbHeight+y < height && sbWidth+x < width {
+					hhData[y*sbWidth+x] = data[srcIdx]
+				}
+				// else: pad with zero (already initialized to 0)
 			}
 		}
 		subbands = append(subbands, subbandInfo{
@@ -2116,6 +2206,8 @@ type codeBlockInfo struct {
 	height   int
 	globalX0 int // Global X position in coefficient array
 	globalY0 int // Global Y position in coefficient array
+	cbx      int // Code-block X index within subband
+	cby      int // Code-block Y index within subband
 	scale    int // Downsampling factor from full resolution (reserved)
 	resLevel int // Resolution level (0=LL)
 	band     int // Subband identifier (0=LL,1=HL,2=LH,3=HH)
@@ -2182,6 +2274,8 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 				height:   actualHeight,
 				globalX0: globalX0,
 				globalY0: globalY0,
+			cbx:      cbx,
+				cby:      cby,
 				scale:    subband.scale,
 				resLevel: subband.res,
 				band:     subband.band,
@@ -2200,8 +2294,22 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	actualHeight := cb.height
 	cbData := cb.data
 
-	// Calculate max bitplane from data
+	// Apply T1_NMSEDEC_FRACBITS scaling (left shift 6 bits)
+	// This matches OpenJPEG's representation for lossless encoding
+	// OpenJPEG applies this shift in t1.c before T1 encoding
+	const T1_NMSEDEC_FRACBITS = 6
+	for i := range cbData {
+		cbData[i] <<= T1_NMSEDEC_FRACBITS
+	}
+
+	// Calculate max bitplane from scaled data
 	maxBitplane := calculateMaxBitplane(cbData)
+
+	// Adjust maxBitplane by subtracting T1_NMSEDEC_FRACBITS
+	// OpenJPEG does: numbps = (log2(max) + 1) - T1_NMSEDEC_FRACBITS
+	if maxBitplane >= 0 {
+		maxBitplane -= T1_NMSEDEC_FRACBITS
+	}
 
 	// Calculate number of coding passes
 	// For lossless: encode all bit-planes
@@ -2232,7 +2340,13 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	if e.params.BlockEncoderFactory != nil {
 		blockEnc = e.params.BlockEncoderFactory(actualWidth, actualHeight)
 	} else {
-		blockEnc = t1.NewT1Encoder(actualWidth, actualHeight, 0)
+		t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
+		// Enable debug for first codeblock (Resolution 0, LL band)
+		if e.params.DebugMode && cbIdx == 0 {
+			debugName := fmt.Sprintf("CB%d (res%d)", cbIdx, cb.resLevel)
+			t1Enc.SetDebugMode(true, debugName)
+		}
+		blockEnc = t1Enc
 	}
 
 	// ROI handling: determine style/shift/inside and apply scaling/roishift
@@ -2263,6 +2377,8 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		Y0:             cb.globalY0,
 		X1:             cb.globalX0 + actualWidth,
 		Y1:             cb.globalY0 + actualHeight,
+	CBX:            cb.cbx,
+		CBY:            cb.cby,
 		Included:       false, // First inclusion in packet
 		NumPassesTotal: numPasses,
 		ZeroBitPlanes:  zeroBitPlanes,
@@ -2290,8 +2406,13 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		var err error
 
 		if t1Enc, ok := blockEnc.(*t1.T1Encoder); ok {
+			// Calculate code-block style flags (match writeCOD logic)
+			cblksty := uint8(0)
+			if e.params.NumLayers > 1 {
+				cblksty |= 0x04 // TERMALL for multi-layer
+			}
 			// Use layered encoding for T1Encoder
-			passes, completeData, err = t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, e.params.Lossless)
+			passes, completeData, err = t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, cblksty)
 		} else {
 			// Fallback to simple encoding for HTJ2K
 			completeData, err = blockEnc.Encode(cbData, numPasses, roishift)
@@ -2317,7 +2438,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		pcb.Passes = passes
 		pcb.CompleteData = completeData
 		pcb.Data = completeData
-		pcb.UseTERMALL = true
+		pcb.UseTERMALL = e.params.NumLayers > 1 // Only use TERMALL for multi-layer
 
 		return pcb
 	} else {

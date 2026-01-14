@@ -53,6 +53,14 @@ func (pe *PacketEncoder) AddCodeBlock(component, resolution, precinctIdx int, co
 	// Add code-block to precinct
 	precinct := pe.precincts[component][resolution][precinctIdx][0]
 	precinct.CodeBlocks = append(precinct.CodeBlocks, codeBlock)
+
+	// Update grid dimensions based on code-block position
+	if codeBlock.CBX+1 > precinct.NumCodeBlocksX {
+		precinct.NumCodeBlocksX = codeBlock.CBX + 1
+	}
+	if codeBlock.CBY+1 > precinct.NumCodeBlocksY {
+		precinct.NumCodeBlocksY = codeBlock.CBY + 1
+	}
 }
 
 // EncodePackets encodes all packets according to progression order
@@ -278,8 +286,8 @@ func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx 
 		return packet, nil
 	}
 
-	// Encode packet header with layer awareness
-	header, cbIncls, err := pe.encodePacketHeaderLayered(precinct, layer, resolution)
+	// Encode packet header with tag-tree encoding (matches OpenJPEG)
+	header, cbIncls, err := pe.encodePacketHeaderWithTagTree(precinct, layer, resolution)
 	if err != nil {
 		return packet, fmt.Errorf("failed to encode packet header: %w", err)
 	}
@@ -432,6 +440,20 @@ func (bw *bitWriter) writeBit(bit int) {
 		bw.buf.WriteByte(bw.bitBuf)
 		bw.bitBuf = 0
 		bw.bitCount = 0
+	}
+}
+
+// WriteBit writes a single bit (implements BitWriter interface)
+func (bw *bitWriter) WriteBit(bit int) error {
+	bw.writeBit(bit)
+	return nil
+}
+
+// writeBits writes n bits from value (MSB first)
+func (bw *bitWriter) writeBits(value, n int) {
+	for i := n - 1; i >= 0; i-- {
+		bit := (value >> i) & 1
+		bw.writeBit(bit)
 	}
 }
 

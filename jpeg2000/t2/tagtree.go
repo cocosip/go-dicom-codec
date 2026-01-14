@@ -6,15 +6,19 @@ import (
 
 // TagTree represents a hierarchical data structure for encoding/decoding
 // inclusion and zero bitplane information in JPEG 2000 packet headers.
-// Implementation follows ISO/IEC 15444-1 Section B.10.2
+// Implementation follows ISO/IEC 15444-1 Section B.10.2 and OpenJPEG's tgt.c
 type TagTree struct {
-	width       int       // Width of the leaf level (number of code-blocks)
-	height      int       // Height of the leaf level
-	levels      int       // Number of levels in the tree
-	nodes       [][]int   // Node values at each level [level][index]
-	states      [][]int   // Node states (decoded value so far) [level][index]
-	levelWidths []int     // Width of each level [level]
-	levelHeights []int    // Height of each level [level]
+	width        int       // Width of the leaf level (number of code-blocks)
+	height       int       // Height of the leaf level
+	levels       int       // Number of levels in the tree
+	nodes        [][]int   // Node values at each level [level][index]
+	states       [][]int   // Node states (decoded value so far) [level][index]
+	levelWidths  []int     // Width of each level [level]
+	levelHeights []int     // Height of each level [level]
+
+	// Encoding state (matches OpenJPEG's opj_tgt_node_t)
+	low          [][]int   // Lower bound known so far [level][index]
+	known        [][]bool  // Whether exact value is known [level][index]
 }
 
 // NewTagTree creates a new tag tree with the given leaf dimensions
@@ -53,18 +57,28 @@ func NewTagTree(width, height int) *TagTree {
 		h = (h + 1) / 2
 	}
 
-	// Allocate nodes and states for each level
+	// Allocate nodes, states, and encoding state for each level
 	tt.nodes = make([][]int, levels)
 	tt.states = make([][]int, levels)
+	tt.low = make([][]int, levels)
+	tt.known = make([][]bool, levels)
 
 	for i := 0; i < levels; i++ {
 		size := tt.levelWidths[i] * tt.levelHeights[i]
 		tt.nodes[i] = make([]int, size)
 		tt.states[i] = make([]int, size)
+		tt.low[i] = make([]int, size)
+		tt.known[i] = make([]bool, size)
 
+		// Initialize all node values to 999 (matches OpenJPEG's opj_tgt_reset)
 		// Initialize all states to 0 (no bits decoded yet)
+		// Initialize all low values to 0
+		// Initialize all known flags to false
 		for j := 0; j < size; j++ {
+			tt.nodes[i][j] = 999  // High initial value for SetValue to work
 			tt.states[i][j] = 0
+			tt.low[i][j] = 0
+			tt.known[i][j] = false
 		}
 	}
 
@@ -74,6 +88,11 @@ func NewTagTree(width, height int) *TagTree {
 // BitReader interface for reading bits from packet header
 type BitReader interface {
 	ReadBit() (int, error)
+}
+
+// BitWriter interface for writing bits to packet header
+type BitWriter interface {
+	WriteBit(bit int) error
 }
 
 // Decode decodes the tag tree value for the specified leaf position (x, y)
@@ -199,43 +218,153 @@ func (tt *TagTree) GetNumLevels() int {
 	return tt.levels
 }
 
-// GetValue returns the current decoded value at position (x, y)
-// without reading any additional bits
+// GetValue returns the current value at position (x, y)
+// For encoding, returns the node value set by SetValue
+// For decoding, returns the decoded state value
 func (tt *TagTree) GetValue(x, y int) int {
 	if x < 0 || x >= tt.width || y < 0 || y >= tt.height {
 		return 0
 	}
 
 	idx := y*tt.width + x
-	if idx >= len(tt.states[0]) {
+	if idx >= len(tt.nodes[0]) {
 		return 0
 	}
 
-	return tt.states[0][idx]
+	// Return node value (used for both encoding and decoding after decode completes)
+	// During decoding, states will be copied to nodes by the decoder
+	return tt.nodes[0][idx]
 }
 
-// SetValue sets the value at position (x, y) (used during encoding)
+// SetValue sets the value at position (x, y) and propagates to parent nodes
+// This matches OpenJPEG's opj_tgt_setvalue
 func (tt *TagTree) SetValue(x, y, value int) {
 	if x < 0 || x >= tt.width || y < 0 || y >= tt.height {
 		return
 	}
 
-	idx := y*tt.width + x
-	if idx >= len(tt.nodes[0]) {
-		return
-	}
+	// Set value at leaf level and propagate upward
+	level := 0
+	px, py := x, y
 
-	tt.nodes[0][idx] = value
-	tt.states[0][idx] = value
+	for level < tt.levels {
+		idx := py*tt.levelWidths[level] + px
+		if idx >= len(tt.nodes[level]) {
+			break
+		}
+
+		// Only update if new value is smaller (minimum propagation)
+		if tt.nodes[level][idx] > value {
+			tt.nodes[level][idx] = value
+		} else {
+			// Parent already has smaller or equal value, stop propagation
+			break
+		}
+
+		// Move to parent level
+		level++
+		if level < tt.levels {
+			px = px / 2
+			py = py / 2
+		}
+	}
 }
 
-// Reset resets all node states to 0 (for decoding a new packet)
+// Reset resets all node states and values (for decoding a new packet or resetting the tree)
+// Matches OpenJPEG's opj_tgt_reset behavior
 func (tt *TagTree) Reset() {
 	for level := 0; level < tt.levels; level++ {
 		for i := range tt.states[level] {
+			tt.nodes[level][i] = 999 // Reset to high value
 			tt.states[level][i] = 0
+			tt.low[level][i] = 0
+			tt.known[level][i] = false
 		}
 	}
+}
+
+// ResetEncoding resets encoding state (low and known) for a new packet
+// This matches OpenJPEG's opj_tgt_reset
+func (tt *TagTree) ResetEncoding() {
+	for level := 0; level < tt.levels; level++ {
+		for i := range tt.low[level] {
+			tt.nodes[level][i] = 999  // Initialize to high value
+			tt.low[level][i] = 0
+			tt.known[level][i] = false
+		}
+	}
+}
+
+// Encode encodes the tag tree value for the specified leaf position (x, y)
+// up to the threshold value
+// This matches OpenJPEG's opj_tgt_encode
+func (tt *TagTree) Encode(bw BitWriter, x, y, threshold int) error {
+	if x < 0 || x >= tt.width || y < 0 || y >= tt.height {
+		return fmt.Errorf("tag tree position out of bounds: (%d,%d) not in [0,%d)x[0,%d)",
+			x, y, tt.width, tt.height)
+	}
+
+	// Build stack from leaf to root
+	type nodePos struct {
+		level int
+		x     int
+		y     int
+		idx   int
+	}
+	stack := make([]nodePos, 0, tt.levels)
+
+	// Start at leaf
+	px, py := x, y
+	for level := 0; level < tt.levels; level++ {
+		idx := py*tt.levelWidths[level] + px
+		stack = append(stack, nodePos{level: level, x: px, y: py, idx: idx})
+		if level < tt.levels-1 {
+			px = px / 2
+			py = py / 2
+		}
+	}
+
+	// Process from root to leaf with low value propagation
+	// This matches OpenJPEG's algorithm exactly
+	low := 0 // Start with low=0 at root
+	for i := len(stack) - 1; i >= 0; i-- {
+		node := stack[i]
+		level := node.level
+		idx := node.idx
+
+		// Propagate low value from parent to child
+		// If parent's low is higher, update current node's low
+		if low > tt.low[level][idx] {
+			tt.low[level][idx] = low
+		} else {
+			low = tt.low[level][idx]
+		}
+
+		// Encode bits while low < threshold and low < node value
+		for low < threshold {
+			if low >= tt.nodes[level][idx] {
+				// Value is exactly known
+				if !tt.known[level][idx] {
+					// Write 1 bit to indicate we've reached the exact value
+					if err := bw.WriteBit(1); err != nil {
+						return err
+					}
+					tt.known[level][idx] = true
+				}
+				break
+			}
+			// Write 0 bit to indicate value is greater than low
+			if err := bw.WriteBit(0); err != nil {
+				return err
+			}
+			low++
+		}
+
+		// Update low bound for current node
+		tt.low[level][idx] = low
+	}
+
+	return nil
 }
 
 // TagTreeDecoder is an alias for TagTree for backward compatibility

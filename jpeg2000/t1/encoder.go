@@ -34,6 +34,10 @@ type T1Encoder struct {
 	resetctx     bool // Reset context on each pass
 	termall      bool // Terminate all passes
 	segmentation bool // Use segmentation symbols
+
+	// Debug mode
+	debugMode bool
+	debugName string // Debug identifier (e.g., "res0_band0_cb0")
 }
 
 // NewT1Encoder creates a new Tier-1 encoder
@@ -55,6 +59,12 @@ func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
 	t1.segmentation = (cblkstyle & 0x04) != 0 // Segmentation symbols
 
 	return t1
+}
+
+// SetDebugMode enables debug logging with an identifier
+func (t1 *T1Encoder) SetDebugMode(enabled bool, name string) {
+	t1.debugMode = enabled
+	t1.debugName = name
 }
 
 // Encode encodes a code-block
@@ -86,11 +96,37 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 	// Determine maximum bit-plane
 	maxBitplane := t1.findMaxBitplane()
-	// DEBUG removed
+
+	if t1.debugMode {
+		fmt.Printf("\n[T1 DEBUG] %s: %dx%d\n", t1.debugName, t1.width, t1.height)
+		fmt.Printf("  First 28 coefficients (row 0): ")
+		for i := 0; i < 28 && i < len(data); i++ {
+			fmt.Printf("%d ", data[i])
+		}
+		fmt.Printf("\n")
+		if len(data) >= 56 {
+			fmt.Printf("  Next 28 coefficients (row 1):  ")
+			for i := 28; i < 56 && i < len(data); i++ {
+				fmt.Printf("%d ", data[i])
+			}
+			fmt.Printf("\n")
+		}
+		fmt.Printf("  Max bitplane: %d\n", maxBitplane)
+		fmt.Printf("  Num passes requested: %d\n", numPasses)
+		if maxBitplane >= 0 {
+			fmt.Printf("  Expected total passes: %d (= (maxBitplane+1) * 3 = (%d+1) * 3)\n",
+				(maxBitplane+1)*3, maxBitplane)
+		}
+	}
+
 	if maxBitplane < 0 {
 		// All coefficients are zero
 		t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
-		return t1.mqe.Flush(), nil
+		result := t1.mqe.Flush()
+		if t1.debugMode {
+			fmt.Printf("  Output: %d bytes (all zero)\n", len(result))
+		}
+		return result, nil
 	}
 
 	// Initialize MQ encoder
@@ -150,6 +186,18 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 	// Flush MQ encoder
 	result := t1.mqe.Flush()
+
+	if t1.debugMode {
+		fmt.Printf("  Actual passes encoded: %d\n", passIdx)
+		fmt.Printf("  Output: %d bytes\n", len(result))
+		if len(result) > 0 && len(result) <= 32 {
+			fmt.Printf("  Output bytes: ")
+			for _, b := range result {
+				fmt.Printf("%02X ", b)
+			}
+			fmt.Printf("\n")
+		}
+	}
 
 	return result, nil
 }
