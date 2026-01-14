@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/cocosip/go-dicom/pkg/dicom/parser"
 	"github.com/cocosip/go-dicom/pkg/imaging"
@@ -20,8 +22,20 @@ import (
 )
 
 func main() {
-	path := `D:\1.dcm`
-	outRaw := `D:\raw_pixels.bin`
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: extract_pixels <input.dcm>")
+		fmt.Println("  Extracts raw pixel data from DICOM file")
+		fmt.Println("  Output will be saved as <input>_raw_pixels.bin")
+		os.Exit(1)
+	}
+
+	path := os.Args[1]
+
+	// Generate output filename based on input filename
+	ext := filepath.Ext(path)
+	baseName := strings.TrimSuffix(filepath.Base(path), ext)
+	outDir := filepath.Dir(path)
+	outRaw := filepath.Join(outDir, baseName+"_raw_pixels.bin")
 
 	res, err := parser.ParseFile(path, parser.WithReadOption(parser.ReadAll))
 	if err != nil {

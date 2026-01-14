@@ -24,14 +24,14 @@ func NewCodec() *Codec {
 
 // NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
 func NewCodecWithTransferSyntax(ts *transfer.Syntax) *Codec {
-    return &Codec{
-        transferSyntax: ts,
-    }
+	return &Codec{
+		transferSyntax: ts,
+	}
 }
 
 // NewPart2MultiComponentLosslessCodec creates a JPEG 2000 Part 2 Multi-component Lossless codec (UID .92)
 func NewPart2MultiComponentLosslessCodec() *Codec {
-    return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponentLosslessOnly)
+	return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponentLosslessOnly)
 }
 
 // Name returns the codec name
@@ -75,6 +75,41 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 					losslessParams.NumLevels = nInt
 				}
 			}
+			if v := parameters.GetParameter("allowMCT"); v != nil {
+				if b, ok := v.(bool); ok {
+					losslessParams.AllowMCT = b
+				}
+			}
+			if v := parameters.GetParameter("progressionOrder"); v != nil {
+				switch x := v.(type) {
+				case int:
+					if x >= 0 {
+						losslessParams.ProgressionOrder = uint8(x)
+					}
+				case uint8:
+					losslessParams.ProgressionOrder = x
+				}
+			}
+			if v := parameters.GetParameter("numLayers"); v != nil {
+				if nInt, ok := v.(int); ok {
+					losslessParams.NumLayers = nInt
+				}
+			}
+			if v := parameters.GetParameter("targetRatio"); v != nil {
+				switch x := v.(type) {
+				case float64:
+					losslessParams.TargetRatio = x
+				case float32:
+					losslessParams.TargetRatio = float64(x)
+				case int:
+					losslessParams.TargetRatio = float64(x)
+				}
+			}
+			if v := parameters.GetParameter("usePCRDOpt"); v != nil {
+				if b, ok := v.(bool); ok {
+					losslessParams.UsePCRDOpt = b
+				}
+			}
 		}
 	} else {
 		// Use defaults
@@ -94,36 +129,62 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 		int(frameInfo.BitsStored),
 		frameInfo.PixelRepresentation != 0,
 	)
-    encParams.NumLevels = losslessParams.NumLevels
-    if parameters != nil {
-        if v := parameters.GetParameter("mctMatrix"); v != nil {
-            if m, ok := v.([][]float64); ok { encParams.MCTMatrix = m }
-        }
-        if v := parameters.GetParameter("inverseMctMatrix"); v != nil {
-            if m, ok := v.([][]float64); ok { encParams.InverseMCTMatrix = m }
-        }
-        if v := parameters.GetParameter("mctOffsets"); v != nil {
-            if m, ok := v.([]int32); ok { encParams.MCTOffsets = m }
-        }
-        if v := parameters.GetParameter("mctNormScale"); v != nil {
-            switch x := v.(type) { case float64: encParams.MCTNormScale = x; case float32: encParams.MCTNormScale = float64(x) }
-        }
-        if v := parameters.GetParameter("mctAssocType"); v != nil {
-            if t, ok := v.(uint8); ok { encParams.MCTAssocType = t }
-        }
-        if v := parameters.GetParameter("mctMatrixElementType"); v != nil {
-            if t, ok := v.(uint8); ok { encParams.MCTMatrixElementType = t }
-        }
-        if v := parameters.GetParameter("mcoPrecision"); v != nil {
-            if t, ok := v.(uint8); ok { encParams.MCOPrecision = t }
-        }
-        if v := parameters.GetParameter("mcoRecordOrder"); v != nil {
-            if arr, ok := v.([]uint8); ok { encParams.MCORecordOrder = arr }
-        }
-        if v := parameters.GetParameter("mctBindings"); v != nil {
-            if arr, ok := v.([]jpeg2000.MCTBindingParams); ok { encParams.MCTBindings = arr }
-        }
-    }
+	encParams.NumLevels = losslessParams.NumLevels
+	encParams.ProgressionOrder = losslessParams.ProgressionOrder
+	encParams.NumLayers = losslessParams.NumLayers
+	encParams.TargetRatio = losslessParams.TargetRatio
+	encParams.UsePCRDOpt = losslessParams.UsePCRDOpt
+	encParams.EnableMCT = losslessParams.AllowMCT
+	if losslessParams.AllowMCT && parameters != nil {
+		if v := parameters.GetParameter("mctMatrix"); v != nil {
+			if m, ok := v.([][]float64); ok {
+				encParams.MCTMatrix = m
+			}
+		}
+		if v := parameters.GetParameter("inverseMctMatrix"); v != nil {
+			if m, ok := v.([][]float64); ok {
+				encParams.InverseMCTMatrix = m
+			}
+		}
+		if v := parameters.GetParameter("mctOffsets"); v != nil {
+			if m, ok := v.([]int32); ok {
+				encParams.MCTOffsets = m
+			}
+		}
+		if v := parameters.GetParameter("mctNormScale"); v != nil {
+			switch x := v.(type) {
+			case float64:
+				encParams.MCTNormScale = x
+			case float32:
+				encParams.MCTNormScale = float64(x)
+			}
+		}
+		if v := parameters.GetParameter("mctAssocType"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCTAssocType = t
+			}
+		}
+		if v := parameters.GetParameter("mctMatrixElementType"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCTMatrixElementType = t
+			}
+		}
+		if v := parameters.GetParameter("mcoPrecision"); v != nil {
+			if t, ok := v.(uint8); ok {
+				encParams.MCOPrecision = t
+			}
+		}
+		if v := parameters.GetParameter("mcoRecordOrder"); v != nil {
+			if arr, ok := v.([]uint8); ok {
+				encParams.MCORecordOrder = arr
+			}
+		}
+		if v := parameters.GetParameter("mctBindings"); v != nil {
+			if arr, ok := v.([]jpeg2000.MCTBindingParams); ok {
+				encParams.MCTBindings = arr
+			}
+		}
+	}
 
 	// Create encoder
 	encoder := jpeg2000.NewEncoder(encParams)

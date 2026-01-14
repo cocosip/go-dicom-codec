@@ -22,6 +22,23 @@ type JPEG2000LosslessParameters struct {
 	// For large images (>= 512x512), use more levels (5-6).
 	NumLevels int
 
+	// AllowMCT controls whether a multi-component transform (RCT/ICT or custom MCT) is applied.
+	// OpenJPEG enables MCT for RGB only when AllowMCT is true.
+	AllowMCT bool
+
+	// ProgressionOrder mirrors the JPEG 2000 progression order (0=LRCP,1=RLCP,2=RPCL,3=PCRL,4=CPRL).
+	ProgressionOrder uint8
+
+	// NumLayers controls the number of quality layers. For lossless, OpenJPEG may emit multiple layers
+	// before a final lossless layer when rate control is requested.
+	NumLayers int
+
+	// TargetRatio requests a target compression ratio; used by PCRD when >0.
+	TargetRatio float64
+
+	// UsePCRDOpt toggles PCRD-style layer allocation when layering/TargetRatio is requested.
+	UsePCRDOpt bool
+
 	// internal storage for compatibility with generic parameter interface
 	params map[string]interface{}
 }
@@ -29,8 +46,13 @@ type JPEG2000LosslessParameters struct {
 // NewLosslessParameters creates a new JPEG2000LosslessParameters with default values
 func NewLosslessParameters() *JPEG2000LosslessParameters {
 	return &JPEG2000LosslessParameters{
-		NumLevels: 5, // Default 5 decomposition levels (recommended)
-		params:    make(map[string]interface{}),
+		NumLevels:         5,  // Default 5 decomposition levels (recommended)
+		AllowMCT:          true,
+		ProgressionOrder:  0,  // LRCP
+		NumLayers:         1,  // Single layer by default
+		TargetRatio:       0,  // No target ratio
+		UsePCRDOpt:        false,
+		params:            make(map[string]interface{}),
 	}
 }
 
@@ -39,6 +61,16 @@ func (p *JPEG2000LosslessParameters) GetParameter(name string) interface{} {
 	switch name {
 	case "numLevels":
 		return p.NumLevels
+	case "allowMCT":
+		return p.AllowMCT
+	case "progressionOrder":
+		return p.ProgressionOrder
+	case "numLayers":
+		return p.NumLayers
+	case "targetRatio":
+		return p.TargetRatio
+	case "usePCRDOpt":
+		return p.UsePCRDOpt
 	default:
 		// Check custom parameters
 		return p.params[name]
@@ -52,6 +84,36 @@ func (p *JPEG2000LosslessParameters) SetParameter(name string, value interface{}
 		if v, ok := value.(int); ok {
 			p.NumLevels = v
 		}
+	case "allowMCT":
+		if v, ok := value.(bool); ok {
+			p.AllowMCT = v
+		}
+	case "progressionOrder":
+		switch v := value.(type) {
+		case uint8:
+			p.ProgressionOrder = v
+		case int:
+			if v >= 0 {
+				p.ProgressionOrder = uint8(v)
+			}
+		}
+	case "numLayers":
+		if v, ok := value.(int); ok {
+			p.NumLayers = v
+		}
+	case "targetRatio":
+		switch v := value.(type) {
+		case float64:
+			p.TargetRatio = v
+		case float32:
+			p.TargetRatio = float64(v)
+		case int:
+			p.TargetRatio = float64(v)
+		}
+	case "usePCRDOpt":
+		if v, ok := value.(bool); ok {
+			p.UsePCRDOpt = v
+		}
 	default:
 		// Store as custom parameter
 		p.params[name] = value
@@ -64,12 +126,51 @@ func (p *JPEG2000LosslessParameters) Validate() error {
 	if p.NumLevels < 0 || p.NumLevels > 6 {
 		p.NumLevels = 5 // Reset to default
 	}
+	if p.NumLayers < 1 {
+		p.NumLayers = 1
+	}
+	if p.ProgressionOrder > 4 {
+		p.ProgressionOrder = 0
+	}
+	if p.TargetRatio < 0 {
+		p.TargetRatio = 0
+	}
 	return nil
 }
 
 // WithNumLevels sets the number of decomposition levels and returns the parameters for chaining
 func (p *JPEG2000LosslessParameters) WithNumLevels(numLevels int) *JPEG2000LosslessParameters {
 	p.NumLevels = numLevels
+	return p
+}
+
+// WithAllowMCT toggles default MCT (RCT/ICT or custom matrix application)
+func (p *JPEG2000LosslessParameters) WithAllowMCT(allow bool) *JPEG2000LosslessParameters {
+	p.AllowMCT = allow
+	return p
+}
+
+// WithProgression sets the progression order (0-4)
+func (p *JPEG2000LosslessParameters) WithProgression(order uint8) *JPEG2000LosslessParameters {
+	p.ProgressionOrder = order
+	return p
+}
+
+// WithNumLayers sets number of quality layers
+func (p *JPEG2000LosslessParameters) WithNumLayers(layers int) *JPEG2000LosslessParameters {
+	p.NumLayers = layers
+	return p
+}
+
+// WithTargetRatio sets target compression ratio
+func (p *JPEG2000LosslessParameters) WithTargetRatio(ratio float64) *JPEG2000LosslessParameters {
+	p.TargetRatio = ratio
+	return p
+}
+
+// WithPCRD enables PCRD optimization flag
+func (p *JPEG2000LosslessParameters) WithPCRD(enable bool) *JPEG2000LosslessParameters {
+	p.UsePCRDOpt = enable
 	return p
 }
 

@@ -72,6 +72,7 @@ type EncodeParams struct {
 	MCTMatrix        [][]float64
 	InverseMCTMatrix [][]float64
 	MCTReversible    bool
+	EnableMCT        bool // when false, skip RCT/ICT and custom MCT
 
 	// Optional per-component offsets (Part 2 offset array)
 	MCTOffsets           []int32
@@ -128,6 +129,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 		LayerBudgetStrategy: "EXPONENTIAL",
 		LambdaTolerance:     0.01,
 		ROI:                 nil,
+		EnableMCT:           true,
 	}
 }
 
@@ -161,15 +163,17 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert pixel data: %w", err)
 	}
 
-	if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
-		e.applyCustomMCT()
-	} else if e.params.Components == 3 {
-		if e.params.Lossless {
-			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
-			e.data[0], e.data[1], e.data[2] = y, cb, cr
-		} else {
-			y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
-			e.data[0], e.data[1], e.data[2] = y, cb, cr
+	if e.params.EnableMCT {
+		if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
+			e.applyCustomMCT()
+		} else if e.params.Components == 3 {
+			if e.params.Lossless {
+				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
+				e.data[0], e.data[1], e.data[2] = y, cb, cr
+			} else {
+				y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+				e.data[0], e.data[1], e.data[2] = y, cb, cr
+			}
 		}
 	}
 	e.applyDCLevelShift()
@@ -209,15 +213,17 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 		copy(e.data[i], componentData[i])
 	}
 
-	if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
-		e.applyCustomMCT()
-	} else if e.params.Components == 3 {
-		if e.params.Lossless {
-			y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
-			e.data[0], e.data[1], e.data[2] = y, cb, cr
-		} else {
-			y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
-			e.data[0], e.data[1], e.data[2] = y, cb, cr
+	if e.params.EnableMCT {
+		if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
+			e.applyCustomMCT()
+		} else if e.params.Components == 3 {
+			if e.params.Lossless {
+				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
+				e.data[0], e.data[1], e.data[2] = y, cb, cr
+			} else {
+				y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+				e.data[0], e.data[1], e.data[2] = y, cb, cr
+			}
 		}
 	}
 	e.applyDCLevelShift()
@@ -259,7 +265,7 @@ func (e *Encoder) validateParams() error {
 		return fmt.Errorf("invalid code-block height: %d (must be power of 2, 4-1024)", p.CodeBlockHeight)
 	}
 
-	if p.NumLayers <= 0 {
+	if p.NumLayers < 1 {
 		return fmt.Errorf("invalid number of layers: %d (must be > 0)", p.NumLayers)
 	}
 
