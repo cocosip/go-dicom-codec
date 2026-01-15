@@ -2117,8 +2117,11 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		}
 		subbands = append(subbands, sb)
 	} else {
-		// For resolution r, extract HL, LH, HH from decomposition level (numLevels - r + 1)
-		level := e.params.NumLevels - resolution + 1
+		// For resolution r, extract HL, LH, HH subbands
+		// OpenJPEG uses: levelDiff = numResolutions - 1 - resno
+		// Since numResolutions = NumLevels + 1:
+		// levelDiff = (NumLevels + 1) - 1 - resolution = NumLevels - resolution
+		level := e.params.NumLevels - resolution
 		if level < 0 {
 			level = 0
 		}
