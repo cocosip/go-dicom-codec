@@ -75,6 +75,43 @@ func (pd *PacketDecoder) SetPrecinctSize(width, height int) {
 	pd.precinctHeight = height
 }
 
+// calculatePrecinctCBDimensions calculates code-block grid dimensions for a precinct
+func (pd *PacketDecoder) calculatePrecinctCBDimensions(resolution, precinctIdx int) (int, int) {
+	// For resolution 0 (LL subband)
+	if resolution == 0 {
+		llWidth := pd.imageWidth >> pd.numLevels
+		llHeight := pd.imageHeight >> pd.numLevels
+		if llWidth < 1 {
+			llWidth = 1
+		}
+		if llHeight < 1 {
+			llHeight = 1
+		}
+		numCBX := (llWidth + pd.cbWidth - 1) / pd.cbWidth
+		numCBY := (llHeight + pd.cbHeight - 1) / pd.cbHeight
+		return numCBX, numCBY
+	}
+
+	// For higher resolutions (HL, LH, HH subbands)
+	level := pd.numLevels - resolution + 1
+	sbWidth := pd.imageWidth >> level
+	sbHeight := pd.imageHeight >> level
+	if sbWidth < 1 {
+		sbWidth = 1
+	}
+	if sbHeight < 1 {
+		sbHeight = 1
+	}
+
+	// Each resolution has 3 subbands (HL, LH, HH), all with same dimensions
+	numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
+	numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
+
+	// Total code-blocks in precinct = 3 subbands × numCBX × numCBY
+	// But PacketHeaderParser expects grid for one subband, so return single subband dimensions
+	return numCBX, numCBY
+}
+
 // calculateNumPrecincts calculates the number of precincts for a given resolution
 func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
 	// Get resolution dimensions
@@ -301,45 +338,58 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 
 	packet.HeaderPresent = true
 
-	// Decode packet header
-	header, cbIncls, err := pd.decodePacketHeader(layer, resolution, component, precinctIdx)
+	// Calculate code-block grid dimensions for this precinct at this resolution
+	numCBX, numCBY := pd.calculatePrecinctCBDimensions(resolution, precinctIdx)
+
+	// Use PacketHeaderParser for tag-tree decoding (aligned with OpenJPEG)
+	parser := NewPacketHeaderParser(pd.data[pd.offset:], numCBX, numCBY)
+	parser.SetLayer(layer)
+
+	parsedPacket, err := parser.ParseHeader()
 	if err != nil {
-		return packet, fmt.Errorf("failed to decode packet header: %w", err)
+		return packet, fmt.Errorf("failed to parse packet header: %w", err)
 	}
-	packet.Header = header
-	packet.CodeBlockIncls = cbIncls
+
+	if !parsedPacket.HeaderPresent {
+		packet.HeaderPresent = false
+		return packet, nil
+	}
+
+	// Advance offset by the number of bytes consumed
+	pd.offset += parser.Position()
+
+	packet.Header = parsedPacket.Header
+	packet.CodeBlockIncls = parsedPacket.CodeBlockIncls
 
 	// Decode packet body (code-block contributions)
 	// Check if TERMALL mode is enabled (bit 2 of CodeBlockStyle)
 	useTERMALL := (pd.codeBlockStyle & 0x04) != 0
 
-	// DEBUG: Count included CBs
-	includedCBs := 0
-	for _, cbIncl := range cbIncls {
-		if cbIncl.Included {
-			includedCBs++
-		}
-	}
-
 	body := &bytes.Buffer{}
-	for i := range cbIncls {
-		cbIncl := &cbIncls[i] // Get pointer to modify the slice element
+	for i := range packet.CodeBlockIncls {
+		cbIncl := &packet.CodeBlockIncls[i] // Get pointer to modify the slice element
 		if cbIncl.Included && cbIncl.DataLength > 0 {
 			// In TERMALL mode, read PassLengths metadata first
 			if useTERMALL {
-				// Read PassLengths metadata WITH unstuffing
-				// Metadata is (1 + numPasses*2) bytes, but may contain stuffed bytes
-				// metadataStartOffset := pd.offset
+				// Read PassLengths metadata (byte-stuffed)
+				if pd.offset >= len(pd.data) {
+					continue
+				}
 
 				// Read number of passes (1 byte) with unstuffing
 				numPassesByte, bytesRead := readByteWithUnstuff(pd.data, pd.offset)
 				pd.offset += bytesRead
 				numPasses := int(numPassesByte)
 
+				// Sanity check: numPasses should match cbIncl.NumPasses
+				if numPasses != cbIncl.NumPasses {
+					// Mismatch - skip this CB
+					continue
+				}
+
 				// Read pass lengths (2 bytes each, big-endian) with unstuffing
 				cbIncl.PassLengths = make([]int, numPasses)
 				for j := 0; j < numPasses; j++ {
-					// Read 2 bytes with unstuffing
 					byte1, bytesRead1 := readByteWithUnstuff(pd.data, pd.offset)
 					pd.offset += bytesRead1
 					byte2, bytesRead2 := readByteWithUnstuff(pd.data, pd.offset)
@@ -350,13 +400,8 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				}
 				cbIncl.UseTERMALL = true
 
-				// Calculate how many stuffed bytes we actually consumed
-				//stuffedMetadataBytes := pd.offset - metadataStartOffset
+				// Adjust DataLength: subtract unstuffed metadata size
 				unstuffedMetadataBytes := 1 + numPasses*2
-
-				// Adjust cbIncl.DataLength: header contains TOTAL (unstuffed metadata + data)
-				// We've consumed the stuffed metadata bytes (tracked by pd.offset - metadataStart),
-				// but DataLength refers to unstuffed size, so subtract unstuffed metadata size
 				if cbIncl.DataLength >= unstuffedMetadataBytes {
 					cbIncl.DataLength -= unstuffedMetadataBytes
 				} else {
@@ -364,27 +409,21 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				}
 			}
 
-			// Read code-block data
-			if pd.offset+cbIncl.DataLength > len(pd.data) {
-				// Not enough data - this might be normal at end of stream
-				// Just read what's available
-				remainingData := len(pd.data) - pd.offset
-				if remainingData > 0 {
-					cbData := pd.data[pd.offset:len(pd.data)]
-					// Store the data we have and update CodeBlockIncl
-					cbIncl.Data = cbData
-					cbIncl.DataLength = len(cbData)
-					body.Write(cbData)
-					pd.offset = len(pd.data)
-				}
+			// Read code-block data with unstuffing
+			if cbIncl.DataLength == 0 {
+				continue
+			}
+			if pd.offset >= len(pd.data) {
 				break
 			}
+
 			// Read and unstuff code-block data
-			// DataLength is the UNSTUFFED length, but we need to read STUFFED bytes from bitstream
 			cbData, bytesRead := readAndUnstuff(pd.data[pd.offset:], cbIncl.DataLength)
-			cbIncl.Data = cbData
-			body.Write(cbData)
-			pd.offset += bytesRead
+			if len(cbData) > 0 {
+				cbIncl.Data = cbData
+				body.Write(cbData)
+				pd.offset += bytesRead
+			}
 		}
 	}
 	packet.Body = body.Bytes()
@@ -445,16 +484,11 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component, precin
 			cbIncl.ZeroBitplanes = zbp
 		}
 
-		// Read number of coding passes (simplified unary code)
-		numPasses := 1
-		bitsRead := 0
-		for {
-			bit, err := bitReader.readBit()
-			bitsRead++
-			if err != nil || bit == 1 {
-				break
-			}
-			numPasses++
+		// Read number of coding passes using JPEG2000 standard encoding
+		// Must match encodeNumPasses in packet_header_tagtree.go
+		numPasses, err := decodeNumPassesStandard(bitReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decode number of passes: %w", err)
 		}
 		cbIncl.NumPasses = numPasses
 
@@ -790,4 +824,72 @@ func (pd *PacketDecoder) globalPrecinctIndices(sets []map[int]struct{}) []int {
 	}
 	sort.Ints(indices)
 	return indices
+}
+
+// decodeNumPassesStandard decodes the number of coding passes using JPEG2000 standard encoding
+// Must match encodeNumPasses in packet_header_tagtree.go
+func decodeNumPassesStandard(br *bitReader) (int, error) {
+	// Number of passes is encoded with a variable-length code (OpenJPEG opj_t2_getnumpasses):
+	// 0           → 1 pass (1 bit)
+	// 10          → 2 passes (2 bits)
+	// 11xx        → 3-5 passes where xx ≠ 11 (4 bits total)
+	// 1111xxxxx   → 6-36 passes where xxxxx ≠ 11111 (9 bits total)
+	// 111111111xxxxxxx → 37-164 passes (16 bits total)
+
+	// Read first bit
+	bit1, err := br.readBit()
+	if err != nil {
+		return 0, err
+	}
+	if bit1 == 0 {
+		return 1, nil
+	}
+
+	// Read second bit
+	bit2, err := br.readBit()
+	if err != nil {
+		return 0, err
+	}
+	if bit2 == 0 {
+		return 2, nil
+	}
+
+	// Read 2 bits
+	val2 := 0
+	for i := 0; i < 2; i++ {
+		bit, err := br.readBit()
+		if err != nil {
+			return 0, err
+		}
+		val2 = (val2 << 1) | bit
+	}
+	if val2 != 3 {
+		// 11xx where xx ≠ 11 → 3-5 passes
+		return 3 + val2, nil
+	}
+
+	// Read 5 bits
+	val5 := 0
+	for i := 0; i < 5; i++ {
+		bit, err := br.readBit()
+		if err != nil {
+			return 0, err
+		}
+		val5 = (val5 << 1) | bit
+	}
+	if val5 != 31 {
+		// 1111xxxxx where xxxxx ≠ 11111 → 6-36 passes
+		return 6 + val5, nil
+	}
+
+	// Read 7 bits for 37-164 passes
+	val7 := 0
+	for i := 0; i < 7; i++ {
+		bit, err := br.readBit()
+		if err != nil {
+			return 0, err
+		}
+		val7 = (val7 << 1) | bit
+	}
+	return 37 + val7, nil
 }

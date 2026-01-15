@@ -18,8 +18,10 @@ func TestMCT_RCT_LosslessRoundTrip(t *testing.T) {
             }
         }
     }
+
     params := DefaultEncodeParams(width, height, 3, 8, false)
     params.NumLevels = 1
+    params.Lossless = true
     enc := NewEncoder(params)
     encoded, err := enc.EncodeComponents(comps)
     if err != nil {

@@ -816,7 +816,9 @@ func (d *Decoder) decodeTiles() error {
 		fmt.Printf("DEBUG decoder: BitDepth=%d, IsSigned=%v\n", d.bitDepth, d.isSigned)
 	}
 
-	// Apply inverse DC level shift for unsigned data
+	// Apply inverse DC level shift AFTER inverse MCT (to match OpenJPEG order)
+	// OpenJPEG decode: T1^-1 -> DWT^-1 -> MCT^-1 -> DC shift^-1
+	// This is the exact reverse of encode: DC shift -> MCT -> DWT -> T1
 	d.applyInverseDCLevelShift()
 
 	// DEBUG: Print first few values after inverse DC level shift

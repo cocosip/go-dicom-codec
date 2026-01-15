@@ -242,13 +242,15 @@ func encodeNumPasses(bw *bitWriter, n int) error {
 		val := 0x0c | (n - 3)
 		bw.writeBits(val, 4)
 	} else if n <= 36 {
-		// 6-36 passes: "111100000" + 5-bit value (9 bits total)
-		// 0x1e0 = 0b111100000 (upper 4 bits are 1111, next 5 bits are 00000)
+		// 6-36 passes: "1111xxxxx" (9 bits total)
+		// 0x1e0 = 0b111100000 (prefix 1111, then 5 bits for value)
+		// OpenJPEG: opj_bio_write(bio, 0x1e0 | (n - 6), 9)
 		val := 0x1e0 | (n - 6)
 		bw.writeBits(val, 9)
 	} else if n <= 164 {
-		// 37-164 passes: "1111111110000000" + 7-bit value (16 bits total)
-		// 0xff80 = 0b1111111110000000 (upper 9 bits are 1, next 7 bits are 0)
+		// 37-164 passes: "111111111" + 7-bit value (16 bits total)
+		// 0xff80 = 0b1111111110000000 (prefix 111111111, then 7 bits for value)
+		// OpenJPEG: opj_bio_write(bio, 0xff80 | (n - 37), 16)
 		val := 0xff80 | (n - 37)
 		bw.writeBits(val, 16)
 	} else {

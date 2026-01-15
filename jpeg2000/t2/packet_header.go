@@ -191,53 +191,60 @@ func (php *PacketHeaderParser) readBit() (int, error) {
 }
 
 // decodeNumPasses decodes the number of coding passes
-// Reference: ISO/IEC 15444-1:2019 Annex B.10.7
+// Reference: OpenJPEG's opj_t2_getnumpasses() in t2.c
+// Must match encodeNumPasses in packet_header_tagtree.go
 func (php *PacketHeaderParser) decodeNumPasses() (int, error) {
 	// Number of passes is encoded with a variable-length code:
-	// 0       → 1 pass
-	// 10      → 2 passes
-	// 110     → 3-5 passes (+ 2-bit value)
-	// 111     → 6-37 passes (+ 5-bit value)
-	// etc.
+	// 0           → 1 pass (1 bit)
+	// 10          → 2 passes (2 bits)
+	// 11xx        → 3-5 passes where xx ≠ 11 (4 bits total)
+	// 1111xxxxx   → 6-36 passes where xxxxx ≠ 11111 (9 bits total)
+	// 111111111xxxxxxx → 37-164 passes (16 bits total)
 
+	// Read first bit
 	bit1, err := php.readBit()
 	if err != nil {
 		return 0, err
 	}
-
 	if bit1 == 0 {
 		return 1, nil
 	}
 
+	// Read second bit
 	bit2, err := php.readBit()
 	if err != nil {
 		return 0, err
 	}
-
 	if bit2 == 0 {
 		return 2, nil
 	}
 
-	bit3, err := php.readBit()
+	// Read 2 bits
+	val2, err := php.readBits(2)
 	if err != nil {
 		return 0, err
 	}
-
-	if bit3 == 0 {
-		// 110 + 2 bits → 3-5 passes (value 0-2 maps to 3-5)
-		val, err := php.readBits(2)
-		if err != nil {
-			return 0, err
-		}
-		return 3 + val, nil
+	if val2 != 3 {
+		// 11xx where xx ≠ 11 → 3-5 passes
+		return 3 + val2, nil
 	}
 
-	// 111 + 5 bits → 6-37 passes (value 0-31 maps to 6-37)
-	val, err := php.readBits(5)
+	// Read 5 bits
+	val5, err := php.readBits(5)
 	if err != nil {
 		return 0, err
 	}
-	return 6 + val, nil
+	if val5 != 31 {
+		// 1111xxxxx where xxxxx ≠ 11111 → 6-36 passes
+		return 6 + val5, nil
+	}
+
+	// Read 7 bits for 37-164 passes
+	val7, err := php.readBits(7)
+	if err != nil {
+		return 0, err
+	}
+	return 37 + val7, nil
 }
 
 // decodeDataLength decodes the length of code-block contribution

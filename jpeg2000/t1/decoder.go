@@ -72,7 +72,9 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 // passLengths[i] indicates the cumulative byte position after pass i (not used for now)
 // This method assumes TERMALL mode is enabled
 func (t1 *T1Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
-	return t1.DecodeLayeredWithMode(data, passLengths, maxBitplane, roishift, true, true)
+	// By default: TERMALL mode with contexts preserved (not reset)
+	// This matches OpenJPEG's behavior for TERMALL without RESET flag
+	return t1.DecodeLayeredWithMode(data, passLengths, maxBitplane, roishift, true, false)
 }
 
 // DecodeLayeredWithMode decodes a code-block with optional TERMALL mode
@@ -93,16 +95,18 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 
 	// TERMALL mode: decode pass-by-pass using passLengths to slice data
 	// Match encoder behavior:
-	// - Lossless: reset contexts after each pass (create new decoder)
-	// - Lossy: preserve contexts across passes (use SetData to update data while keeping contexts)
+	// - By default: PRESERVE contexts across passes (TERMALL without RESET flag)
+	// - With RESET flag (lossless=true): reset contexts after each pass
+	// Note: In TERMALL mode, each pass is flushed independently, so we need
+	// to create a new MQC decoder for each pass's data, but contexts are preserved
 	t1.roishift = roishift
 	numPasses := len(passLengths)
 
 	passIdx := 0
 	prevEnd := 0
 
-	// For lossy mode: create decoder once, then use SetData for subsequent passes
-	var mqcInitialized bool
+	// Track previous contexts for TERMALL mode
+	var prevContexts []uint8
 
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
 		// Clear VISIT flags at start of each bitplane
@@ -125,25 +129,30 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			passData := data[prevEnd:currentEnd]
 
 			// TERMALL mode: each pass is flushed independently by encoder
-			// Encoder resets C/A/ct after flush but preserves contexts in lossy mode
-			if lossless {
-				// Lossless: always use fresh decoder (reset contexts)
+			// Each pass needs a fresh MQC decoder initialization (reset C/A/ct)
+			// but contexts can be preserved or reset based on RESET flag
+			if passIdx == 0 || lossless {
+				// First pass OR lossless mode (RESET flag set): create decoder with reset contexts
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				// Set initial context states to match OpenJPEG's opj_mqc_setstate calls
+				// These optimize decoding by providing better probability estimates
+				t1.mqc.SetContextState(CTX_UNI, 46) // Uniform context: state 46, MPS=0
+				t1.mqc.SetContextState(CTX_RL, 3)   // Run-length context: state 3, MPS=0
+				t1.mqc.SetContextState(0, 4)        // Zero-coding context 0: state 4, MPS=0
 			} else {
-				// Lossy: preserve contexts across passes
-				if !mqcInitialized {
-					// First pass: create new decoder
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-					mqcInitialized = true
-				} else {
-					// Subsequent passes: update data while keeping contexts
-					t1.mqc.SetData(passData)
-				}
+				// Subsequent passes in non-lossless mode: preserve contexts from previous pass
+				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
+
 			prevEnd = currentEnd
 
 			if err := t1.decodeSigPropPass(); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
+			}
+
+			// Save contexts for next pass (if not resetting)
+			if !lossless {
+				prevContexts = t1.mqc.GetContexts()
 			}
 
 			passIdx++
@@ -157,24 +166,24 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			}
 			passData := data[prevEnd:currentEnd]
 
-			// TERMALL mode: each pass is flushed independently by encoder
-			// Encoder resets C/A/ct after flush but preserves contexts in lossy mode
-			if lossless {
-				// Lossless: always use fresh decoder (reset contexts)
+			// TERMALL mode: each pass needs fresh MQC decoder but contexts preserved (unless RESET flag)
+			if passIdx == 0 || lossless {
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(0, 4)
 			} else {
-				// Lossy: preserve contexts across passes
-				if !mqcInitialized {
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-					mqcInitialized = true
-				} else {
-					t1.mqc.SetData(passData)
-				}
+				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
 			prevEnd = currentEnd
 
 			if err := t1.decodeMagRefPass(); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
+			}
+
+			// Save contexts for next pass
+			if !lossless {
+				prevContexts = t1.mqc.GetContexts()
 			}
 
 			passIdx++
@@ -188,24 +197,24 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			}
 			passData := data[prevEnd:currentEnd]
 
-			// TERMALL mode: each pass is flushed independently by encoder
-			// Encoder resets C/A/ct after flush but preserves contexts in lossy mode
-			if lossless {
-				// Lossless: always use fresh decoder (reset contexts)
+			// TERMALL mode: each pass needs fresh MQC decoder but contexts preserved (unless RESET flag)
+			if passIdx == 0 || lossless {
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(0, 4)
 			} else {
-				// Lossy: preserve contexts across passes
-				if !mqcInitialized {
-					t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-					mqcInitialized = true
-				} else {
-					t1.mqc.SetData(passData)
-				}
+				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
 			prevEnd = currentEnd
 
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
+			}
+
+			// Save contexts for next pass
+			if !lossless {
+				prevContexts = t1.mqc.GetContexts()
 			}
 
 			passIdx++
@@ -229,7 +238,16 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 
 	t1.roishift = roishift
 
-	// DEBUG removed
+	// DEBUG: Print decoder input parameters
+	fmt.Printf("\n[T1 DECODER DEBUG] %dx%d\n", t1.width, t1.height)
+	fmt.Printf("  Input data: %d bytes\n", len(data))
+	fmt.Printf("  NumPasses: %d, MaxBitplane: %d, ROIShift: %d, TERMALL: %v\n",
+		numPasses, maxBitplane, roishift, useTERMALL)
+	fmt.Printf("  First 10 bytes: ")
+	for i := 0; i < 10 && i < len(data); i++ {
+		fmt.Printf("%02x ", data[i])
+	}
+	fmt.Printf("\n")
 
 	// Initialize MQ decoder
 	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
@@ -308,6 +326,19 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 			t1.mqc.ResetContexts()
 		}
 	}
+
+	// DEBUG: Print decoder output (padded data)
+	paddedWidth := t1.width + 2
+	fmt.Printf("  Decoding complete. Passes decoded: %d\n", passIdx)
+	fmt.Printf("  First 10 coefficients (padded): ")
+	for i := 0; i < 10; i++ {
+		// First row starts at paddedWidth + 1 (skip top padding and left padding)
+		idx := paddedWidth + 1 + i
+		if idx < len(t1.data) {
+			fmt.Printf("%d ", t1.data[idx])
+		}
+	}
+	fmt.Printf("\n")
 
 	return nil
 }
@@ -399,6 +430,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 }
 
 // GetData returns the decoded coefficients (without padding)
+// Note: Does NOT apply T1_NMSEDEC_FRACBITS inverse scaling - that should be done by the caller (tile decoder)
 func (t1 *T1Decoder) GetData() []int32 {
 	// Extract data without padding
 	result := make([]int32, t1.width*t1.height)

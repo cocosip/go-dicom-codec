@@ -286,7 +286,8 @@ func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx 
 		return packet, nil
 	}
 
-	// Encode packet header with tag-tree encoding (matches OpenJPEG)
+	// Encode packet header with tag-tree encoding (aligned with OpenJPEG)
+	// This properly handles PassLengths and TERMALL metadata for multi-layer encoding
 	header, cbIncls, err := pe.encodePacketHeaderWithTagTree(precinct, layer, resolution)
 	if err != nil {
 		return packet, fmt.Errorf("failed to encode packet header: %w", err)
@@ -387,14 +388,9 @@ func (pe *PacketEncoder) encodePacketHeader(precinct *Precinct, layer int) ([]by
 		numPasses := cb.NumPassesTotal
 		cbIncl.NumPasses = numPasses
 
-		// Encode number of passes (simplified - should use more efficient encoding)
-		// Using a simple unary code
-		for i := 0; i < numPasses; i++ {
-			if i < numPasses-1 {
-				bitBuf.writeBit(0)
-			} else {
-				bitBuf.writeBit(1)
-			}
+		// Encode number of passes using JPEG2000 standard encoding
+		if err := encodeNumPasses(bitBuf, numPasses); err != nil {
+			return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
 		}
 
 		// Encode data length

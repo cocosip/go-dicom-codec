@@ -65,6 +65,10 @@ func TestTERMALLDetailed(t *testing.T) {
 	passData0 := completeData[0:passLengths[0]]
 	t.Logf("\nPass 0 data: % 02x", passData0)
 	decoder0.mqc = mqc.NewMQDecoder(passData0, NUM_CONTEXTS)
+	// Set initial context states to match OpenJPEG
+	decoder0.mqc.SetContextState(CTX_UNI, 46)
+	decoder0.mqc.SetContextState(CTX_RL, 3)
+	decoder0.mqc.SetContextState(0, 4)
 	decoder0.roishift = 0
 	decoder0.bitplane = 0
 	if err := decoder0.decodeSigPropPass(); err != nil {
@@ -78,13 +82,17 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder1 := NewT1Decoder(width, height, 0)
 	// First do SPP
 	decoder1.mqc = mqc.NewMQDecoder(completeData[0:passLengths[0]], NUM_CONTEXTS)
+	decoder1.mqc.SetContextState(CTX_UNI, 46)
+	decoder1.mqc.SetContextState(CTX_RL, 3)
+	decoder1.mqc.SetContextState(0, 4)
 	decoder1.roishift = 0
 	decoder1.bitplane = 0
 	decoder1.decodeSigPropPass()
-	// Then do MRP with new decoder
+	// Then do MRP with preserved contexts
 	passData1 := completeData[passLengths[0]:passLengths[1]]
 	t.Logf("\nPass 1 data: % 02x", passData1)
-	decoder1.mqc = mqc.NewMQDecoder(passData1, NUM_CONTEXTS)
+	prevContexts := decoder1.mqc.GetContexts()
+	decoder1.mqc = mqc.NewMQDecoderWithContexts(passData1, prevContexts)
 	if err := decoder1.decodeMagRefPass(); err != nil {
 		t.Logf("Pass 1 decode failed: %v", err)
 	} else {
@@ -96,24 +104,21 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder2 := NewT1Decoder(width, height, 0)
 	// SPP
 	decoder2.mqc = mqc.NewMQDecoder(completeData[0:passLengths[0]], NUM_CONTEXTS)
+	decoder2.mqc.SetContextState(CTX_UNI, 46)
+	decoder2.mqc.SetContextState(CTX_RL, 3)
+	decoder2.mqc.SetContextState(0, 4)
 	decoder2.roishift = 0
 	decoder2.bitplane = 0
 	decoder2.decodeSigPropPass()
-	// MRP
-	decoder2.mqc = mqc.NewMQDecoder(completeData[passLengths[0]:passLengths[1]], NUM_CONTEXTS)
+	// MRP with preserved contexts
+	prevContexts2 := decoder2.mqc.GetContexts()
+	decoder2.mqc = mqc.NewMQDecoderWithContexts(completeData[passLengths[0]:passLengths[1]], prevContexts2)
 	decoder2.decodeMagRefPass()
-	// CP
+	// CP with preserved contexts
 	passData2 := completeData[passLengths[1]:passLengths[2]]
 	t.Logf("\nPass 2 data: % 02x", passData2)
-
-	// EXPERIMENT: Skip leading 0x00 byte if present
-	if len(passData2) > 0 && passData2[0] == 0x00 {
-		t.Logf("Skipping leading 0x00 byte")
-		passData2 = passData2[1:]
-		t.Logf("Pass 2 data after skip: % 02x", passData2)
-	}
-
-	decoder2.mqc = mqc.NewMQDecoder(passData2, NUM_CONTEXTS)
+	prevContexts3 := decoder2.mqc.GetContexts()
+	decoder2.mqc = mqc.NewMQDecoderWithContexts(passData2, prevContexts3)
 	if err := decoder2.decodeCleanupPass(); err != nil {
 		t.Logf("Pass 2 decode failed: %v", err)
 	} else {

@@ -220,6 +220,10 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 		copy(e.data[i], componentData[i])
 	}
 
+	// Apply DC level shift BEFORE MCT (to match OpenJPEG order)
+	// OpenJPEG: DC shift -> MCT -> DWT -> T1
+	e.applyDCLevelShift()
+
 	if e.params.EnableMCT {
 		if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
 			e.applyCustomMCT()
@@ -233,7 +237,6 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 			}
 		}
 	}
-	e.applyDCLevelShift()
 
 	// Build codestream
 	codestream, err := e.buildCodestream()
@@ -1760,6 +1763,7 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 	}
 
 	// Write packets to bitstream with byte-stuffing
+	// OpenJPEG applies byte-stuffing to entire packet stream
 	buf := &bytes.Buffer{}
 	for _, packet := range packets {
 		// Write packet header with byte-stuffing
@@ -2126,8 +2130,10 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			level = 0
 		}
 
-		// Use ceiling division to match JPEG2000 standard and OpenJPEG
-		divisor := 1 << level
+		// CRITICAL FIX: OpenJPEG uses (level_no + 1) for HL/LH/HH subband dimensions
+		// See tcd.c: opj_int64_ceildivpow2(..., (OPJ_INT32)(l_level_no + 1))
+		// This means we divide by 2^(level+1) instead of 2^level
+		divisor := 1 << (level + 1)
 		sbWidth := (width + divisor - 1) / divisor   // Ceiling division
 		sbHeight := (height + divisor - 1) / divisor // Ceiling division
 		scale := divisor
@@ -2306,37 +2312,46 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	}
 
 	// Calculate max bitplane from scaled data
-	maxBitplane := calculateMaxBitplane(cbData)
+	rawMaxBitplane := calculateMaxBitplane(cbData)
 
 	// Adjust maxBitplane by adding 1 then subtracting T1_NMSEDEC_FRACBITS
 	// OpenJPEG does: numbps = (floorlog2(max) + 1) - T1_NMSEDEC_FRACBITS
 	// The +1 is critical - it converts from bit position to number of bits
-	if maxBitplane >= 0 {
-		maxBitplane = (maxBitplane + 1) - T1_NMSEDEC_FRACBITS
+	numbps := rawMaxBitplane
+	if numbps >= 0 {
+		numbps = (numbps + 1) - T1_NMSEDEC_FRACBITS
 	}
 
 	// Calculate number of coding passes
 	// For lossless: encode all bit-planes
 	// Each bit-plane has 3 passes: SPP, MRP, CP
-	numPasses := (maxBitplane + 1) * 3
-	if maxBitplane < 0 {
+	numPasses := (numbps + 1) * 3
+	if numbps < 0 {
 		// All zeros - still need at least 1 pass for valid packet header
 		numPasses = 1
 	}
 
 	// Calculate zero bit-planes
 	// ZeroBitPlanes = number of MSB bit-planes that are all zero
-	// Formula: effectiveBitDepth - 1 - maxBitplane
+	// Formula: effectiveBitDepth - 1 - rawMaxBitplane
+	// IMPORTANT: Use rawMaxBitplane (before T1_NMSEDEC_FRACBITS adjustment) because
+	// effectiveBitDepth already includes T1_NMSEDEC_FRACBITS
 	// Note: After wavelet transform, coefficients may need extra bits
 	// 5/3 reversible wavelet adds 1 bit per decomposition level
-	effectiveBitDepth := e.params.BitDepth + e.params.NumLevels
+	effectiveBitDepth := e.params.BitDepth + e.params.NumLevels + T1_NMSEDEC_FRACBITS
 
 	zeroBitPlanes := 0
-	if maxBitplane < 0 {
+	if rawMaxBitplane < 0 {
 		// All data is zero, all bit-planes are zero
 		zeroBitPlanes = effectiveBitDepth
 	} else {
-		zeroBitPlanes = effectiveBitDepth - 1 - maxBitplane
+		zeroBitPlanes = effectiveBitDepth - 1 - rawMaxBitplane
+	}
+
+	// DEBUG: Print zeroBitPlanes for first codeblock
+	if e.params.DebugMode && cbIdx == 0 {
+		fmt.Printf("  effectiveBitDepth=%d, rawMaxBitplane=%d, numbps=%d, zeroBitPlanes=%d\n",
+			effectiveBitDepth, rawMaxBitplane, numbps, zeroBitPlanes)
 	}
 
 	// Create block encoder (EBCOT T1 or HTJ2K)
@@ -2452,7 +2467,6 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			// Return minimal code-block on error
 			encodedData = []byte{0x00}
 			numPasses = 1
-			maxBitplane = 0
 			zeroBitPlanes = effectiveBitDepth
 			pcb.NumPassesTotal = numPasses
 			pcb.ZeroBitPlanes = zeroBitPlanes

@@ -48,18 +48,18 @@ func TestPacketHeaderParserDecodeNumPasses(t *testing.T) {
 			expected: 3,
 		},
 		{
-			name:     "5 passes (110 + 10)",
-			bits:     []byte{0xD0}, // Bits 11010 = 0xD0 (11010000) → 110 + 10 = 3+2 = 5
+			name:     "5 passes (1110)",
+			bits:     []byte{0xE0}, // Bits 1110 = 0xE0 (11100000) → 11+10 (val=2) = 3+2 = 5
 			expected: 5,
 		},
 		{
-			name:     "6 passes (111 + 00000)",
-			bits:     []byte{0xE0, 0x00}, // Bits 11100000 00000000 → 111 + 00000 = 6+0 = 6
+			name:     "6 passes (1111 + 00000)",
+			bits:     []byte{0xF0, 0x00}, // Bits 11110000 0 → 1111+00000 (9 bits total) = 6+0 = 6
 			expected: 6,
 		},
 		{
-			name:     "10 passes (111 + 00100)",
-			bits:     []byte{0xE4, 0x00}, // Bits 11100100 00000000 → 111 + 00100 = 6+4 = 10
+			name:     "10 passes (1111 + 00100)",
+			bits:     []byte{0xF2, 0x00}, // Bits 11110010 0 → 1111+00100 (9 bits total) = 6+4 = 10
 			expected: 10,
 		},
 	}
