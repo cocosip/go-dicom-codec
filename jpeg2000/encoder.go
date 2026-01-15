@@ -2305,10 +2305,11 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	// Calculate max bitplane from scaled data
 	maxBitplane := calculateMaxBitplane(cbData)
 
-	// Adjust maxBitplane by subtracting T1_NMSEDEC_FRACBITS
-	// OpenJPEG does: numbps = (log2(max) + 1) - T1_NMSEDEC_FRACBITS
+	// Adjust maxBitplane by adding 1 then subtracting T1_NMSEDEC_FRACBITS
+	// OpenJPEG does: numbps = (floorlog2(max) + 1) - T1_NMSEDEC_FRACBITS
+	// The +1 is critical - it converts from bit position to number of bits
 	if maxBitplane >= 0 {
-		maxBitplane -= T1_NMSEDEC_FRACBITS
+		maxBitplane = (maxBitplane + 1) - T1_NMSEDEC_FRACBITS
 	}
 
 	// Calculate number of coding passes
