@@ -2682,11 +2682,30 @@ func (e *Encoder) applyDCLevelShift() {
 		return
 	}
 
+	// DEBUG: Print before DC shift
+	if len(e.data) > 0 && len(e.data[0]) > 0 {
+		fmt.Printf("DEBUG encoder: Before DC shift, first 10 values: ")
+		for i := 0; i < 10 && i < len(e.data[0]); i++ {
+			fmt.Printf("%d ", e.data[0][i])
+		}
+		fmt.Printf("\n")
+	}
+
 	// Unsigned data - subtract 2^(bitDepth-1)
 	shift := int32(1 << (e.params.BitDepth - 1))
+	fmt.Printf("DEBUG encoder: BitDepth=%d, shift=%d\n", e.params.BitDepth, shift)
 	for comp := range e.data {
 		for i := range e.data[comp] {
 			e.data[comp][i] -= shift
 		}
+	}
+
+	// DEBUG: Print after DC shift
+	if len(e.data) > 0 && len(e.data[0]) > 0 {
+		fmt.Printf("DEBUG encoder: After DC shift, first 10 values: ")
+		for i := 0; i < 10 && i < len(e.data[0]); i++ {
+			fmt.Printf("%d ", e.data[0][i])
+		}
+		fmt.Printf("\n")
 	}
 }

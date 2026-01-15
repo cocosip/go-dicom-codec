@@ -806,6 +806,28 @@ func (d *Decoder) decodeTiles() error {
 		}
 	}
 
+	// DEBUG: Print first few values before inverse DC level shift
+	if len(d.data) > 0 && len(d.data[0]) > 0 {
+		fmt.Printf("DEBUG decoder: Before inverse DC shift, first 10 values: ")
+		for i := 0; i < 10 && i < len(d.data[0]); i++ {
+			fmt.Printf("%d ", d.data[0][i])
+		}
+		fmt.Printf("\n")
+		fmt.Printf("DEBUG decoder: BitDepth=%d, IsSigned=%v\n", d.bitDepth, d.isSigned)
+	}
+
+	// Apply inverse DC level shift for unsigned data
+	d.applyInverseDCLevelShift()
+
+	// DEBUG: Print first few values after inverse DC level shift
+	if len(d.data) > 0 && len(d.data[0]) > 0 {
+		fmt.Printf("DEBUG decoder: After inverse DC shift, first 10 values: ")
+		for i := 0; i < 10 && i < len(d.data[0]); i++ {
+			fmt.Printf("%d ", d.data[0][i])
+		}
+		fmt.Printf("\n")
+	}
+
 	return nil
 }
 

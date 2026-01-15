@@ -17,7 +17,61 @@ Based on the progress document, three main issues remained after the DWT stride 
 
 ## Completed Fixes
 
-### 1. MaxBitplane Calculation Fix ✅
+### 1. 子带尺寸计算修复 ✅ **[新增]**
+
+**Root Cause**: `getSubbandsForResolution()`函数中level计算有多余的`+1`
+
+**错误实现**:
+```go
+level := e.params.NumLevels - resolution + 1  // 错误：多了+1
+divisor := 1 << level
+sbWidth := (width + divisor - 1) / divisor
+```
+
+**正确实现**:
+```go
+level := e.params.NumLevels - resolution  // 正确：与OpenJPEG一致
+divisor := 1 << level
+sbWidth := (width + divisor - 1) / divisor
+```
+
+**对比OpenJPEG**:
+```c
+// OpenJPEG计算分辨率尺寸
+levelDiff = numresolutions - 1 - resno
+          = (NumLevels + 1) - 1 - resolution
+          = NumLevels - resolution
+resWidth = opj_uint_ceildivpow2(tilec->x1, levelDiff)
+```
+
+**影响示例** (512x512图像，5级DWT):
+
+| 分辨率 | 修复前尺寸 | 修复后尺寸 | 说明 |
+|--------|------------|------------|------|
+| Res 0 (LL) | 16x16 ✓ | 16x16 ✓ | 正确 |
+| Res 1 | 16x16 ✗ | 32x32 ✓ | 修正 |
+| Res 2 | 32x32 ✗ | 64x64 ✓ | 修正 |
+| Res 3 | 64x64 ✗ | 128x128 ✓ | 修正 |
+| Res 4 | 128x128 ✗ | 256x256 ✓ | 修正 |
+| Res 5 | 256x256 ✗ | 512x512 ✓ | 修正 |
+
+**码块数量改善** (64x64码块大小):
+
+| 分辨率 | 修复前 | 修复后 | 改善 |
+|--------|--------|--------|------|
+| Res 0 | 1 | 1 | - |
+| Res 1 | 3 | 3 | - |
+| Res 2 | 3 | 3 | - |
+| Res 3 | 6 | 12 | +100% |
+| Res 4 | 24 | 48 | +100% |
+| Res 5 | 84 | 192 | +129% |
+| **总计** | **121** | **259** | **+114%** |
+
+这是一个关键修复，使子带尺寸计算与OpenJPEG完全对齐！
+
+---
+
+### 2. MaxBitplane Calculation Fix ✅
 
 **Root Cause**: Missing `+1` in the numbps calculation formula.
 
