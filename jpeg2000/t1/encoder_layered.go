@@ -29,31 +29,13 @@ func isLayerBoundary(passIdx int, layerBoundaries []int) bool {
 	return false
 }
 
-// shouldTerminatePass determines if a pass should be terminated (flushed)
-// Matches OpenJPEG's opj_t1_enc_is_term_pass logic
-// Parameters:
-//   - passIdx: current pass index (0-based)
-//   - numPasses: total number of passes to encode
-//   - layerBoundaries: pass indices that end each layer
-//   - cblksty: code-block style flags (0x04 = TERMALL)
-func shouldTerminatePass(passIdx int, numPasses int, layerBoundaries []int, cblksty uint8) bool {
-	// Last pass is always terminated (matches: passtype==2 && bpno==0)
-	if passIdx == numPasses-1 {
+func shouldTerminateLayer(passIdx int, layerBoundaries []int, cblksty uint8) bool {
+	if (cblksty & CblkStyleTermAll) != 0 {
 		return true
 	}
-
-	// TERMALL flag (0x04): terminate all passes
-	if (cblksty & 0x04) != 0 {
-		return true
-	}
-
-	// For multi-layer encoding without explicit TERMALL, terminate at layer boundaries
 	if len(layerBoundaries) > 1 && isLayerBoundary(passIdx, layerBoundaries) {
 		return true
 	}
-
-	// Note: LAZY flag (0x01) handling not implemented yet
-	// For now, only last pass terminates in single-layer mode without TERMALL
 	return false
 }
 
@@ -78,6 +60,7 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			t1.width*t1.height, len(data))
 	}
 
+	t1.cblkstyle = int(cblksty)
 	t1.roishift = roishift
 
 	// Copy data with padding
@@ -141,22 +124,32 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 		// Three coding passes per bit-plane
 		// 1. Significance Propagation Pass (SPP)
 		if passIdx < numPasses {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
 			if prevTerminated {
-				t1.mqe.RestartInitEnc()
+				if raw {
+					t1.mqe.BypassInitEnc()
+				} else {
+					t1.mqe.RestartInitEnc()
+				}
 				prevTerminated = false
 			}
-			if err := t1.encodeSigPropPass(); err != nil {
+			if err := t1.encodeSigPropPass(raw); err != nil {
 				return nil, nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 
-			// Determine if this pass should be terminated
-			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
+			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
 			if shouldTerminate {
-				t1.mqe.FlushToOutput()
+				if raw {
+					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
 				prevTerminated = true
 			}
-			// RESET flag (0x02): reset contexts after each pass
-			if (cblksty & 0x02) != 0 {
+			// RESET flag: reset contexts after each MQ pass
+			if (cblksty&CblkStyleReset) != 0 && !raw {
 				t1.mqe.ResetContexts()
 				t1.mqe.SetContextState(CTX_UNI, 46)
 				t1.mqe.SetContextState(CTX_RL, 3)
@@ -166,7 +159,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			actualBytes := t1.mqe.NumBytes()
 			rate := actualBytes
 			if !shouldTerminate {
-				rate += 3 // rate_extra_bytes for non-terminated passes
+				if raw {
+					rate += t1.mqe.BypassExtraBytes((t1.cblkstyle & CblkStylePterm) != 0)
+				} else {
+					rate += 3
+				}
 			}
 
 			// Calculate accurate distortion after this pass
@@ -187,21 +184,32 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 		// 2. Magnitude Refinement Pass (MRP)
 		if passIdx < numPasses {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
 			if prevTerminated {
-				t1.mqe.RestartInitEnc()
+				if raw {
+					t1.mqe.BypassInitEnc()
+				} else {
+					t1.mqe.RestartInitEnc()
+				}
 				prevTerminated = false
 			}
-			if err := t1.encodeMagRefPass(); err != nil {
+			if err := t1.encodeMagRefPass(raw); err != nil {
 				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 
-			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
+			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
 			if shouldTerminate {
-				t1.mqe.FlushToOutput()
+				if raw {
+					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
 				prevTerminated = true
 			}
-			// RESET flag (0x02): reset contexts after each pass
-			if (cblksty & 0x02) != 0 {
+			// RESET flag: reset contexts after each MQ pass
+			if (cblksty&CblkStyleReset) != 0 && !raw {
 				t1.mqe.ResetContexts()
 				t1.mqe.SetContextState(CTX_UNI, 46)
 				t1.mqe.SetContextState(CTX_RL, 3)
@@ -211,7 +219,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			actualBytes := t1.mqe.NumBytes()
 			rate := actualBytes
 			if !shouldTerminate {
-				rate += 3
+				if raw {
+					rate += t1.mqe.BypassExtraBytes((t1.cblkstyle & CblkStylePterm) != 0)
+				} else {
+					rate += 3
+				}
 			}
 
 			// Calculate accurate distortion after MRP
@@ -240,13 +252,21 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
 
-			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
+			if (t1.cblkstyle & CblkStyleSegsym) != 0 {
+				t1.mqe.SegmarkEnc()
+			}
+
+			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 2, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
 			if shouldTerminate {
-				t1.mqe.FlushToOutput()
+				if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
 				prevTerminated = true
 			}
-			// RESET flag (0x02): reset contexts after each pass
-			if (cblksty & 0x02) != 0 {
+			// RESET flag: reset contexts after each MQ pass
+			if (cblksty & CblkStyleReset) != 0 {
 				t1.mqe.ResetContexts()
 				t1.mqe.SetContextState(CTX_UNI, 46)
 				t1.mqe.SetContextState(CTX_RL, 3)
@@ -275,24 +295,13 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			passIdx++
 		}
 
-		// Reset context if required
-		if t1.resetctx && passIdx < numPasses {
-			t1.mqe.ResetContexts()
-			t1.mqe.SetContextState(CTX_UNI, 46)
-			t1.mqe.SetContextState(CTX_RL, 3)
-			t1.mqe.SetContextState(CTX_ZC_START, 4)
-		}
 	}
 
 	// Get final MQ data
 	var fullMQData []byte
-	// If TERMALL is set or multi-layer, all passes have been terminated with FlushToOutput()
-	// Otherwise, final flush needed for non-terminated passes
-	if (cblksty&0x04) != 0 || len(layerBoundaries) > 1 {
-		// TERMALL mode or multi-layer: all passes already flushed
+	if prevTerminated {
 		fullMQData = t1.mqe.GetBuffer()
 	} else {
-		// Single-layer without TERMALL: final flush needed
 		fullMQData = t1.mqe.Flush()
 	}
 

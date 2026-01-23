@@ -71,7 +71,7 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder0.mqc.SetContextState(0, 4)
 	decoder0.roishift = 0
 	decoder0.bitplane = 0
-	if err := decoder0.decodeSigPropPass(); err != nil {
+	if err := decoder0.decodeSigPropPass(false); err != nil {
 		t.Logf("Pass 0 decode failed: %v", err)
 	} else {
 		decoded0 := decoder0.GetData()
@@ -87,13 +87,13 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder1.mqc.SetContextState(0, 4)
 	decoder1.roishift = 0
 	decoder1.bitplane = 0
-	decoder1.decodeSigPropPass()
+	decoder1.decodeSigPropPass(false)
 	// Then do MRP with preserved contexts
 	passData1 := completeData[passLengths[0]:passLengths[1]]
 	t.Logf("\nPass 1 data: % 02x", passData1)
 	prevContexts := decoder1.mqc.GetContexts()
 	decoder1.mqc = mqc.NewMQDecoderWithContexts(passData1, prevContexts)
-	if err := decoder1.decodeMagRefPass(); err != nil {
+	if err := decoder1.decodeMagRefPass(false); err != nil {
 		t.Logf("Pass 1 decode failed: %v", err)
 	} else {
 		decoded1 := decoder1.GetData()
@@ -109,11 +109,11 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder2.mqc.SetContextState(0, 4)
 	decoder2.roishift = 0
 	decoder2.bitplane = 0
-	decoder2.decodeSigPropPass()
+	decoder2.decodeSigPropPass(false)
 	// MRP with preserved contexts
 	prevContexts2 := decoder2.mqc.GetContexts()
 	decoder2.mqc = mqc.NewMQDecoderWithContexts(completeData[passLengths[0]:passLengths[1]], prevContexts2)
-	decoder2.decodeMagRefPass()
+	decoder2.decodeMagRefPass(false)
 	// CP with preserved contexts
 	passData2 := completeData[passLengths[1]:passLengths[2]]
 	t.Logf("\nPass 2 data: % 02x", passData2)

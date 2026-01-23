@@ -17,6 +17,8 @@ type MQEncoder struct {
 	contexts []uint8 // Context states (one per context)
 }
 
+const bypassCtInit = 0xDEADBEEF
+
 // NewMQEncoder creates a new MQ encoder
 func NewMQEncoder(numContexts int) *MQEncoder {
 	mqe := &MQEncoder{
@@ -204,6 +206,85 @@ func (mqe *MQEncoder) FlushToOutput() {
 	}
 }
 
+// ErtermEnc performs predictable termination (PTERM) flush.
+func (mqe *MQEncoder) ErtermEnc() {
+	k := 11 - mqe.ct + 1
+	for k > 0 {
+		mqe.c <<= uint(mqe.ct)
+		mqe.ct = 0
+		mqe.byteout()
+		k -= mqe.ct
+	}
+	if mqe.buffer[mqe.bp] != 0xFF {
+		mqe.byteout()
+	}
+}
+
+// BypassInitEnc initializes RAW (bypass) encoding.
+func (mqe *MQEncoder) BypassInitEnc() {
+	mqe.c = 0
+	mqe.ct = bypassCtInit
+}
+
+// BypassEncode encodes a bit in RAW (bypass) mode.
+func (mqe *MQEncoder) BypassEncode(bit int) {
+	if mqe.ct == bypassCtInit {
+		mqe.ct = 8
+	}
+	mqe.ct--
+	mqe.c += uint32(bit) << uint(mqe.ct)
+	if mqe.ct == 0 {
+		if mqe.bp >= len(mqe.buffer) {
+			mqe.ensureIndex(mqe.bp)
+		}
+		mqe.buffer[mqe.bp] = byte(mqe.c)
+		mqe.ct = 8
+		if mqe.buffer[mqe.bp] == 0xFF {
+			mqe.ct = 7
+		}
+		mqe.bp++
+		mqe.c = 0
+	}
+}
+
+// BypassExtraBytes returns the extra bytes for a non-terminating RAW pass.
+func (mqe *MQEncoder) BypassExtraBytes(erterm bool) int {
+	if mqe.ct < 7 {
+		return 1
+	}
+	if mqe.ct == 7 && (erterm || (mqe.bp > 0 && mqe.buffer[mqe.bp-1] != 0xFF)) {
+		return 1
+	}
+	return 0
+}
+
+// BypassFlushEnc flushes RAW (bypass) encoding with optional ERTERM behavior.
+func (mqe *MQEncoder) BypassFlushEnc(erterm bool) {
+	if mqe.ct < 7 || (mqe.ct == 7 && (erterm || (mqe.bp > 0 && mqe.buffer[mqe.bp-1] != 0xFF))) {
+		bitValue := 0
+		for mqe.ct > 0 {
+			mqe.ct--
+			mqe.c += uint32(bitValue) << uint(mqe.ct)
+			if bitValue == 0 {
+				bitValue = 1
+			} else {
+				bitValue = 0
+			}
+		}
+		if mqe.bp >= len(mqe.buffer) {
+			mqe.ensureIndex(mqe.bp)
+		}
+		mqe.buffer[mqe.bp] = byte(mqe.c)
+		mqe.bp++
+	} else if mqe.ct == 7 && mqe.bp > 0 && mqe.buffer[mqe.bp-1] == 0xFF {
+		if !erterm {
+			mqe.bp--
+		}
+	} else if mqe.ct == 8 && !erterm && mqe.bp > 1 && mqe.buffer[mqe.bp-1] == 0x7F && mqe.buffer[mqe.bp-2] == 0xFF {
+		mqe.bp -= 2
+	}
+}
+
 // Reset resets the encoder state
 func (mqe *MQEncoder) Reset() {
 	mqe.buffer = make([]byte, 1, 1024)
@@ -212,6 +293,13 @@ func (mqe *MQEncoder) Reset() {
 	mqe.a = 0x8000
 	mqe.c = 0
 	mqe.ct = 12
+}
+
+// SegmarkEnc emits the SEGSYM marker in MQ mode.
+func (mqe *MQEncoder) SegmarkEnc() {
+	for i := 1; i < 5; i++ {
+		mqe.Encode(i%2, 18)
+	}
 }
 
 // ResetContext resets a context to initial state

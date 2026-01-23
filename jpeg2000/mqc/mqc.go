@@ -52,6 +52,25 @@ func NewMQDecoder(data []byte, numContexts int) *MQDecoder {
 	return mqc
 }
 
+// NewRawDecoder creates a new RAW (bypass) decoder.
+func NewRawDecoder(data []byte) *MQDecoder {
+	dataWithSentinel := make([]byte, len(data)+2)
+	copy(dataWithSentinel, data)
+	dataWithSentinel[len(data)] = 0xFF
+	dataWithSentinel[len(data)+1] = 0xFF
+
+	mqc := &MQDecoder{
+		data:    dataWithSentinel,
+		bp:      0,
+		dataLen: len(data),
+		a:       0,
+		c:       0,
+		ct:      0,
+	}
+
+	return mqc
+}
+
 // SetData updates the decoder's data buffer while preserving contexts
 // This is used for lossy TERMALL mode where contexts should be maintained across passes
 func (mqc *MQDecoder) SetData(data []byte) {
@@ -125,6 +144,22 @@ func (mqc *MQDecoder) init() {
 	mqc.c <<= 7
 	mqc.ct -= 7
 	mqc.a = 0x8000
+}
+
+// RawInit reinitializes the decoder for RAW (bypass) decoding.
+func (mqc *MQDecoder) RawInit(data []byte) {
+	dataWithSentinel := make([]byte, len(data)+2)
+	copy(dataWithSentinel, data)
+	dataWithSentinel[len(data)] = 0xFF
+	dataWithSentinel[len(data)+1] = 0xFF
+
+	mqc.data = dataWithSentinel
+	mqc.bp = 0
+	mqc.dataLen = len(data)
+	mqc.eos = 0
+	mqc.a = 0
+	mqc.c = 0
+	mqc.ct = 0
 }
 
 // Decode decodes a single bit using the specified context
@@ -233,6 +268,29 @@ func (mqc *MQDecoder) bytein() {
 		mqc.c += uint32(next) << 8
 		mqc.ct = 8
 	}
+}
+
+// RawDecode decodes a single bit using RAW (bypass) decoding.
+func (mqc *MQDecoder) RawDecode() int {
+	if mqc.ct == 0 {
+		if mqc.c == 0xFF {
+			next := mqc.data[mqc.bp]
+			if next > 0x8F {
+				mqc.c = 0xFF
+				mqc.ct = 8
+			} else {
+				mqc.c = uint32(next)
+				mqc.bp++
+				mqc.ct = 7
+			}
+		} else {
+			mqc.c = uint32(mqc.data[mqc.bp])
+			mqc.bp++
+			mqc.ct = 8
+		}
+	}
+	mqc.ct--
+	return int((mqc.c >> uint(mqc.ct)) & 0x01)
 }
 
 // ResetContext resets a context to initial state

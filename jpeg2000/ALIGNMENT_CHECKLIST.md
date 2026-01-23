@@ -1,0 +1,97 @@
+﻿# JPEG2000 / HTJ2K Alignment Checklist
+
+Legend: [ ] = pending, [x] = done
+
+## JPEG2000 (align with OpenJPEG)
+
+### MQ arithmetic coder
+- [ ] 47-state table values and transitions (Qe/MPS/LPS)
+- [ ] Renormalization/byteout/carry propagation rules
+- [ ] Byte stuffing (0xFF/0x00) and flush behavior
+
+### Tier-1 (EBCOT) coding
+- [ ] Context modeling (19 contexts) and neighbor significance rules
+- [ ] Pass sequencing (SPP/MRP/CP) and termination conditions
+- [ ] Bitplane range (zero-bitplane/max-bitplane) and ROI shift handling
+
+### Wavelet transforms (DWT)
+- [ ] 5/3 reversible lifting steps and boundary extension
+- [ ] 9/7 irreversible lifting steps and rounding policy
+- [ ] Multi-level decomposition alignment and precision growth
+
+### Quantization & dequantization
+- [ ] QCD/QCC step size derivation per subband
+- [ ] Reversible vs irreversible quantization paths
+- [ ] Dequantization precision and rounding rules
+
+### Tile/component/subband layout
+- [ ] Tile grid boundary rules and component sampling alignment
+- [ ] Resolution/subband coordinate mapping and clipping
+- [ ] Codeblock partitioning rules at image edges
+
+### Precincts & geometry
+- [ ] Precinct size scaling across resolutions
+- [ ] Subband-to-precinct coordinate mapping
+- [ ] Packet iteration order for precincts
+
+### Tier-2 packetization & progression
+- [ ] Progression iterator order (LRCP/RLCP/RPCL/PCRL/CPRL)
+- [ ] Packet header tag-tree coding rules
+- [ ] Empty packet handling and layer allocation
+
+### Rate-distortion / PCRD
+- [ ] Distortion metric computation and pass weighting
+- [ ] Layer target rate allocation and truncation policy
+- [ ] Multi-tile rate budget aggregation
+
+### ROI (Region of Interest)
+- [ ] MaxShift behavior and bitplane scaling rules
+- [ ] General scaling ROI semantics and marker handling
+- [ ] ROI priority when multiple regions exist
+
+### Colorspace
+- [ ] RCT/ICT coefficients and rounding behavior
+- [ ] Channel order and signed/unsigned conversions
+- [ ] RGB<->YCbCr transform precision
+
+### Multi-component (Part 2)
+- [ ] MCT/MCC/MCO marker parsing and execution order
+- [ ] AssocType semantics and record order precedence
+- [ ] Precision/rounding rules and reversible conditions
+
+### Codestream parsing & generation
+- [ ] Marker set and ordering (SOC/SIZ/COD/COC/QCD/QCC/POC/RGN/SOT/SOD/EOC)
+- [ ] Default segment inheritance rules (COD->COC, QCD->QCC)
+- [ ] Tile-part length/count fields and concatenation rules
+
+## HTJ2K (align with OpenJPH)
+
+### VLC / UVLC tables
+- [ ] Annex C table completeness and indexing
+- [ ] Context selection (neighbor significance)
+- [ ] UVLC residual decoding rules
+
+### MEL (run-length coder)
+- [ ] 13-state machine and exponent mapping
+- [ ] Bit packing and flush behavior
+- [ ] Decoder resync and boundary cases
+
+### MagSgn
+- [ ] Magnitude/sign packing order
+- [ ] Bit significance and sign handling
+- [ ] Byte alignment at block end
+
+### Exponent predictor / quad-pair
+- [ ] Exponent prediction inputs and edge handling
+- [ ] Quad-pair decoding order and state updates
+- [ ] Coupling with VLC context selection
+
+### HT block framework
+- [ ] Quad scanning order and block segmentation
+- [ ] MagSgn/MEL/VLC stream growth direction and interleave
+- [ ] HT block header and termination rules
+
+### HTJ2K pipeline integration
+- [ ] Packet header integration with HT codeblocks
+- [ ] Rate control interaction with HT passes
+- [ ] Decoder error resilience and resync points

@@ -34,6 +34,16 @@ const (
 	NUM_CONTEXTS = 19
 )
 
+// Code-block style flags (ISO/IEC 15444-1 Table A.18)
+const (
+	CblkStyleLazy   = 0x01
+	CblkStyleReset  = 0x02
+	CblkStyleTermAll = 0x04
+	CblkStyleVSC    = 0x08
+	CblkStylePterm  = 0x10
+	CblkStyleSegsym = 0x20
+)
+
 // Coefficient state flags
 // Each coefficient in a code-block has associated state flags
 const (

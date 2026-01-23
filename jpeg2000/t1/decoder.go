@@ -54,9 +54,9 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 	// Parse code-block style flags
 	// Reference: ISO/IEC 15444-1:2019 Table A.18
 	t1.cblkstyle = cblkstyle
-	t1.resetctx = (cblkstyle & 0x02) != 0     // Bit 1: Reset context probabilities
-	t1.termall = (cblkstyle & 0x04) != 0      // Bit 2: Termination on each coding pass
-	t1.segmentation = (cblkstyle & 0x20) != 0 // Bit 5: Segmentation symbols
+	t1.resetctx = (cblkstyle & CblkStyleReset) != 0
+	t1.termall = (cblkstyle & CblkStyleTermAll) != 0
+	t1.segmentation = (cblkstyle & CblkStyleSegsym) != 0
 
 	return t1
 }
@@ -110,8 +110,9 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 	passIdx := 0
 	prevEnd := 0
 
-	// Track previous contexts for TERMALL mode
+	// Track previous contexts for TERMALL mode (MQ only)
 	var prevContexts []uint8
+	resetContexts := lossless || (t1.cblkstyle&CblkStyleReset) != 0
 
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
 		// Clear VISIT flags at start of each bitplane
@@ -127,6 +128,7 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 
 		// Decode Significance Propagation Pass (SPP)
 		if passIdx < numPasses {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
 			currentEnd := passLengths[passIdx]
 			if currentEnd < prevEnd || currentEnd > len(data) {
 				return fmt.Errorf("invalid pass length for SPP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
@@ -134,29 +136,26 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			passData := data[prevEnd:currentEnd]
 
 			// TERMALL mode: each pass is flushed independently by encoder
-			// Each pass needs a fresh MQC decoder initialization (reset C/A/ct)
-			// but contexts can be preserved or reset based on RESET flag
-			if passIdx == 0 || lossless {
-				// First pass OR lossless mode (RESET flag set): create decoder with reset contexts
+			// RAW passes use bypass decoding; MQ passes may preserve contexts.
+			if raw {
+				t1.mqc = mqc.NewRawDecoder(passData)
+			} else if passIdx == 0 || resetContexts {
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				// Set initial context states to match OpenJPEG's opj_mqc_setstate calls
-				// These optimize decoding by providing better probability estimates
-				t1.mqc.SetContextState(CTX_UNI, 46) // Uniform context: state 46, MPS=0
-				t1.mqc.SetContextState(CTX_RL, 3)   // Run-length context: state 3, MPS=0
-				t1.mqc.SetContextState(0, 4)        // Zero-coding context 0: state 4, MPS=0
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			} else {
-				// Subsequent passes in non-lossless mode: preserve contexts from previous pass
 				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
 
 			prevEnd = currentEnd
 
-			if err := t1.decodeSigPropPass(); err != nil {
+			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 
 			// Save contexts for next pass (if not resetting)
-			if !lossless {
+			if !raw && !resetContexts {
 				prevContexts = t1.mqc.GetContexts()
 			}
 
@@ -165,29 +164,31 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 
 		// Decode Magnitude Refinement Pass (MRP)
 		if passIdx < numPasses {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
 			currentEnd := passLengths[passIdx]
 			if currentEnd < prevEnd || currentEnd > len(data) {
 				return fmt.Errorf("invalid pass length for MRP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
 			}
 			passData := data[prevEnd:currentEnd]
 
-			// TERMALL mode: each pass needs fresh MQC decoder but contexts preserved (unless RESET flag)
-			if passIdx == 0 || lossless {
+			if raw {
+				t1.mqc = mqc.NewRawDecoder(passData)
+			} else if passIdx == 0 || resetContexts {
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
 				t1.mqc.SetContextState(CTX_UNI, 46)
 				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(0, 4)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			} else {
 				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
 			prevEnd = currentEnd
 
-			if err := t1.decodeMagRefPass(); err != nil {
+			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 
 			// Save contexts for next pass
-			if !lossless {
+			if !raw && !resetContexts {
 				prevContexts = t1.mqc.GetContexts()
 			}
 
@@ -202,12 +203,11 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			}
 			passData := data[prevEnd:currentEnd]
 
-			// TERMALL mode: each pass needs fresh MQC decoder but contexts preserved (unless RESET flag)
-			if passIdx == 0 || lossless {
+			if passIdx == 0 || resetContexts {
 				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
 				t1.mqc.SetContextState(CTX_UNI, 46)
 				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(0, 4)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			} else {
 				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 			}
@@ -216,9 +216,14 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
+			if t1.segmentation {
+				for i := 0; i < 4; i++ {
+					t1.mqc.Decode(CTX_UNI)
+				}
+			}
 
 			// Save contexts for next pass
-			if !lossless {
+			if !resetContexts {
 				prevContexts = t1.mqc.GetContexts()
 			}
 
@@ -275,7 +280,8 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		// 3. Cleanup Pass (CP)
 
 		if passIdx < numPasses {
-			if err := t1.decodeSigPropPass(); err != nil {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
+			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 			passIdx++
@@ -292,7 +298,8 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		}
 
 		if passIdx < numPasses {
-			if err := t1.decodeMagRefPass(); err != nil {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
+			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
@@ -311,6 +318,11 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		if passIdx < numPasses {
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
+			}
+			if t1.segmentation {
+				for i := 0; i < 4; i++ {
+					t1.mqc.Decode(CTX_UNI)
+				}
 			}
 			passIdx++
 
@@ -399,14 +411,16 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		// DEBUG removed
 
 		if passIdx < numPasses {
-			if err := t1.decodeSigPropPass(); err != nil {
+			raw := isLazyRawPass(t1.bitplane, startBitplane, 0, t1.cblkstyle)
+			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
 			passIdx++
 		}
 
 		if passIdx < numPasses {
-			if err := t1.decodeMagRefPass(); err != nil {
+			raw := isLazyRawPass(t1.bitplane, startBitplane, 1, t1.cblkstyle)
+			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
 			passIdx++
@@ -415,6 +429,11 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		if passIdx < numPasses {
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
+			}
+			if t1.segmentation {
+				for i := 0; i < 4; i++ {
+					t1.mqc.Decode(CTX_UNI)
+				}
 			}
 			passIdx++
 		}
@@ -453,7 +472,7 @@ func (t1 *T1Decoder) GetData() []int32 {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Decoder) decodeSigPropPass() error {
+func (t1 *T1Decoder) decodeSigPropPass(raw bool) error {
 	paddedWidth := t1.width + 2
 
 	for y := 0; y < t1.height; y++ {
@@ -473,17 +492,25 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 
 			// Decode significance bit
 			ctx := getZeroCodingContext(flags, t1.orientation)
-			bit := t1.mqc.Decode(int(ctx))
+			bit := 0
+			if raw {
+				bit = t1.mqc.RawDecode()
+			} else {
+				bit = t1.mqc.Decode(int(ctx))
+			}
 
 			if bit != 0 {
 				// Coefficient becomes significant
 				// Decode sign bit
-				signCtx := getSignCodingContext(flags)
-				signBit := t1.mqc.Decode(int(signCtx))
-
-				// Apply sign prediction
-				signPred := getSignPrediction(flags)
-				sign := signBit ^ signPred
+				sign := 0
+				if raw {
+					sign = t1.mqc.RawDecode()
+				} else {
+					signCtx := getSignCodingContext(flags)
+					signBit := t1.mqc.Decode(int(signCtx))
+					signPred := getSignPrediction(flags)
+					sign = signBit ^ signPred
+				}
 
 				// Set coefficient value (2^bitplane) and sign
 				// Note: This is the first time this coefficient becomes significant
@@ -515,7 +542,7 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 
 // decodeMagRefPass decodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Decoder) decodeMagRefPass() error {
+func (t1 *T1Decoder) decodeMagRefPass(raw bool) error {
 	paddedWidth := t1.width + 2
 
 	for y := 0; y < t1.height; y++ {
@@ -530,7 +557,12 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 
 			// Decode refinement bit
 			ctx := getMagRefinementContext(flags)
-			bit := t1.mqc.Decode(int(ctx))
+			bit := 0
+			if raw {
+				bit = t1.mqc.RawDecode()
+			} else {
+				bit = t1.mqc.Decode(int(ctx))
+			}
 
 			// Update coefficient magnitude
 			if bit != 0 {

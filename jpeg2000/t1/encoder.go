@@ -40,6 +40,34 @@ type T1Encoder struct {
 
 }
 
+func isLazyRawPass(bitplane int, maxBitplane int, passType int, cblkstyle int) bool {
+	if (cblkstyle & CblkStyleLazy) == 0 {
+		return false
+	}
+	if passType >= 2 {
+		return false
+	}
+	return bitplane < (maxBitplane-3)
+}
+
+func isTerminatingPass(bitplane int, maxBitplane int, passType int, cblkstyle int) bool {
+	if passType == 2 && bitplane == 0 {
+		return true
+	}
+	if (cblkstyle & CblkStyleTermAll) != 0 {
+		return true
+	}
+	if (cblkstyle & CblkStyleLazy) != 0 {
+		if bitplane == (maxBitplane-3) && passType == 2 {
+			return true
+		}
+		if bitplane < (maxBitplane-3) && passType > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // NewT1Encoder creates a new Tier-1 encoder
 func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
 	// Add padding for boundary conditions (1 pixel on each side)
@@ -55,9 +83,9 @@ func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
 	// Parse code-block style flags
 	// Reference: ISO/IEC 15444-1 Table A.18
 	t1.cblkstyle = cblkstyle
-	t1.resetctx = (cblkstyle & 0x02) != 0     // Reset context probabilities
-	t1.termall = (cblkstyle & 0x04) != 0      // Termination on each coding pass
-	t1.segmentation = (cblkstyle & 0x20) != 0 // Segmentation symbols
+	t1.resetctx = (cblkstyle & CblkStyleReset) != 0
+	t1.termall = (cblkstyle & CblkStyleTermAll) != 0
+	t1.segmentation = (cblkstyle & CblkStyleSegsym) != 0
 
 	return t1
 }
@@ -113,6 +141,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 	// Encode bit-planes from MSB to LSB
 	// Each bit-plane has up to 3 coding passes
 	passIdx := 0
+	prevTerminated := false
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
 		// Clear VISIT flags at start of each bitplane
 		// This ensures coefficients can be processed in passes of this bitplane
@@ -134,39 +163,108 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 		// 3. Cleanup Pass (CP)
 
 		if passIdx < numPasses {
-			if err := t1.encodeSigPropPass(); err != nil {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
+			if prevTerminated {
+				if raw {
+					t1.mqe.BypassInitEnc()
+				} else {
+					t1.mqe.RestartInitEnc()
+				}
+				prevTerminated = false
+			}
+			if err := t1.encodeSigPropPass(raw); err != nil {
 				return nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-			passIdx++
-		}
-
-		if passIdx < numPasses {
-			if err := t1.encodeMagRefPass(); err != nil {
-				return nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
+			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
+			if terminated {
+				if raw {
+					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
+				prevTerminated = true
+			}
+			if t1.resetctx && !raw {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
 			}
 			passIdx++
 		}
 
 		if passIdx < numPasses {
+			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
+			if prevTerminated {
+				if raw {
+					t1.mqe.BypassInitEnc()
+				} else {
+					t1.mqe.RestartInitEnc()
+				}
+				prevTerminated = false
+			}
+			if err := t1.encodeMagRefPass(raw); err != nil {
+				return nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
+			}
+			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
+			if terminated {
+				if raw {
+					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
+				prevTerminated = true
+			}
+			if t1.resetctx && !raw {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
+			}
+			passIdx++
+		}
+
+		if passIdx < numPasses {
+			if prevTerminated {
+				t1.mqe.RestartInitEnc()
+				prevTerminated = false
+			}
 			if err := t1.encodeCleanupPass(); err != nil {
 				return nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
+			if t1.segmentation {
+				t1.mqe.SegmarkEnc()
+			}
+			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 2, t1.cblkstyle)
+			if terminated {
+				if (t1.cblkstyle & CblkStylePterm) != 0 {
+					t1.mqe.ErtermEnc()
+				} else {
+					t1.mqe.FlushToOutput()
+				}
+				prevTerminated = true
+			}
+			if t1.resetctx {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
+			}
 			passIdx++
-		}
-
-		// DEBUG removed
-
-		// Reset context if required
-		if t1.resetctx && passIdx < numPasses {
-			t1.mqe.ResetContexts()
-			t1.mqe.SetContextState(CTX_UNI, 46)
-			t1.mqe.SetContextState(CTX_RL, 3)
-			t1.mqe.SetContextState(CTX_ZC_START, 4)
 		}
 	}
 
-	// Flush MQ encoder
-	result := t1.mqe.Flush()
+	// Flush MQ encoder if last pass is not terminated
+	var result []byte
+	if prevTerminated {
+		result = t1.mqe.GetBuffer()
+	} else {
+		result = t1.mqe.Flush()
+	}
 
 	return result, nil
 }
@@ -205,7 +303,7 @@ func (t1 *T1Encoder) findMaxBitplane() int {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Encoder) encodeSigPropPass() error {
+func (t1 *T1Encoder) encodeSigPropPass(raw bool) error {
 	paddedWidth := t1.width + 2
 
 	for y := 0; y < t1.height; y++ {
@@ -232,7 +330,11 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 			// Encode significance bit
 			ctx := getZeroCodingContext(flags, t1.orientation)
-			t1.mqe.Encode(int(isSig), int(ctx))
+			if raw {
+				t1.mqe.BypassEncode(int(isSig))
+			} else {
+				t1.mqe.Encode(int(isSig), int(ctx))
+			}
 
 			if isSig != 0 {
 				// Coefficient becomes significant
@@ -243,9 +345,13 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 					t1.flags[idx] |= T1_SIGN
 				}
 
-				signCtx := getSignCodingContext(flags)
-				signPred := getSignPrediction(flags)
-				t1.mqe.Encode(signBit^signPred, int(signCtx))
+				if raw {
+					t1.mqe.BypassEncode(signBit)
+				} else {
+					signCtx := getSignCodingContext(flags)
+					signPred := getSignPrediction(flags)
+					t1.mqe.Encode(signBit^signPred, int(signCtx))
+				}
 
 				// Mark as significant and visited (prevent MRP from processing)
 				t1.flags[idx] |= T1_SIG | T1_VISIT
@@ -262,7 +368,7 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 
 // encodeMagRefPass encodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Encoder) encodeMagRefPass() error {
+func (t1 *T1Encoder) encodeMagRefPass(raw bool) error {
 	paddedWidth := t1.width + 2
 
 	for y := 0; y < t1.height; y++ {
@@ -284,7 +390,11 @@ func (t1 *T1Encoder) encodeMagRefPass() error {
 
 			// Encode refinement bit
 			ctx := getMagRefinementContext(flags)
-			t1.mqe.Encode(int(refBit), int(ctx))
+			if raw {
+				t1.mqe.BypassEncode(int(refBit))
+			} else {
+				t1.mqe.Encode(int(refBit), int(ctx))
+			}
 
 			// Mark as refined and visited (so CP won't refine again)
 			t1.flags[idx] |= T1_REFINE | T1_VISIT
