@@ -19,7 +19,7 @@ func TestRectangleSizes(t *testing.T) {
             }
 
             maxBitplane := 7
-            numPasses := (maxBitplane + 1) * 3
+            numPasses := (maxBitplane * 3) + 1
 
             enc := NewT1Encoder(width, height, 0)
             encoded, err := enc.Encode(input, numPasses, 0)

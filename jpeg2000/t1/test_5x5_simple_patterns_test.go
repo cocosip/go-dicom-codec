@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Test5x5SimplePatterns - 测试5x5的各种简单模式
+// Test5x5SimplePatterns - 娴嬭瘯5x5鐨勫悇绉嶇畝鍗曟ā寮?
 func Test5x5SimplePatterns(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -54,7 +54,7 @@ func Test5x5SimplePatterns(t *testing.T) {
 				}
 			}
 
-			// 打印pattern
+			// 鎵撳嵃pattern
 			t.Log("\nInput pattern:")
 			for y := 0; y < size; y++ {
 				line := ""
@@ -66,7 +66,7 @@ func Test5x5SimplePatterns(t *testing.T) {
 			}
 
 			maxBitplane := CalculateMaxBitplane(input)
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			encoder := NewT1Encoder(size, size, 0)
 			encoded, err := encoder.Encode(input, numPasses, 0)
@@ -98,3 +98,4 @@ func Test5x5SimplePatterns(t *testing.T) {
 		})
 	}
 }
+

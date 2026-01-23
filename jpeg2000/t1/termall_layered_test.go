@@ -32,7 +32,7 @@ func TestTERMALLLayered(t *testing.T) {
 		}
 	}
 
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 	t.Logf("Testing %dx%d block, maxBitplane=%d, numPasses=%d", width, height, maxBitplane, numPasses)
 
 	// Encode with TERMALL mode
@@ -87,3 +87,4 @@ func TestTERMALLLayered(t *testing.T) {
 		t.Errorf("Expected perfect reconstruction (error=0), got error=%d", maxError)
 	}
 }
+

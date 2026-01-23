@@ -313,42 +313,17 @@ func getZeroCodingContext(flags uint32, orient int) uint8 {
 	return lut_ctxno_zc[offset+idx]
 }
 
-// getMagRefinementContext returns the magnitude refinement context
+// getMagRefinementContext returns the magnitude refinement context.
+// OpenJPEG logic: neighbor significance selects ctx 14/15, and MU/REFINE selects ctx 16.
 func getMagRefinementContext(flags uint32) uint8 {
-	// Count significant neighbors
-	sum := 0
-	if flags&T1_SIG_E != 0 {
-		sum++
+	ctx := uint8(CTX_MR_START)
+	if flags&T1_SIG_NEIGHBORS != 0 {
+		ctx = CTX_MR_START + 1
 	}
-	if flags&T1_SIG_W != 0 {
-		sum++
+	if flags&T1_REFINE != 0 {
+		ctx = CTX_MR_START + 2
 	}
-	if flags&T1_SIG_N != 0 {
-		sum++
-	}
-	if flags&T1_SIG_S != 0 {
-		sum++
-	}
-	if flags&T1_SIG_NE != 0 {
-		sum++
-	}
-	if flags&T1_SIG_NW != 0 {
-		sum++
-	}
-	if flags&T1_SIG_SE != 0 {
-		sum++
-	}
-	if flags&T1_SIG_SW != 0 {
-		sum++
-	}
-
-	if sum >= 3 {
-		return 2 + CTX_MR_START
-	}
-	if sum >= 1 {
-		return 1 + CTX_MR_START
-	}
-	return 0 + CTX_MR_START
+	return ctx
 }
 
 // getSignPrediction returns the predicted sign based on neighbor signs

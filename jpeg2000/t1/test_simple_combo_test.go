@@ -36,7 +36,7 @@ func TestSimpleCombo(t *testing.T) {
 				maxBitplane--
 			}
 
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			enc := NewT1Encoder(2, 2, 0)
 			encoded, err := enc.Encode(tt.data, numPasses, 0)
@@ -60,3 +60,4 @@ func TestSimpleCombo(t *testing.T) {
 		})
 	}
 }
+

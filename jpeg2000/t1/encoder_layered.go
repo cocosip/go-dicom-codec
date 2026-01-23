@@ -105,196 +105,106 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 	initialDist := calculateDistortion(t1.data, t1.width, t1.height, maxBitplane+1, 0)
 	cumDistReduction := 0.0 // Cumulative distortion reduction from initial state
 
-	// Encode bit-planes from MSB to LSB
+	// Encode passes using OpenJPEG sequencing.
 	passIdx := 0
+	passType := 2
 	prevTerminated := false
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
-		paddedWidth := t1.width + 2
-		paddedHeight := t1.height + 2
-		for i := 0; i < paddedWidth*paddedHeight; i++ {
-			t1.flags[i] &^= T1_VISIT
-		}
-
-		// Check if this bit-plane needs encoding
-		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
-			continue
-		}
-
-		// Three coding passes per bit-plane
-		// 1. Significance Propagation Pass (SPP)
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
-			if prevTerminated {
-				if raw {
-					t1.mqe.BypassInitEnc()
-				} else {
-					t1.mqe.RestartInitEnc()
-				}
-				prevTerminated = false
+	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
+		if startBitplane {
+			// Clear VISIT flags at start of each bitplane
+			paddedWidth := t1.width + 2
+			paddedHeight := t1.height + 2
+			for i := 0; i < paddedWidth*paddedHeight; i++ {
+				t1.flags[i] &^= T1_VISIT
 			}
+
+			// Check if this bit-plane needs encoding
+			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
+				passType = 0
+				t1.bitplane--
+				continue
+			}
+		}
+
+		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		if prevTerminated {
+			if raw {
+				t1.mqe.BypassInitEnc()
+			} else {
+				t1.mqe.RestartInitEnc()
+			}
+			prevTerminated = false
+		}
+
+		switch passType {
+		case 0:
 			if err := t1.encodeSigPropPass(raw); err != nil {
 				return nil, nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-
-			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
-			if shouldTerminate {
-				if raw {
-					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
-				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
-			}
-			// RESET flag: reset contexts after each MQ pass
-			if (cblksty&CblkStyleReset) != 0 && !raw {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-
-			actualBytes := t1.mqe.NumBytes()
-			rate := actualBytes
-			if !shouldTerminate {
-				if raw {
-					rate += t1.mqe.BypassExtraBytes((t1.cblkstyle & CblkStylePterm) != 0)
-				} else {
-					rate += 3
-				}
-			}
-
-			// Calculate accurate distortion after this pass
-			remainingDist := calculateDistortion(t1.data, t1.width, t1.height, t1.bitplane, 0)
-			cumDistReduction = initialDist - remainingDist
-
-			passData := PassData{
-				PassIndex:   passIdx,
-				Bitplane:    t1.bitplane,
-				PassType:    0, // SPP
-				Rate:        rate,
-				ActualBytes: actualBytes,
-				Distortion:  cumDistReduction, // Store cumulative distortion reduction
-			}
-			passes = append(passes, passData)
-			passIdx++
-		}
-
-		// 2. Magnitude Refinement Pass (MRP)
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
-			if prevTerminated {
-				if raw {
-					t1.mqe.BypassInitEnc()
-				} else {
-					t1.mqe.RestartInitEnc()
-				}
-				prevTerminated = false
-			}
+		case 1:
 			if err := t1.encodeMagRefPass(raw); err != nil {
 				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-
-			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
-			if shouldTerminate {
-				if raw {
-					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
-				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
-			}
-			// RESET flag: reset contexts after each MQ pass
-			if (cblksty&CblkStyleReset) != 0 && !raw {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-
-			actualBytes := t1.mqe.NumBytes()
-			rate := actualBytes
-			if !shouldTerminate {
-				if raw {
-					rate += t1.mqe.BypassExtraBytes((t1.cblkstyle & CblkStylePterm) != 0)
-				} else {
-					rate += 3
-				}
-			}
-
-			// Calculate accurate distortion after MRP
-			remainingDist := calculateDistortion(t1.data, t1.width, t1.height, t1.bitplane, 1)
-			cumDistReduction = initialDist - remainingDist
-
-			passData := PassData{
-				PassIndex:   passIdx,
-				Bitplane:    t1.bitplane,
-				PassType:    1, // MRP
-				Rate:        rate,
-				ActualBytes: actualBytes,
-				Distortion:  cumDistReduction,
-			}
-			passes = append(passes, passData)
-			passIdx++
-		}
-
-		// 3. Cleanup Pass (CP)
-		if passIdx < numPasses {
-			if prevTerminated {
-				t1.mqe.RestartInitEnc()
-				prevTerminated = false
-			}
+		case 2:
 			if err := t1.encodeCleanupPass(); err != nil {
 				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
-
 			if (t1.cblkstyle & CblkStyleSegsym) != 0 {
 				t1.mqe.SegmarkEnc()
 			}
-
-			shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, 2, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
-			if shouldTerminate {
-				if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
-			}
-			// RESET flag: reset contexts after each MQ pass
-			if (cblksty & CblkStyleReset) != 0 {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-
-			actualBytes := t1.mqe.NumBytes()
-			rate := actualBytes
-			if !shouldTerminate {
-				rate += 3
-			}
-
-			// Calculate accurate distortion after CP
-			remainingDist := calculateDistortion(t1.data, t1.width, t1.height, t1.bitplane, 2)
-			cumDistReduction = initialDist - remainingDist
-
-			passData := PassData{
-				PassIndex:   passIdx,
-				Bitplane:    t1.bitplane,
-				PassType:    2, // CP
-				Rate:        rate,
-				ActualBytes: actualBytes,
-				Distortion:  cumDistReduction,
-			}
-			passes = append(passes, passData)
-			passIdx++
 		}
 
+		shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle) || shouldTerminateLayer(passIdx, layerBoundaries, cblksty)
+		if shouldTerminate {
+			if raw {
+				t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+			} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+				t1.mqe.ErtermEnc()
+			} else {
+				t1.mqe.FlushToOutput()
+			}
+			prevTerminated = true
+		}
+
+		// RESET flag: reset contexts after each pass
+		if (cblksty & CblkStyleReset) != 0 {
+			t1.mqe.ResetContexts()
+			t1.mqe.SetContextState(CTX_UNI, 46)
+			t1.mqe.SetContextState(CTX_RL, 3)
+			t1.mqe.SetContextState(CTX_ZC_START, 4)
+		}
+
+		actualBytes := t1.mqe.NumBytes()
+		rate := actualBytes
+		if !shouldTerminate {
+			if raw {
+				rate += t1.mqe.BypassExtraBytes((t1.cblkstyle & CblkStylePterm) != 0)
+			} else {
+				rate += 3
+			}
+		}
+
+		remainingDist := calculateDistortion(t1.data, t1.width, t1.height, t1.bitplane, passType)
+		cumDistReduction = initialDist - remainingDist
+
+		passData := PassData{
+			PassIndex:   passIdx,
+			Bitplane:    t1.bitplane,
+			PassType:    passType,
+			Rate:        rate,
+			ActualBytes: actualBytes,
+			Distortion:  cumDistReduction,
+		}
+		passes = append(passes, passData)
+		passIdx++
+
+		if passType == 2 {
+			passType = 0
+			t1.bitplane--
+		} else {
+			passType++
+		}
 	}
 
 	// Get final MQ data

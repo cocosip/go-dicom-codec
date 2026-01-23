@@ -5,13 +5,13 @@ Legend: [ ] = pending, [x] = done
 ## JPEG2000 (align with OpenJPEG)
 
 ### MQ arithmetic coder
-- [ ] 47-state table values and transitions (Qe/MPS/LPS)
-- [ ] Renormalization/byteout/carry propagation rules
-- [ ] Byte stuffing (0xFF/0x00) and flush behavior
+- [x] 47-state table values and transitions (Qe/MPS/LPS)
+- [x] Renormalization/byteout/carry propagation rules
+- [x] Byte stuffing (0xFF/0x00) and flush behavior
 
 ### Tier-1 (EBCOT) coding
-- [ ] Context modeling (19 contexts) and neighbor significance rules
-- [ ] Pass sequencing (SPP/MRP/CP) and termination conditions
+- [x] Context modeling (19 contexts) and neighbor significance rules
+- [x] Pass sequencing (SPP/MRP/CP) and termination conditions
 - [ ] Bitplane range (zero-bitplane/max-bitplane) and ROI shift handling
 
 ### Wavelet transforms (DWT)

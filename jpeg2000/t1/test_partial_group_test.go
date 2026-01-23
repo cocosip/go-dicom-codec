@@ -26,7 +26,7 @@ func TestPartialGroup(t *testing.T) {
 			}
 
 			maxBitplane := 7
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			// Encode
 			encoder := NewT1Encoder(tt.width, tt.height, 0)
@@ -61,3 +61,4 @@ func TestPartialGroup(t *testing.T) {
 		})
 	}
 }
+

@@ -39,7 +39,7 @@ func TestMinimalSingleCoeff(t *testing.T) {
 			if maxBitplane < 0 {
 				maxBitplane = 0
 			}
-			numPasses := (maxBitplane + 1) * 3 // All passes for all bitplanes
+			numPasses := (maxBitplane * 3) + 1 // Full pass sequencing for all bitplanes
 
 			t.Logf("Input value: %d, maxBitplane: %d, numPasses: %d", tt.value, maxBitplane, numPasses)
 
@@ -64,7 +64,7 @@ func TestMinimalSingleCoeff(t *testing.T) {
 			if decoded[0] != tt.value {
 				t.Errorf("Value mismatch: got %d, want %d", decoded[0], tt.value)
 			} else {
-				t.Logf("✓ Correct value: %d", decoded[0])
+				t.Logf("閴?Correct value: %d", decoded[0])
 			}
 		})
 	}
@@ -96,7 +96,7 @@ func TestMinimalTwoCoeffs(t *testing.T) {
 		}
 		maxBitplane--
 	}
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 
 	t.Logf("Input: %v, maxBitplane: %d", data, maxBitplane)
 
@@ -121,3 +121,4 @@ func TestMinimalTwoCoeffs(t *testing.T) {
 		}
 	}
 }
+

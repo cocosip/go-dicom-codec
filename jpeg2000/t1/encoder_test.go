@@ -30,28 +30,28 @@ func TestT1EncodeDecodeRoundTrip(t *testing.T) {
 			width:     4,
 			height:    4,
 			data:      makeTestData(4, 4, []int32{0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}),
-			numPasses: 9, // 3 bit-planes × 3 passes
+			numPasses: 10, // maxBitplane=3 -> 10 passes
 		},
 		{
 			name:      "Simple pattern",
 			width:     4,
 			height:    4,
 			data:      makeTestData(4, 4, []int32{1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 4, 0, 0, 0, 0, 8}),
-			numPasses: 12,
+			numPasses: 10,
 		},
 		{
 			name:      "Negative values",
 			width:     4,
 			height:    4,
 			data:      makeTestData(4, 4, []int32{-4, 0, 0, 0, 0, 8, 0, 0, 0, 0, -2, 0, 0, 0, 0, 1}),
-			numPasses: 12,
+			numPasses: 10,
 		},
 		{
 			name:      "All zeros",
 			width:     4,
 			height:    4,
 			data:      makeZeroData(4, 4),
-			numPasses: 3,
+			numPasses: 1,
 		},
 	}
 
@@ -164,7 +164,7 @@ func TestT1EncodeEmptyBlock(t *testing.T) {
 	enc := NewT1Encoder(8, 8, 0)
 	data := makeZeroData(8, 8)
 
-	encoded, err := enc.Encode(data, 3, 0)
+	encoded, err := enc.Encode(data, 1, 0)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestT1EncodeEmptyBlock(t *testing.T) {
 
 	// Decode and verify
 	dec := NewT1Decoder(8, 8, 0)
-	err = dec.DecodeWithBitplane(encoded, 3, maxBitplane, 0)
+	err = dec.DecodeWithBitplane(encoded, 1, maxBitplane, 0)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}
@@ -202,7 +202,7 @@ func testT1EncodeLargeBlock(t *testing.T) {
 		data[i] = int32((x + y) % 16)
 	}
 
-	encoded, err := enc.Encode(data, 12, 0) // 4 bit-planes × 3 passes
+	encoded, err := enc.Encode(data, 10, 0) // maxBitplane=3 -> 10 passes
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}
@@ -213,7 +213,7 @@ func testT1EncodeLargeBlock(t *testing.T) {
 
 	// Decode and verify
 	dec := NewT1Decoder(width, height, 0)
-	err = dec.DecodeWithBitplane(encoded, 12, maxBitplane, 0)
+	err = dec.DecodeWithBitplane(encoded, 10, maxBitplane, 0)
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}

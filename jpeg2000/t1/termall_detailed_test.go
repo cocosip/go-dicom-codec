@@ -12,8 +12,8 @@ func TestTERMALLDetailed(t *testing.T) {
 	width, height := 4, 4
 	data := make([]int32, width*height)
 	data[0] = 1 // Only first pixel is 1, rest are 0
-
-	numPasses := 3 // SPP, MRP, CP for bitplane 0
+	maxBitplane := CalculateMaxBitplane(data)
+	numPasses := (maxBitplane * 3) + 1 // CP on top bitplane, then SPP/MRP/CP
 
 	t.Logf("Input data: %v", data)
 
@@ -28,7 +28,7 @@ func TestTERMALLDetailed(t *testing.T) {
 
 	// Decode normal to verify
 	decoderNormal := NewT1Decoder(width, height, 0)
-	if err := decoderNormal.DecodeWithBitplane(encodedNormal, numPasses, 0, 0); err != nil {
+	if err := decoderNormal.DecodeWithBitplane(encodedNormal, numPasses, maxBitplane, 0); err != nil {
 		t.Fatalf("Normal decode failed: %v", err)
 	}
 	decodedNormal := decoderNormal.GetData()
@@ -60,7 +60,7 @@ func TestTERMALLDetailed(t *testing.T) {
 	// Now try to decode each pass individually and see what coefficients get set
 	t.Logf("\n=== Decoding Each Pass Individually ===")
 
-	// Decode pass 0 (SPP) only
+	// Decode pass 0 (CP) only
 	decoder0 := NewT1Decoder(width, height, 0)
 	passData0 := completeData[0:passLengths[0]]
 	t.Logf("\nPass 0 data: % 02x", passData0)
@@ -70,76 +70,29 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder0.mqc.SetContextState(CTX_RL, 3)
 	decoder0.mqc.SetContextState(0, 4)
 	decoder0.roishift = 0
-	decoder0.bitplane = 0
-	if err := decoder0.decodeSigPropPass(false); err != nil {
+	decoder0.bitplane = maxBitplane
+	if err := decoder0.decodeCleanupPass(); err != nil {
 		t.Logf("Pass 0 decode failed: %v", err)
 	} else {
 		decoded0 := decoder0.GetData()
 		t.Logf("After pass 0: %v", decoded0[:16])
 	}
 
-	// Decode pass 0 + 1 (SPP + MRP)
-	decoder1 := NewT1Decoder(width, height, 0)
-	// First do SPP
-	decoder1.mqc = mqc.NewMQDecoder(completeData[0:passLengths[0]], NUM_CONTEXTS)
-	decoder1.mqc.SetContextState(CTX_UNI, 46)
-	decoder1.mqc.SetContextState(CTX_RL, 3)
-	decoder1.mqc.SetContextState(0, 4)
-	decoder1.roishift = 0
-	decoder1.bitplane = 0
-	decoder1.decodeSigPropPass(false)
-	// Then do MRP with preserved contexts
-	passData1 := completeData[passLengths[0]:passLengths[1]]
-	t.Logf("\nPass 1 data: % 02x", passData1)
-	prevContexts := decoder1.mqc.GetContexts()
-	decoder1.mqc = mqc.NewMQDecoderWithContexts(passData1, prevContexts)
-	if err := decoder1.decodeMagRefPass(false); err != nil {
-		t.Logf("Pass 1 decode failed: %v", err)
-	} else {
-		decoded1 := decoder1.GetData()
-		t.Logf("After pass 0+1: %v", decoded1[:16])
+	// Check error after the cleanup pass
+	maxError := int32(0)
+	decodedFinal := decoder0.GetData()
+	for i := 0; i < len(data); i++ {
+		diff := data[i] - decodedFinal[i]
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > maxError {
+			maxError = diff
+		}
 	}
+	t.Logf("Final error: %d", maxError)
 
-	// Decode all 3 passes (SPP + MRP + CP)
-	decoder2 := NewT1Decoder(width, height, 0)
-	// SPP
-	decoder2.mqc = mqc.NewMQDecoder(completeData[0:passLengths[0]], NUM_CONTEXTS)
-	decoder2.mqc.SetContextState(CTX_UNI, 46)
-	decoder2.mqc.SetContextState(CTX_RL, 3)
-	decoder2.mqc.SetContextState(0, 4)
-	decoder2.roishift = 0
-	decoder2.bitplane = 0
-	decoder2.decodeSigPropPass(false)
-	// MRP with preserved contexts
-	prevContexts2 := decoder2.mqc.GetContexts()
-	decoder2.mqc = mqc.NewMQDecoderWithContexts(completeData[passLengths[0]:passLengths[1]], prevContexts2)
-	decoder2.decodeMagRefPass(false)
-	// CP with preserved contexts
-	passData2 := completeData[passLengths[1]:passLengths[2]]
-	t.Logf("\nPass 2 data: % 02x", passData2)
-	prevContexts3 := decoder2.mqc.GetContexts()
-	decoder2.mqc = mqc.NewMQDecoderWithContexts(passData2, prevContexts3)
-	if err := decoder2.decodeCleanupPass(); err != nil {
-		t.Logf("Pass 2 decode failed: %v", err)
-	} else {
-		decoded2 := decoder2.GetData()
-		t.Logf("After all passes: %v", decoded2[:16])
-
-		// Check error
-		maxError := int32(0)
-		for i := 0; i < len(data); i++ {
-			diff := data[i] - decoded2[i]
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff > maxError {
-				maxError = diff
-			}
-		}
-		t.Logf("Final error: %d", maxError)
-
-		if maxError > 0 {
-			t.Errorf("Expected perfect reconstruction, got error=%d", maxError)
-		}
+	if maxError > 0 {
+		t.Errorf("Expected perfect reconstruction, got error=%d", maxError)
 	}
 }

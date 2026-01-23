@@ -42,7 +42,7 @@ func TestValueRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			maxBitplane := 7
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			// Encode
 			encoder := NewT1Encoder(tt.width, tt.height, 0)
@@ -77,3 +77,4 @@ func TestValueRange(t *testing.T) {
 		})
 	}
 }
+

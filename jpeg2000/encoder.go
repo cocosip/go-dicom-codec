@@ -2317,9 +2317,12 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	}
 
 	// Calculate number of coding passes
-	// For lossless: encode all bit-planes
-	// Each bit-plane has 3 passes: SPP, MRP, CP
-	numPasses := (numbps + 1) * 3
+	// OpenJPEG sequencing: first pass is cleanup on the top bit-plane,
+	// then 3 passes per remaining bit-plane.
+	numPasses := 1
+	if numbps > 0 {
+		numPasses = (numbps * 3) - 2
+	}
 	if numbps < 0 {
 		// All zeros - still need at least 1 pass for valid packet header
 		numPasses = 1

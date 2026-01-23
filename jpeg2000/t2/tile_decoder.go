@@ -993,7 +993,7 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				y1:        y1,
 				band:      0,
 				data:      cbData,
-				numPasses: (maxBitplane + 1) * 3,
+				numPasses: (maxBitplane * 3) + 1,
 				t1Decoder: blockDecoder,
 			}
 			if orientSetter, ok := cbd.t1Decoder.(interface{ SetOrientation(int) }); ok {

@@ -4,10 +4,10 @@ import (
 	"testing"
 )
 
-// TestEBCOTPassOrderVerification verifies the correct order of three coding passes
+// TestEBCOTPassOrderVerification verifies the correct order of coding passes
 // Reference: ISO/IEC 15444-1:2019 Annex D - EBCOT Tier-1 coding
 func TestEBCOTPassOrderVerification(t *testing.T) {
-	t.Log("Verifying EBCOT Three-Pass Structure")
+	t.Log("Verifying EBCOT pass structure")
 
 	// Test with a 4x4 block
 	width, height := 4, 4
@@ -22,8 +22,8 @@ func TestEBCOTPassOrderVerification(t *testing.T) {
 	t.Logf("Max bitplane: %d", maxBitplane)
 
 	// Encode with enough passes to fully encode all bitplanes
-	// Each bitplane has 3 passes (SPP, MRP, CP)
-	numPasses := (maxBitplane + 1) * 3
+	// OpenJPEG sequencing: cleanup on top bitplane, then SPP/MRP/CP.
+	numPasses := (maxBitplane * 3) + 1
 
 	encoder := NewT1Encoder(width, height, 0)
 	encoded, err := encoder.Encode(data, numPasses, 0)
@@ -55,7 +55,7 @@ func TestEBCOTPassOrderVerification(t *testing.T) {
 	}
 
 	if mismatches == 0 {
-		t.Log("✅ Pass order verification: All passes executed correctly")
+		t.Log("Pass order verification: All passes executed correctly")
 	}
 }
 
@@ -79,7 +79,7 @@ func TestEBCOT8NeighborhoodSignificance(t *testing.T) {
 	}
 
 	maxBitplane := CalculateMaxBitplane(data)
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 
 	encoder := NewT1Encoder(width, height, 0)
 	encoded, err := encoder.Encode(data, numPasses, 0)
@@ -105,7 +105,7 @@ func TestEBCOT8NeighborhoodSignificance(t *testing.T) {
 	}
 
 	if mismatches == 0 {
-		t.Log("✅ 8-Neighborhood verification: Significance propagation correct")
+		t.Log("8-Neighborhood verification: Significance propagation correct")
 	}
 }
 
@@ -144,7 +144,7 @@ func TestEBCOTContextModeling(t *testing.T) {
 		t.Errorf("Uniform context should be 18, got %d", CTX_UNI)
 	}
 
-	t.Log("✅ Context modeling: All 19 contexts defined correctly")
+	t.Log("Context modeling: All 19 contexts defined correctly")
 }
 
 // TestEBCOTRunLengthCoding tests run-length coding in cleanup pass
@@ -164,7 +164,7 @@ func TestEBCOTRunLengthCoding(t *testing.T) {
 	data[30] = 70
 
 	maxBitplane := CalculateMaxBitplane(data)
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 
 	encoder := NewT1Encoder(width, height, 0)
 	encoded, err := encoder.Encode(data, numPasses, 0)
@@ -195,7 +195,7 @@ func TestEBCOTRunLengthCoding(t *testing.T) {
 	}
 
 	if mismatches == 0 {
-		t.Log("✅ Run-length coding: Verified working correctly")
+		t.Log("Run-length coding: Verified working correctly")
 	}
 }
 
@@ -243,27 +243,20 @@ func TestEBCOTCoefficientState(t *testing.T) {
 			expectedMask, T1_SIG_NEIGHBORS)
 	}
 
-	t.Log("✅ Coefficient state: All flags defined correctly")
+	t.Log("Coefficient state: All flags defined correctly")
 }
 
 // TestEBCOTAlignment summarizes the verification status
 func TestEBCOTAlignment(t *testing.T) {
-	t.Log("═══════════════════════════════════════════════")
 	t.Log("EBCOT (T1) Verification Summary")
 	t.Log("Reference: ISO/IEC 15444-1:2019 Annex D")
-	t.Log("═══════════════════════════════════════════════")
 	t.Log("")
-	t.Log("✅ 1. Three-pass order (SPP → MRP → CP)")
-	t.Log("✅ 2. 8-neighborhood significance pattern")
-	t.Log("✅ 3. Context modeling (19 contexts)")
-	t.Log("✅ 4. Run-length coding (4-coefficient runs)")
-	t.Log("✅ 5. Coefficient state tracking (σ, χ, μ, π)")
-	t.Log("✅ 6. Context LUTs aligned to OpenJPEG:")
-	t.Log("   - Sign Context LUT (lut_ctxno_sc): 256 entries")
-	t.Log("   - Zero Coding LUT (lut_ctxno_zc): 2048 entries")
-	t.Log("   - Sign Prediction LUT (lut_spb): 256 entries")
+	t.Log("1. Pass order: CP on top bitplane, then SPP -> MRP -> CP")
+	t.Log("2. 8-neighborhood significance pattern")
+	t.Log("3. Context modeling (19 contexts)")
+	t.Log("4. Run-length coding (4-coefficient runs)")
+	t.Log("5. Coefficient state tracking (SIG/REFINE/VISIT)")
+	t.Log("6. Context LUTs aligned to OpenJPEG")
 	t.Log("")
-	t.Log("═══════════════════════════════════════════════")
-	t.Log("EBCOT Alignment Status: COMPLETE ✅")
-	t.Log("═══════════════════════════════════════════════")
+	t.Log("EBCOT Alignment Status: COMPLETE")
 }

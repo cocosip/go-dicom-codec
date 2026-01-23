@@ -46,7 +46,7 @@ func TestPartialBlock32x64(t *testing.T) {
 
 	// Calculate max bitplane (same logic as encoder)
 	maxBitplane := calculateMaxBitplane(data)
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 
 	// Encode
 	encoder := NewT1Encoder(width, height, 0)
@@ -55,7 +55,7 @@ func TestPartialBlock32x64(t *testing.T) {
 		t.Fatalf("Encoding failed: %v", err)
 	}
 
-	t.Logf("Encoded %dx%d block: %d coeffs → %d bytes, maxBP=%d", width, height, len(data), len(encoded), maxBitplane)
+	t.Logf("Encoded %dx%d block: %d coeffs 鈫?%d bytes, maxBP=%d", width, height, len(data), len(encoded), maxBitplane)
 
 	// Decode
 	decoder := NewT1Decoder(width, height, 0)
@@ -87,7 +87,7 @@ func TestPartialBlock32x64(t *testing.T) {
 	if mismatchCount > 0 {
 		t.Errorf("Found %d/%d coefficient mismatches", mismatchCount, len(data))
 	} else {
-		t.Log("✓ Perfect reconstruction")
+		t.Log("鉁?Perfect reconstruction")
 	}
 }
 
@@ -105,7 +105,7 @@ func TestPartialBlock64x32(t *testing.T) {
 
 	// Calculate max bitplane (same logic as encoder)
 	maxBitplane := calculateMaxBitplane(data)
-	numPasses := (maxBitplane + 1) * 3
+	numPasses := (maxBitplane * 3) + 1
 
 	// Encode
 	encoder := NewT1Encoder(width, height, 0)
@@ -114,7 +114,7 @@ func TestPartialBlock64x32(t *testing.T) {
 		t.Fatalf("Encoding failed: %v", err)
 	}
 
-	t.Logf("Encoded %dx%d block: %d coeffs → %d bytes, maxBP=%d", width, height, len(data), len(encoded), maxBitplane)
+	t.Logf("Encoded %dx%d block: %d coeffs 鈫?%d bytes, maxBP=%d", width, height, len(data), len(encoded), maxBitplane)
 
 	// Decode
 	decoder := NewT1Decoder(width, height, 0)
@@ -146,6 +146,7 @@ func TestPartialBlock64x32(t *testing.T) {
 	if mismatchCount > 0 {
 		t.Errorf("Found %d/%d coefficient mismatches", mismatchCount, len(data))
 	} else {
-		t.Log("✓ Perfect reconstruction")
+		t.Log("鉁?Perfect reconstruction")
 	}
 }
+

@@ -100,7 +100,7 @@ func (t1 *T1Encoder) SetOrientation(orient int) {
 // Performance notes:
 // - Most computationally intensive part of JPEG 2000 encoding
 // - Processes coefficients bit-plane by bit-plane (MSB to LSB)
-// - Three coding passes per bit-plane (Sig Prop, Mag Ref, Cleanup)
+// - First bit-plane starts with Cleanup, then SPP/MRP/CP for remaining bit-planes
 // - Context modeling using 8-neighbor flags (cached for speed)
 // - MQ encoding is the inner loop bottleneck
 // - Typical workload: 32x32 block = 1024 coefficients × 12-16 bit-planes
@@ -138,123 +138,83 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 	t1.mqe.SetContextState(CTX_RL, 3)
 	t1.mqe.SetContextState(CTX_ZC_START, 4)
 
-	// Encode bit-planes from MSB to LSB
-	// Each bit-plane has up to 3 coding passes
+	// Encode passes using OpenJPEG sequencing:
+	// - First pass is Cleanup on the highest bit-plane.
+	// - Subsequent bit-planes use SPP, MRP, CP.
 	passIdx := 0
+	passType := 2
 	prevTerminated := false
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
-		// This ensures coefficients can be processed in passes of this bitplane
-		paddedWidth := t1.width + 2
-		paddedHeight := t1.height + 2
-		for i := 0; i < paddedWidth*paddedHeight; i++ {
-			t1.flags[i] &^= T1_VISIT
-		}
-
-		// Check if this bit-plane needs encoding
-		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
-			// Skip this bit-plane (ROI region)
-			continue
-		}
-
-		// Three coding passes per bit-plane:
-		// 1. Significance Propagation Pass (SPP)
-		// 2. Magnitude Refinement Pass (MRP)
-		// 3. Cleanup Pass (CP)
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
-			if prevTerminated {
-				if raw {
-					t1.mqe.BypassInitEnc()
-				} else {
-					t1.mqe.RestartInitEnc()
-				}
-				prevTerminated = false
+	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
+		if startBitplane {
+			// Clear VISIT flags at start of each bitplane.
+			paddedWidth := t1.width + 2
+			paddedHeight := t1.height + 2
+			for i := 0; i < paddedWidth*paddedHeight; i++ {
+				t1.flags[i] &^= T1_VISIT
 			}
+
+			// Check if this bit-plane needs encoding
+			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
+				passType = 0
+				t1.bitplane--
+				continue
+			}
+		}
+
+		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		if prevTerminated {
+			if raw {
+				t1.mqe.BypassInitEnc()
+			} else {
+				t1.mqe.RestartInitEnc()
+			}
+			prevTerminated = false
+		}
+
+		switch passType {
+		case 0:
 			if err := t1.encodeSigPropPass(raw); err != nil {
 				return nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
-			if terminated {
-				if raw {
-					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
-				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
-			}
-			if t1.resetctx && !raw {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-			passIdx++
-		}
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
-			if prevTerminated {
-				if raw {
-					t1.mqe.BypassInitEnc()
-				} else {
-					t1.mqe.RestartInitEnc()
-				}
-				prevTerminated = false
-			}
+		case 1:
 			if err := t1.encodeMagRefPass(raw); err != nil {
 				return nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
-			if terminated {
-				if raw {
-					t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
-				} else if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
-			}
-			if t1.resetctx && !raw {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-			passIdx++
-		}
-
-		if passIdx < numPasses {
-			if prevTerminated {
-				t1.mqe.RestartInitEnc()
-				prevTerminated = false
-			}
+		case 2:
 			if err := t1.encodeCleanupPass(); err != nil {
 				return nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
 			if t1.segmentation {
 				t1.mqe.SegmarkEnc()
 			}
-			terminated := isTerminatingPass(t1.bitplane, maxBitplane, 2, t1.cblkstyle)
-			if terminated {
-				if (t1.cblkstyle & CblkStylePterm) != 0 {
-					t1.mqe.ErtermEnc()
-				} else {
-					t1.mqe.FlushToOutput()
-				}
-				prevTerminated = true
+		}
+
+		terminated := isTerminatingPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		if terminated {
+			if raw {
+				t1.mqe.BypassFlushEnc((t1.cblkstyle & CblkStylePterm) != 0)
+			} else if (t1.cblkstyle & CblkStylePterm) != 0 {
+				t1.mqe.ErtermEnc()
+			} else {
+				t1.mqe.FlushToOutput()
 			}
-			if t1.resetctx {
-				t1.mqe.ResetContexts()
-				t1.mqe.SetContextState(CTX_UNI, 46)
-				t1.mqe.SetContextState(CTX_RL, 3)
-				t1.mqe.SetContextState(CTX_ZC_START, 4)
-			}
-			passIdx++
+			prevTerminated = true
+		}
+
+		if t1.resetctx {
+			t1.mqe.ResetContexts()
+			t1.mqe.SetContextState(CTX_UNI, 46)
+			t1.mqe.SetContextState(CTX_RL, 3)
+			t1.mqe.SetContextState(CTX_ZC_START, 4)
+		}
+
+		passIdx++
+		if passType == 2 {
+			passType = 0
+			t1.bitplane--
+		} else {
+			passType++
 		}
 	}
 

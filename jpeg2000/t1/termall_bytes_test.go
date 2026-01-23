@@ -20,7 +20,7 @@ func TestTERMALLBytesComparison(t *testing.T) {
 	// Calculate max bitplane
 	maxBitplane := 0 // Only bit 0 is set
 
-	numPasses := (maxBitplane + 1) * 3 // 3 passes
+	numPasses := (maxBitplane * 3) + 1 // CP on top bitplane, then SPP/MRP/CP
 	t.Logf("Testing %dx%d block, maxBitplane=%d, numPasses=%d", width, height, maxBitplane, numPasses)
 
 	// Encode WITHOUT TERMALL (normal mode)
@@ -102,39 +102,13 @@ func TestTERMALLBytesComparison(t *testing.T) {
 		t.Errorf("TERMALL mode has error %d, expected 0", maxError2)
 	}
 
-	// EXPERIMENT: Try decoding just the last pass (CP) which has the real data
-	t.Logf("\n=== Experiment: Decode only CP pass ===")
-	decoder3 := NewT1Decoder(width, height, 0)
-
-	// Extract only CP pass data (pass 2)
-	cpData := completeData[5:10] // "00 ba b5 44 df"
-	t.Logf("CP data only: % 02x", cpData)
-
-	// Try to decode with just this pass
-	if err := decoder3.DecodeLayered(cpData, []int{len(cpData)}, maxBitplane, 0); err != nil {
-		t.Logf("CP-only decode failed: %v", err)
-	} else {
-		decoded3 := decoder3.GetData()
-		maxError3 := int32(0)
-		for i := 0; i < len(data); i++ {
-			diff := data[i] - decoded3[i]
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff > maxError3 {
-				maxError3 = diff
-			}
-		}
-		t.Logf("CP-only decode: error=%d", maxError3)
-	}
-
 	// EXPERIMENT 2: Try decoding normal data with DecodeLayered
 	t.Logf("\n=== Experiment: Decode normal data with DecodeLayered ===")
 	decoder4 := NewT1Decoder(width, height, 0)
 	t.Logf("Normal data: % 02x", encoded1)
 
-	// Try with 3 passes (SPP, MRP, CP for bitplane 0), useTERMALL=false
-	if err := decoder4.DecodeLayeredWithMode(encoded1, []int{len(encoded1), len(encoded1), len(encoded1)}, maxBitplane, 0, false, false); err != nil {
+	// Try with 1 pass (cleanup on bitplane 0), useTERMALL=false
+	if err := decoder4.DecodeLayeredWithMode(encoded1, []int{len(encoded1)}, maxBitplane, 0, false, false); err != nil {
 		t.Logf("Normal-via-Layered decode failed: %v", err)
 	} else {
 		decoded4 := decoder4.GetData()
@@ -148,7 +122,7 @@ func TestTERMALLBytesComparison(t *testing.T) {
 				maxError4 = diff
 			}
 		}
-		t.Logf("Normal-via-Layered decode (3 passes): error=%d", maxError4)
+		t.Logf("Normal-via-Layered decode (1 pass): error=%d", maxError4)
 
 		// Print decoded values
 		t.Logf("Decoded values: %v", decoded4[:16])
@@ -157,7 +131,7 @@ func TestTERMALLBytesComparison(t *testing.T) {
 	// EXPERIMENT 3: Decode normal data with DecodeWithBitplane for comparison
 	t.Logf("\n=== Experiment: Decode normal data with DecodeWithBitplane ===")
 	decoder5 := NewT1Decoder(width, height, 0)
-	if err := decoder5.DecodeWithBitplane(encoded1, 3, maxBitplane, 0); err != nil {
+	if err := decoder5.DecodeWithBitplane(encoded1, numPasses, maxBitplane, 0); err != nil {
 		t.Logf("Normal-via-Bitplane decode failed: %v", err)
 	} else {
 		decoded5 := decoder5.GetData()
@@ -177,3 +151,4 @@ func TestTERMALLBytesComparison(t *testing.T) {
 		t.Logf("Decoded values: %v", decoded5[:16])
 	}
 }
+

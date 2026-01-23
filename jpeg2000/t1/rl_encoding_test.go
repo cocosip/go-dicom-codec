@@ -69,7 +69,7 @@ func TestRLEncodingPatterns(t *testing.T) {
 
 			// Calculate actual maxBitplane from data (simulates T2 layer)
 			maxBitplane := CalculateMaxBitplane(input)
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			// Encode
 			encoder := NewT1Encoder(tt.width, tt.height, 0)
@@ -109,7 +109,7 @@ func TestRLEncodingPatterns(t *testing.T) {
 				t.Errorf("Errors: %d/%d (%.1f%%), max error: %d",
 					mismatches, numPixels, errorRate, maxError)
 			} else {
-				t.Logf("✓ Perfect: %dx%d, %d bytes", tt.width, tt.height, len(encoded))
+				t.Logf("鉁?Perfect: %dx%d, %d bytes", tt.width, tt.height, len(encoded))
 			}
 		})
 	}
@@ -133,7 +133,7 @@ func TestRLBoundaryConditions(t *testing.T) {
 
 			// Calculate actual maxBitplane from data (simulates T2 layer)
 			maxBitplane := CalculateMaxBitplane(input)
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			encoder := NewT1Encoder(width, height, 0)
 			encoded, err := encoder.Encode(input, numPasses, 0)
@@ -161,8 +161,9 @@ func TestRLBoundaryConditions(t *testing.T) {
 			if mismatches > 0 {
 				t.Errorf("%dx%d: %.1f%% errors", width, height, errorRate)
 			} else {
-				t.Logf("%dx%d: ✓ Perfect", width, height)
+				t.Logf("%dx%d: 鉁?Perfect", width, height)
 			}
 		})
 	}
 }
+

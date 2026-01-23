@@ -18,7 +18,7 @@ func TestSquareSizes(t *testing.T) {
 			}
 
 			maxBitplane := CalculateMaxBitplane(input)
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 
 			// Encode
 			encoder := NewT1Encoder(size, size, 0)
@@ -51,3 +51,4 @@ func TestSquareSizes(t *testing.T) {
 		})
 	}
 }
+

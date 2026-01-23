@@ -47,7 +47,7 @@ func TestDifferentPatterns_5x5(t *testing.T) {
 
 			// Calculate actual numPasses based on data
 			maxBitplane := CalculateMaxBitplane(data)
-			numPasses := (maxBitplane + 1) * 3
+			numPasses := (maxBitplane * 3) + 1
 			if numPasses < 0 {
 				numPasses = 0 // All zeros case
 			}
@@ -84,3 +84,4 @@ func TestDifferentPatterns_5x5(t *testing.T) {
 		})
 	}
 }
+

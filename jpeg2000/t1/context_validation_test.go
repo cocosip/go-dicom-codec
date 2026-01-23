@@ -67,10 +67,9 @@ func TestMagnitudeRefinementContext(t *testing.T) {
 		expected uint8
 	}{
 		{name: "NoNeighbors", flags: 0, expected: 14},
-		{name: "OneNeighbor", flags: T1_SIG_W, expected: 15},
-		{name: "TwoNeighbors", flags: T1_SIG_W | T1_SIG_E, expected: 15},
-		{name: "ThreeNeighbors", flags: T1_SIG_W | T1_SIG_E | T1_SIG_N, expected: 16},
-		{name: "FourNeighbors", flags: T1_SIG_W | T1_SIG_E | T1_SIG_N | T1_SIG_S, expected: 16},
+		{name: "AnyNeighbor", flags: T1_SIG_W, expected: 15},
+		{name: "RefinedNoNeighbors", flags: T1_REFINE, expected: 16},
+		{name: "RefinedWithNeighbors", flags: T1_REFINE | T1_SIG_W, expected: 16},
 	}
 
 	for _, tc := range testCases {

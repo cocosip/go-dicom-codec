@@ -113,106 +113,57 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 	// Track previous contexts for TERMALL mode (MQ only)
 	var prevContexts []uint8
 	resetContexts := lossless || (t1.cblkstyle&CblkStyleReset) != 0
+	passType := 2
 
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
-		paddedWidth := t1.width + 2
-		paddedHeight := t1.height + 2
-		for i := 0; i < paddedWidth*paddedHeight; i++ {
-			t1.flags[i] &^= T1_VISIT
-		}
-
-		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
-			continue
-		}
-
-		// Decode Significance Propagation Pass (SPP)
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
-			currentEnd := passLengths[passIdx]
-			if currentEnd < prevEnd || currentEnd > len(data) {
-				return fmt.Errorf("invalid pass length for SPP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
-			}
-			passData := data[prevEnd:currentEnd]
-
-			// TERMALL mode: each pass is flushed independently by encoder
-			// RAW passes use bypass decoding; MQ passes may preserve contexts.
-			if raw {
-				t1.mqc = mqc.NewRawDecoder(passData)
-			} else if passIdx == 0 || resetContexts {
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			} else {
-				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
+	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
+		if startBitplane {
+			// Clear VISIT flags at start of each bitplane
+			paddedWidth := t1.width + 2
+			paddedHeight := t1.height + 2
+			for i := 0; i < paddedWidth*paddedHeight; i++ {
+				t1.flags[i] &^= T1_VISIT
 			}
 
-			prevEnd = currentEnd
+			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
+				passType = 0
+				t1.bitplane--
+				continue
+			}
+		}
 
+		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		currentEnd := passLengths[passIdx]
+		if currentEnd < prevEnd || currentEnd > len(data) {
+			return fmt.Errorf("invalid pass length at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
+		}
+		passData := data[prevEnd:currentEnd]
+
+		// TERMALL mode: each pass is flushed independently by encoder
+		// RAW passes use bypass decoding; MQ passes may preserve contexts.
+		if raw {
+			t1.mqc = mqc.NewRawDecoder(passData)
+		} else if passIdx == 0 || resetContexts {
+			t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
+			t1.mqc.SetContextState(CTX_UNI, 46)
+			t1.mqc.SetContextState(CTX_RL, 3)
+			t1.mqc.SetContextState(CTX_ZC_START, 4)
+		} else {
+			t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
+		}
+
+		prevEnd = currentEnd
+
+		switch passType {
+		case 0:
 			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-
-			// Save contexts for next pass (if not resetting)
-			if !raw && !resetContexts {
-				prevContexts = t1.mqc.GetContexts()
-			}
-
-			passIdx++
-		}
-
-		// Decode Magnitude Refinement Pass (MRP)
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
-			currentEnd := passLengths[passIdx]
-			if currentEnd < prevEnd || currentEnd > len(data) {
-				return fmt.Errorf("invalid pass length for MRP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
-			}
-			passData := data[prevEnd:currentEnd]
-
-			if raw {
-				t1.mqc = mqc.NewRawDecoder(passData)
-			} else if passIdx == 0 || resetContexts {
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			} else {
-				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
-			}
-			prevEnd = currentEnd
-
+		case 1:
 			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-
-			// Save contexts for next pass
-			if !raw && !resetContexts {
-				prevContexts = t1.mqc.GetContexts()
-			}
-
-			passIdx++
-		}
-
-		// Decode Cleanup Pass (CP)
-		if passIdx < numPasses {
-			currentEnd := passLengths[passIdx]
-			if currentEnd < prevEnd || currentEnd > len(data) {
-				return fmt.Errorf("invalid pass length for CP at pass %d: %d (prevEnd=%d, dataLen=%d)", passIdx, currentEnd, prevEnd, len(data))
-			}
-			passData := data[prevEnd:currentEnd]
-
-			if passIdx == 0 || resetContexts {
-				t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			} else {
-				t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
-			}
-			prevEnd = currentEnd
-
+		case 2:
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
@@ -221,13 +172,19 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 					t1.mqc.Decode(CTX_UNI)
 				}
 			}
+		}
 
-			// Save contexts for next pass
-			if !resetContexts {
-				prevContexts = t1.mqc.GetContexts()
-			}
+		// Save contexts for next pass
+		if !raw && !resetContexts {
+			prevContexts = t1.mqc.GetContexts()
+		}
 
-			passIdx++
+		passIdx++
+		if passType == 2 {
+			passType = 0
+			t1.bitplane--
+		} else {
+			passType++
 		}
 	}
 
@@ -254,68 +211,38 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 	t1.mqc.SetContextState(CTX_RL, 3)
 	t1.mqc.SetContextState(CTX_ZC_START, 4)
 
-	// Decode bit-planes from MSB to LSB
-	// Each bit-plane has up to 3 coding passes
+	// Decode passes using OpenJPEG sequencing.
 	passIdx := 0
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
-		// This ensures coefficients can be processed in passes of this bitplane
-		paddedWidth := t1.width + 2
-		paddedHeight := t1.height + 2
-		for i := 0; i < paddedWidth*paddedHeight; i++ {
-			t1.flags[i] &^= T1_VISIT
+	passType := 2
+	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
+		if startBitplane {
+			// Clear VISIT flags at start of each bitplane
+			paddedWidth := t1.width + 2
+			paddedHeight := t1.height + 2
+			for i := 0; i < paddedWidth*paddedHeight; i++ {
+				t1.flags[i] &^= T1_VISIT
+			}
+
+			// Check if this bit-plane needs decoding
+			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
+				passType = 0
+				t1.bitplane--
+				continue
+			}
 		}
 
-		// Check if this bit-plane needs decoding
-		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
-			// Skip this bit-plane (ROI region)
-			continue
-		}
-
-		// DEBUG removed
-
-		// Three coding passes per bit-plane:
-		// 1. Significance Propagation Pass (SPP)
-		// 2. Magnitude Refinement Pass (MRP)
-		// 3. Cleanup Pass (CP)
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 0, t1.cblkstyle)
+		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		switch passType {
+		case 0:
 			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-			passIdx++
-
-			// In TERMALL mode, reinitialize MQC decoder state and reset contexts after each pass
-			// But only if there are more passes to decode
-			if useTERMALL && passIdx < numPasses {
-				t1.mqc.ReinitAfterTermination()
-				t1.mqc.ResetContexts()
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			}
-		}
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, maxBitplane, 1, t1.cblkstyle)
+		case 1:
 			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-			passIdx++
-
-			// In TERMALL mode, reinitialize MQC decoder state and reset contexts after each pass
-			// But only if there are more passes to decode
-			if useTERMALL && passIdx < numPasses {
-				t1.mqc.ReinitAfterTermination()
-				t1.mqc.ResetContexts()
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			}
-		}
-
-		if passIdx < numPasses {
+		case 2:
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
@@ -324,27 +251,32 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 					t1.mqc.Decode(CTX_UNI)
 				}
 			}
-			passIdx++
-
-			// In TERMALL mode, reinitialize MQC decoder state and reset contexts after each pass
-			// But only if there are more passes to decode
-			if useTERMALL && passIdx < numPasses {
-				t1.mqc.ReinitAfterTermination()
-				t1.mqc.ResetContexts()
-				t1.mqc.SetContextState(CTX_UNI, 46)
-				t1.mqc.SetContextState(CTX_RL, 3)
-				t1.mqc.SetContextState(CTX_ZC_START, 4)
-			}
 		}
+		passIdx++
 
-		// DEBUG removed
-
-		// Reset context if required
-		if t1.resetctx && passIdx < numPasses {
+		// In TERMALL mode, reinitialize MQC decoder state and reset contexts after each pass
+		// But only if there are more passes to decode
+		if useTERMALL && passIdx < numPasses {
+			t1.mqc.ReinitAfterTermination()
 			t1.mqc.ResetContexts()
 			t1.mqc.SetContextState(CTX_UNI, 46)
 			t1.mqc.SetContextState(CTX_RL, 3)
 			t1.mqc.SetContextState(CTX_ZC_START, 4)
+		}
+
+		// Reset context if required
+		if t1.resetctx && passIdx < numPasses && !raw {
+			t1.mqc.ResetContexts()
+			t1.mqc.SetContextState(CTX_UNI, 46)
+			t1.mqc.SetContextState(CTX_RL, 3)
+			t1.mqc.SetContextState(CTX_ZC_START, 4)
+		}
+
+		if passType == 2 {
+			passType = 0
+			t1.bitplane--
+		} else {
+			passType++
 		}
 	}
 
@@ -357,7 +289,7 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 // Performance notes:
 // - Most computationally intensive part of JPEG 2000 decoding
 // - Processes coefficients bit-plane by bit-plane (MSB to LSB)
-// - Three coding passes per bit-plane (Sig Prop, Mag Ref, Cleanup)
+// - First bit-plane starts with Cleanup, then SPP/MRP/CP for remaining bit-planes
 // - Context modeling using 8-neighbor flags (cached for speed)
 // - MQ decoding is the inner loop bottleneck
 // - Typical workload: 32x32 block = 1024 coefficients × 12-16 bit-planes
@@ -376,7 +308,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 	t1.mqc.SetContextState(CTX_ZC_START, 4)
 
 	// Determine starting bit-plane from number of passes
-	// Each bit-plane has 3 passes, so numBitplanes = ceil(numPasses / 3)
+	// OpenJPEG sequencing: numBitplanes = (numPasses + 2) / 3
 	numBitplanes := (numPasses + 2) / 3
 
 	// Start from the highest bit-plane that was encoded
@@ -385,48 +317,38 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 	startBitplane := numBitplanes - 1
 	// DEBUG removed
 
-	// Decode bit-planes from MSB to LSB
-	// Each bit-plane has up to 3 coding passes
+	// Decode passes using OpenJPEG sequencing.
 	passIdx := 0
-	for t1.bitplane = startBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
-		// Clear VISIT flags at start of each bitplane
-		// This ensures coefficients can be processed in passes of this bitplane
-		paddedWidth := t1.width + 2
-		paddedHeight := t1.height + 2
-		for i := 0; i < paddedWidth*paddedHeight; i++ {
-			t1.flags[i] &^= T1_VISIT
+	passType := 2
+	for t1.bitplane = startBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+		startBitplanePass := passType == 0 || (passType == 2 && passIdx == 0)
+		if startBitplanePass {
+			// Clear VISIT flags at start of each bitplane
+			paddedWidth := t1.width + 2
+			paddedHeight := t1.height + 2
+			for i := 0; i < paddedWidth*paddedHeight; i++ {
+				t1.flags[i] &^= T1_VISIT
+			}
+
+			// Check if this bit-plane needs decoding
+			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
+				passType = 0
+				t1.bitplane--
+				continue
+			}
 		}
 
-		// Check if this bit-plane needs decoding
-		if t1.roishift > 0 && t1.bitplane >= t1.roishift {
-			// Skip this bit-plane (ROI region)
-			continue
-		}
-
-		// Three coding passes per bit-plane:
-		// 1. Significance Propagation Pass (SPP)
-		// 2. Magnitude Refinement Pass (MRP)
-		// 3. Cleanup Pass (CP)
-
-		// DEBUG removed
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, startBitplane, 0, t1.cblkstyle)
+		raw := isLazyRawPass(t1.bitplane, startBitplane, passType, t1.cblkstyle)
+		switch passType {
+		case 0:
 			if err := t1.decodeSigPropPass(raw); err != nil {
 				return fmt.Errorf("significance propagation pass failed: %w", err)
 			}
-			passIdx++
-		}
-
-		if passIdx < numPasses {
-			raw := isLazyRawPass(t1.bitplane, startBitplane, 1, t1.cblkstyle)
+		case 1:
 			if err := t1.decodeMagRefPass(raw); err != nil {
 				return fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
-			passIdx++
-		}
-
-		if passIdx < numPasses {
+		case 2:
 			if err := t1.decodeCleanupPass(); err != nil {
 				return fmt.Errorf("cleanup pass failed: %w", err)
 			}
@@ -435,15 +357,22 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 					t1.mqc.Decode(CTX_UNI)
 				}
 			}
-			passIdx++
 		}
+		passIdx++
 
 		// Reset context if required
-		if t1.resetctx && passIdx < numPasses {
+		if t1.resetctx && passIdx < numPasses && !raw {
 			t1.mqc.ResetContexts()
 			t1.mqc.SetContextState(CTX_UNI, 46)
 			t1.mqc.SetContextState(CTX_RL, 3)
 			t1.mqc.SetContextState(CTX_ZC_START, 4)
+		}
+
+		if passType == 2 {
+			passType = 0
+			t1.bitplane--
+		} else {
+			passType++
 		}
 	}
 
