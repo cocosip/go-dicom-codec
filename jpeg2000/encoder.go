@@ -90,8 +90,6 @@ type EncodeParams struct {
 	// If nil, defaults to EBCOT T1 encoder
 	BlockEncoderFactory func(width, height int) BlockEncoder
 
-	// Debug mode (prints codeblock counts and structure info)
-	DebugMode bool
 }
 
 // BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
@@ -170,6 +168,10 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to convert pixel data: %w", err)
 	}
 
+	// Apply DC level shift BEFORE MCT (to match OpenJPEG order)
+	// OpenJPEG: DC shift -> MCT -> DWT -> T1
+	e.applyDCLevelShift()
+
 	if e.params.EnableMCT {
 		if e.params.MCTMatrix != nil && len(e.params.MCTMatrix) == e.params.Components {
 			e.applyCustomMCT()
@@ -178,12 +180,11 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			} else {
-				y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+				y, cb, cr := colorspace.ApplyICTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			}
 		}
 	}
-	e.applyDCLevelShift()
 
 	// Build codestream
 	codestream, err := e.buildCodestream()
@@ -232,7 +233,7 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			} else {
-				y, cb, cr := colorspace.ConvertComponentsRGBToYCbCr(e.data[0], e.data[1], e.data[2])
+				y, cb, cr := colorspace.ApplyICTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			}
 		}
@@ -907,11 +908,11 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 
 	// Code-block style
 	// Bit 2 (0x04): Termination on each coding pass (TERMALL mode)
-	// Enable TERMALL for ALL multi-layer encoding (both lossless and lossy)
-	// This is required because encoder writes PassLengths metadata for all multi-layer
+	// Enable TERMALL for layered encoding (NumLayers>1) and target-ratio encoding.
+	// This is required because encoder writes PassLengths metadata for layered modes.
 	codeBlockStyle := uint8(0)
-	if p.NumLayers > 1 {
-		codeBlockStyle |= 0x04 // Enable TERMALL mode for all multi-layer encoding
+	if p.NumLayers > 1 || p.TargetRatio > 0 {
+		codeBlockStyle |= 0x04
 	}
 	_ = binary.Write(codData, binary.BigEndian, codeBlockStyle)
 
@@ -1028,8 +1029,8 @@ func (e *Encoder) getSubbandDimensions(resolutionLevel int) (width, height int) 
 
 	if resolutionLevel == 0 {
 		// LL subband
-		width = e.params.Width >> e.params.NumLevels
-		height = e.params.Height >> e.params.NumLevels
+		width = ceilDivPow2(e.params.Width, e.params.NumLevels)
+		height = ceilDivPow2(e.params.Height, e.params.NumLevels)
 	} else {
 		// HL/LH/HH subbands
 		// These come from decomposition level (numLevels - resolutionLevel + 1)
@@ -1037,8 +1038,8 @@ func (e *Encoder) getSubbandDimensions(resolutionLevel int) (width, height int) 
 		if level < 0 {
 			level = 0
 		}
-		width = e.params.Width >> level
-		height = e.params.Height >> level
+		width = ceilDivPow2(e.params.Width, level)
+		height = ceilDivPow2(e.params.Height, level)
 	}
 
 	// Ensure minimum size of 1
@@ -1066,8 +1067,8 @@ func (e *Encoder) getResolutionDimensions(resolutionLevel int) (width, height in
 		divisor = 0
 	}
 
-	width = e.params.Width >> divisor
-	height = e.params.Height >> divisor
+	width = ceilDivPow2(e.params.Width, divisor)
+	height = ceilDivPow2(e.params.Height, divisor)
 
 	// Ensure minimum size of 1
 	if width < 1 {
@@ -1078,6 +1079,15 @@ func (e *Encoder) getResolutionDimensions(resolutionLevel int) (width, height in
 	}
 
 	return width, height
+}
+
+// ceilDivPow2 computes ceil(n / 2^pow) for pow >= 0.
+func ceilDivPow2(n, pow int) int {
+	if pow <= 0 {
+		return n
+	}
+	divisor := 1 << pow
+	return (n + divisor - 1) / divisor
 }
 
 // getPrecinctSizeExponents returns the precinct size exponents (PPx, PPy) for a given resolution level
@@ -1447,24 +1457,28 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 		return fmt.Errorf("wavelet transform failed: %w", err)
 	}
 
-	// Encode tile data (simplified - just write placeholder)
+	// Encode tile data
 	tileBytes := e.encodeTileData(transformedData, actualWidth, actualHeight)
+
+	// Build tile-part header (e.g., RGN) to compute Psot correctly
+	tileHeader := &bytes.Buffer{}
+	if err := e.writeTileRGN(tileHeader); err != nil {
+		return fmt.Errorf("failed to write tile-part RGN: %w", err)
+	}
 
 	// Write SOT (Start of Tile)
 	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
 	_ = binary.Write(buf, binary.BigEndian, uint16(10)) // Lsot
 
 	_ = binary.Write(buf, binary.BigEndian, uint16(tileIdx)) // Isot
-	tilePartLength := len(tileBytes) + 14                    // SOT(12) + SOD(2) + data
+	tilePartLength := len(tileBytes) + tileHeader.Len() + 14 // SOT(12) + header + SOD(2) + data
 	_ = binary.Write(buf, binary.BigEndian, uint32(tilePartLength))
 	_ = binary.Write(buf, binary.BigEndian, uint8(0)) // TPsot
 	_ = binary.Write(buf, binary.BigEndian, uint8(1)) // TNsot
 
-	// Write tile-part RGN if ROI is enabled (optional, for tile-specific ROI)
-	// Note: Currently we write the same ROI info to each tile-part for consistency
-	// In the future, this could be tile-specific
-	if err := e.writeTileRGN(buf); err != nil {
-		return fmt.Errorf("failed to write tile-part RGN: %w", err)
+	// Write tile-part header (e.g., RGN)
+	if _, err := buf.Write(tileHeader.Bytes()); err != nil {
+		return err
 	}
 
 	// Write SOD (Start of Data)
@@ -1491,27 +1505,8 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 			transformed[c] = make([]int32, len(tileData[c]))
 			copy(transformed[c], tileData[c])
 
-			if e.params.DebugMode && c == 0 {
-				fmt.Printf("[DEBUG] Before DWT (first 16 pixels): ")
-				for i := 0; i < 16 && i < len(transformed[c]); i++ {
-					fmt.Printf("%d ", transformed[c][i])
-				}
-				fmt.Printf("\n")
-			}
-
 			// Apply forward multilevel DWT
 			wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
-
-			if e.params.DebugMode && c == 0 {
-				// Calculate LL subband size after 5 levels
-				llWidth := (width + 31) / 32 // After 5 levels: /2/2/2/2/2 = /32
-				llHeight := (height + 31) / 32
-				fmt.Printf("[DEBUG] After DWT (first 16 LL coeffs from DWT array): ")
-				for i := 0; i < 16 && i < llWidth*llHeight; i++ {
-					fmt.Printf("%d ", transformed[c][i])
-				}
-				fmt.Printf("\n")
-			}
 		}
 		return transformed, nil
 	} else {
@@ -1667,11 +1662,24 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 
 					// Set the code-block index correctly
 					encodedCB.Index = globalCBIdx
-
 					// Calculate precinct index based on code-block position
 					// Convert from global wavelet space to resolution reference grid
 					resX0, resY0 := e.toResolutionCoordinates(encodedCB.X0, encodedCB.Y0, res, subband.band)
 					precinctIdx := e.calculatePrecinctIndex(resX0, resY0, res)
+					precinctWidth := e.params.PrecinctWidth
+					precinctHeight := e.params.PrecinctHeight
+					if precinctWidth == 0 {
+						precinctWidth = 1 << 15
+					}
+					if precinctHeight == 0 {
+						precinctHeight = 1 << 15
+					}
+					px := resX0 / precinctWidth
+					py := resY0 / precinctHeight
+					localX := resX0 - px*precinctWidth
+					localY := resY0 - py*precinctHeight
+					encodedCB.CBX = localX / e.params.CodeBlockWidth
+					encodedCB.CBY = localY / e.params.CodeBlockHeight
 
 					// Add to T2 packet encoder
 					packetEnc.AddCodeBlock(comp, res, precinctIdx, encodedCB)
@@ -1685,17 +1693,6 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		}
 	}
 
-	// Debug: Print codeblock counts
-	if e.params.DebugMode {
-		fmt.Printf("\n[DEBUG] 码块统计:\n")
-		total := 0
-		for res := 0; res <= e.params.NumLevels; res++ {
-			fmt.Printf("  分辨率 %d: %d 码块\n", res, cbCountByRes[res])
-			total += cbCountByRes[res]
-		}
-		fmt.Printf("  总计: %d 码块\n", total)
-		fmt.Printf("  预期: 454 码块 (Res0:1, Res1:3, Res2:6, Res3:24, Res4:84, Res5:336)\n")
-	}
 
 	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
 	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
@@ -1762,14 +1759,14 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		return []byte{0x00}
 	}
 
-	// Write packets to bitstream with byte-stuffing
-	// OpenJPEG applies byte-stuffing to entire packet stream
+	// Write packets to bitstream
+	// OpenJPEG applies bit-stuffing only to packet headers (handled during header encoding).
 	buf := &bytes.Buffer{}
 	for _, packet := range packets {
-		// Write packet header with byte-stuffing
-		writeWithByteStuffing(buf, packet.Header)
-		// Write packet body with byte-stuffing
-		writeWithByteStuffing(buf, packet.Body)
+		// Header already contains OpenJPEG-style bit stuffing.
+		buf.Write(packet.Header)
+		// Body is raw code-block data (no byte stuffing).
+		buf.Write(packet.Body)
 	}
 
 	return buf.Bytes()
@@ -1812,6 +1809,9 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 		numLayers = 1
 	}
 	appendLossless := e.params.AppendLosslessLayer && numLayers > 1
+	if e.params.Lossless && numLayers > 1 {
+		appendLossless = true
+	}
 	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
 	totalRate := 0.0
 	for _, cb := range blocks {
@@ -1894,6 +1894,9 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 		numLayers = 1
 	}
 	appendLossless := e.params.AppendLosslessLayer && numLayers > 1
+	if e.params.Lossless && numLayers > 1 {
+		appendLossless = true
+	}
 	if len(blocks) == 0 {
 		return
 	}
@@ -2110,15 +2113,6 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			res:    0,
 			scale:  scale,
 		}
-		if e.params.DebugMode && resolution == 0 {
-			fmt.Printf("[DEBUG] LL subband: %dx%d (from DWT output %dx%d)\n",
-				llWidth, llHeight, width, height)
-			fmt.Printf("[DEBUG] DWT output (first 28 LL coeffs): ")
-			for i := 0; i < 28 && i < len(llData); i++ {
-				fmt.Printf("%d ", llData[i])
-			}
-			fmt.Printf("\n")
-		}
 		subbands = append(subbands, sb)
 	} else {
 		// For resolution r, extract HL, LH, HH subbands
@@ -2164,7 +2158,7 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		lhData := make([]int32, sbWidth*sbHeight)
 		for y := 0; y < sbHeight; y++ {
 			for x := 0; x < sbWidth; x++ {
-				srcIdx := (sbHeight + y) * width + x
+				srcIdx := (sbHeight+y)*width + x
 				if srcIdx < len(data) && sbHeight+y < height {
 					lhData[y*sbWidth+x] = data[srcIdx]
 				}
@@ -2186,7 +2180,7 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		hhData := make([]int32, sbWidth*sbHeight)
 		for y := 0; y < sbHeight; y++ {
 			for x := 0; x < sbWidth; x++ {
-				srcIdx := (sbHeight + y) * width + (sbWidth + x)
+				srcIdx := (sbHeight+y)*width + (sbWidth + x)
 				if srcIdx < len(data) && sbHeight+y < height && sbWidth+x < width {
 					hhData[y*sbWidth+x] = data[srcIdx]
 				}
@@ -2283,7 +2277,7 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 				height:   actualHeight,
 				globalX0: globalX0,
 				globalY0: globalY0,
-			cbx:      cbx,
+				cbx:      cbx,
 				cby:      cby,
 				scale:    subband.scale,
 				resLevel: subband.res,
@@ -2348,23 +2342,13 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		zeroBitPlanes = effectiveBitDepth - 1 - rawMaxBitplane
 	}
 
-	// DEBUG: Print zeroBitPlanes for first codeblock
-	if e.params.DebugMode && cbIdx == 0 {
-		fmt.Printf("  effectiveBitDepth=%d, rawMaxBitplane=%d, numbps=%d, zeroBitPlanes=%d\n",
-			effectiveBitDepth, rawMaxBitplane, numbps, zeroBitPlanes)
-	}
-
 	// Create block encoder (EBCOT T1 or HTJ2K)
 	var blockEnc BlockEncoder
 	if e.params.BlockEncoderFactory != nil {
 		blockEnc = e.params.BlockEncoderFactory(actualWidth, actualHeight)
 	} else {
 		t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
-		// Enable debug for first codeblock (Resolution 0, LL band)
-		if e.params.DebugMode && cbIdx == 0 {
-			debugName := fmt.Sprintf("CB%d (res%d)", cbIdx, cb.resLevel)
-			t1Enc.SetDebugMode(true, debugName)
-		}
+		t1Enc.SetOrientation(cb.band)
 		blockEnc = t1Enc
 	}
 
@@ -2396,8 +2380,9 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		Y0:             cb.globalY0,
 		X1:             cb.globalX0 + actualWidth,
 		Y1:             cb.globalY0 + actualHeight,
-	CBX:            cb.cbx,
+		CBX:            cb.cbx,
 		CBY:            cb.cby,
+		Band:           cb.band,
 		Included:       false, // First inclusion in packet
 		NumPassesTotal: numPasses,
 		ZeroBitPlanes:  zeroBitPlanes,
@@ -2427,8 +2412,8 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		if t1Enc, ok := blockEnc.(*t1.T1Encoder); ok {
 			// Calculate code-block style flags (match writeCOD logic)
 			cblksty := uint8(0)
-			if e.params.NumLayers > 1 {
-				cblksty |= 0x04 // TERMALL for multi-layer
+			if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
+				cblksty |= 0x04
 			}
 			// Use layered encoding for T1Encoder
 			passes, completeData, err = t1Enc.EncodeLayered(cbData, numPasses, roishift, layerBoundaries, cblksty)
@@ -2457,7 +2442,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 		pcb.Passes = passes
 		pcb.CompleteData = completeData
 		pcb.Data = completeData
-		pcb.UseTERMALL = e.params.NumLayers > 1 // Only use TERMALL for multi-layer
+		pcb.UseTERMALL = e.params.NumLayers > 1 || e.params.TargetRatio > 0
 
 		return pcb
 	} else {
@@ -2696,30 +2681,11 @@ func (e *Encoder) applyDCLevelShift() {
 		return
 	}
 
-	// DEBUG: Print before DC shift
-	if len(e.data) > 0 && len(e.data[0]) > 0 {
-		fmt.Printf("DEBUG encoder: Before DC shift, first 10 values: ")
-		for i := 0; i < 10 && i < len(e.data[0]); i++ {
-			fmt.Printf("%d ", e.data[0][i])
-		}
-		fmt.Printf("\n")
-	}
-
 	// Unsigned data - subtract 2^(bitDepth-1)
 	shift := int32(1 << (e.params.BitDepth - 1))
-	fmt.Printf("DEBUG encoder: BitDepth=%d, shift=%d\n", e.params.BitDepth, shift)
 	for comp := range e.data {
 		for i := range e.data[comp] {
 			e.data[comp][i] -= shift
 		}
-	}
-
-	// DEBUG: Print after DC shift
-	if len(e.data) > 0 && len(e.data[0]) > 0 {
-		fmt.Printf("DEBUG encoder: After DC shift, first 10 values: ")
-		for i := 0; i < 10 && i < len(e.data[0]); i++ {
-			fmt.Printf("%d ", e.data[0][i])
-		}
-		fmt.Printf("\n")
 	}
 }

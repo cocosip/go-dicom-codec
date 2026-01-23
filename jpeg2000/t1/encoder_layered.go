@@ -124,6 +124,7 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Encode bit-planes from MSB to LSB
 	passIdx := 0
+	prevTerminated := false
 	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; t1.bitplane-- {
 		// Clear VISIT flags at start of each bitplane
 		paddedWidth := t1.width + 2
@@ -140,6 +141,10 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 		// Three coding passes per bit-plane
 		// 1. Significance Propagation Pass (SPP)
 		if passIdx < numPasses {
+			if prevTerminated {
+				t1.mqe.RestartInitEnc()
+				prevTerminated = false
+			}
 			if err := t1.encodeSigPropPass(); err != nil {
 				return nil, nil, fmt.Errorf("significance propagation pass failed: %w", err)
 			}
@@ -148,10 +153,14 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				// RESET flag (0x02): reset contexts after each pass
-				if (cblksty & 0x02) != 0 {
-					t1.mqe.ResetContexts()
-				}
+				prevTerminated = true
+			}
+			// RESET flag (0x02): reset contexts after each pass
+			if (cblksty & 0x02) != 0 {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
 			}
 
 			actualBytes := t1.mqe.NumBytes()
@@ -178,6 +187,10 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 		// 2. Magnitude Refinement Pass (MRP)
 		if passIdx < numPasses {
+			if prevTerminated {
+				t1.mqe.RestartInitEnc()
+				prevTerminated = false
+			}
 			if err := t1.encodeMagRefPass(); err != nil {
 				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
 			}
@@ -185,10 +198,14 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				// RESET flag (0x02): reset contexts after each pass
-				if (cblksty & 0x02) != 0 {
-					t1.mqe.ResetContexts()
-				}
+				prevTerminated = true
+			}
+			// RESET flag (0x02): reset contexts after each pass
+			if (cblksty & 0x02) != 0 {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
 			}
 
 			actualBytes := t1.mqe.NumBytes()
@@ -215,6 +232,10 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 		// 3. Cleanup Pass (CP)
 		if passIdx < numPasses {
+			if prevTerminated {
+				t1.mqe.RestartInitEnc()
+				prevTerminated = false
+			}
 			if err := t1.encodeCleanupPass(); err != nil {
 				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
 			}
@@ -222,10 +243,14 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 			shouldTerminate := shouldTerminatePass(passIdx, numPasses, layerBoundaries, cblksty)
 			if shouldTerminate {
 				t1.mqe.FlushToOutput()
-				// RESET flag (0x02): reset contexts after each pass
-				if (cblksty & 0x02) != 0 {
-					t1.mqe.ResetContexts()
-				}
+				prevTerminated = true
+			}
+			// RESET flag (0x02): reset contexts after each pass
+			if (cblksty & 0x02) != 0 {
+				t1.mqe.ResetContexts()
+				t1.mqe.SetContextState(CTX_UNI, 46)
+				t1.mqe.SetContextState(CTX_RL, 3)
+				t1.mqe.SetContextState(CTX_ZC_START, 4)
 			}
 
 			actualBytes := t1.mqe.NumBytes()
@@ -253,6 +278,9 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
 			t1.mqe.ResetContexts()
+			t1.mqe.SetContextState(CTX_UNI, 46)
+			t1.mqe.SetContextState(CTX_RL, 3)
+			t1.mqe.SetContextState(CTX_ZC_START, 4)
 		}
 	}
 

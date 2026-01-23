@@ -28,6 +28,9 @@ type T1Encoder struct {
 	// Current bit-plane being encoded
 	bitplane int
 
+	// Subband orientation (0=LL, 1=HL, 2=LH, 3=HH)
+	orientation int
+
 	// Encoding parameters
 	roishift     int  // ROI shift value
 	cblkstyle    int  // Code-block style flags
@@ -35,9 +38,6 @@ type T1Encoder struct {
 	termall      bool // Terminate all passes
 	segmentation bool // Use segmentation symbols
 
-	// Debug mode
-	debugMode bool
-	debugName string // Debug identifier (e.g., "res0_band0_cb0")
 }
 
 // NewT1Encoder creates a new Tier-1 encoder
@@ -53,18 +53,18 @@ func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
 	}
 
 	// Parse code-block style flags
+	// Reference: ISO/IEC 15444-1 Table A.18
 	t1.cblkstyle = cblkstyle
-	t1.resetctx = (cblkstyle & 0x01) != 0     // Selective arithmetic coding bypass
-	t1.termall = (cblkstyle & 0x02) != 0      // Reset context probabilities
-	t1.segmentation = (cblkstyle & 0x04) != 0 // Segmentation symbols
+	t1.resetctx = (cblkstyle & 0x02) != 0     // Reset context probabilities
+	t1.termall = (cblkstyle & 0x04) != 0      // Termination on each coding pass
+	t1.segmentation = (cblkstyle & 0x20) != 0 // Segmentation symbols
 
 	return t1
 }
 
-// SetDebugMode enables debug logging with an identifier
-func (t1 *T1Encoder) SetDebugMode(enabled bool, name string) {
-	t1.debugMode = enabled
-	t1.debugName = name
+// SetOrientation sets the subband orientation for zero coding context lookup.
+func (t1 *T1Encoder) SetOrientation(orient int) {
+	t1.orientation = orient
 }
 
 // Encode encodes a code-block
@@ -97,40 +97,18 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 	// Determine maximum bit-plane
 	maxBitplane := t1.findMaxBitplane()
 
-	if t1.debugMode {
-		fmt.Printf("\n[T1 DEBUG] %s: %dx%d\n", t1.debugName, t1.width, t1.height)
-		fmt.Printf("  First 28 coefficients (row 0): ")
-		for i := 0; i < 28 && i < len(data); i++ {
-			fmt.Printf("%d ", data[i])
-		}
-		fmt.Printf("\n")
-		if len(data) >= 56 {
-			fmt.Printf("  Next 28 coefficients (row 1):  ")
-			for i := 28; i < 56 && i < len(data); i++ {
-				fmt.Printf("%d ", data[i])
-			}
-			fmt.Printf("\n")
-		}
-		fmt.Printf("  Max bitplane: %d\n", maxBitplane)
-		fmt.Printf("  Num passes requested: %d\n", numPasses)
-		if maxBitplane >= 0 {
-			fmt.Printf("  Expected total passes: %d (= (maxBitplane+1) * 3 = (%d+1) * 3)\n",
-				(maxBitplane+1)*3, maxBitplane)
-		}
-	}
-
 	if maxBitplane < 0 {
 		// All coefficients are zero
 		t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
 		result := t1.mqe.Flush()
-		if t1.debugMode {
-			fmt.Printf("  Output: %d bytes (all zero)\n", len(result))
-		}
 		return result, nil
 	}
 
-	// Initialize MQ encoder
+	// Initialize MQ encoder with OpenJPEG default context states
 	t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
+	t1.mqe.SetContextState(CTX_UNI, 46)
+	t1.mqe.SetContextState(CTX_RL, 3)
+	t1.mqe.SetContextState(CTX_ZC_START, 4)
 
 	// Encode bit-planes from MSB to LSB
 	// Each bit-plane has up to 3 coding passes
@@ -181,23 +159,14 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
 			t1.mqe.ResetContexts()
+			t1.mqe.SetContextState(CTX_UNI, 46)
+			t1.mqe.SetContextState(CTX_RL, 3)
+			t1.mqe.SetContextState(CTX_ZC_START, 4)
 		}
 	}
 
 	// Flush MQ encoder
 	result := t1.mqe.Flush()
-
-	if t1.debugMode {
-		fmt.Printf("  Actual passes encoded: %d\n", passIdx)
-		fmt.Printf("  Output: %d bytes\n", len(result))
-		if len(result) > 0 && len(result) <= 32 {
-			fmt.Printf("  Output bytes: ")
-			for _, b := range result {
-				fmt.Printf("%02X ", b)
-			}
-			fmt.Printf("\n")
-		}
-	}
 
 	return result, nil
 }
@@ -262,7 +231,7 @@ func (t1 *T1Encoder) encodeSigPropPass() error {
 			isSig := (absVal >> uint(t1.bitplane)) & 1
 
 			// Encode significance bit
-			ctx := getZeroCodingContext(flags)
+			ctx := getZeroCodingContext(flags, t1.orientation)
 			t1.mqe.Encode(int(isSig), int(ctx))
 
 			if isSig != 0 {
@@ -404,9 +373,9 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						isSig := (absVal >> uint(t1.bitplane)) & 1
 
 						// Encode significance bit
-						ctx := getZeroCodingContext(flags)
+			ctx := getZeroCodingContext(flags, t1.orientation)
 
-						t1.mqe.Encode(int(isSig), int(ctx))
+			t1.mqe.Encode(int(isSig), int(ctx))
 
 						if isSig != 0 {
 							// Check if already significant
@@ -460,7 +429,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				isSig := (absVal >> uint(t1.bitplane)) & 1
 
 				// Encode significance bit
-				ctx := getZeroCodingContext(flags)
+				ctx := getZeroCodingContext(flags, t1.orientation)
 				t1.mqe.Encode(int(isSig), int(ctx))
 
 				if isSig != 0 {

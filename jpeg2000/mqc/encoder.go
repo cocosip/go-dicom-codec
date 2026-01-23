@@ -1,25 +1,17 @@
 package mqc
 
-import (
-	"bytes"
-)
-
 // MQEncoder implements the MQ arithmetic encoder
 // Reference: ISO/IEC 15444-1:2019 Annex C
 type MQEncoder struct {
-	// Output buffer
-	output *bytes.Buffer
+	// Output buffer (index 0 is dummy byte)
+	buffer []byte
+	start  int
+	bp     int
 
 	// State variables
 	a   uint32 // Probability interval
 	c   uint32 // Code register
 	ct  int    // Bit counter
-
-	// Last byte written
-	lastByte byte
-
-	// Track if any bytes have been output
-	hasOutput bool
 
 	// Contexts
 	contexts []uint8 // Context states (one per context)
@@ -28,12 +20,12 @@ type MQEncoder struct {
 // NewMQEncoder creates a new MQ encoder
 func NewMQEncoder(numContexts int) *MQEncoder {
 	mqe := &MQEncoder{
-		output:    &bytes.Buffer{},
+		buffer:    make([]byte, 1, 1024),
+		start:     1,
+		bp:        0,
 		a:         0x8000,
 		c:         0,
 		ct:        12,
-		lastByte:  0,
-		hasOutput: false,
 		contexts:  make([]uint8, numContexts),
 	}
 
@@ -105,53 +97,52 @@ func (mqe *MQEncoder) renorme() {
 
 // byteout outputs a byte to the stream
 func (mqe *MQEncoder) byteout() {
-	if mqe.lastByte == 0xFF {
-		mqe.output.WriteByte(mqe.lastByte)
-		mqe.hasOutput = true
-		mqe.lastByte = byte((mqe.c >> 20) & 0xFF)
+	if mqe.bp >= len(mqe.buffer) {
+		mqe.ensureIndex(mqe.bp)
+	}
+
+	if mqe.buffer[mqe.bp] == 0xFF {
+		mqe.bp++
+		mqe.ensureIndex(mqe.bp)
+		mqe.buffer[mqe.bp] = byte(mqe.c >> 20)
 		mqe.c &= 0xFFFFF
 		mqe.ct = 7
-	} else {
-		if (mqe.c & 0x8000000) == 0 {
-			// Write lastByte if hasOutput is already true
-			// (meaning lastByte was populated from previous byteout)
-			if mqe.hasOutput {
-				mqe.output.WriteByte(mqe.lastByte)
-			}
-			mqe.lastByte = byte((mqe.c >> 19) & 0xFF)
-			mqe.c &= 0x7FFFF
-			mqe.ct = 8
-			// Mark hasOutput=true AFTER extracting new lastByte
-			mqe.hasOutput = true
-		} else {
-			mqe.lastByte++
-			if mqe.lastByte == 0xFF {
-				mqe.c &= 0x7FFFFFF
-				mqe.output.WriteByte(mqe.lastByte)
-				mqe.hasOutput = true
-				mqe.lastByte = byte((mqe.c >> 20) & 0xFF)
-				mqe.c &= 0xFFFFF
-				mqe.ct = 7
-			} else {
-				mqe.output.WriteByte(mqe.lastByte)
-				mqe.hasOutput = true
-				mqe.lastByte = byte((mqe.c >> 19) & 0xFF)
-				mqe.c &= 0x7FFFF
-				mqe.ct = 8
-			}
-		}
+		return
 	}
+
+	if (mqe.c & 0x8000000) == 0 {
+		mqe.bp++
+		mqe.ensureIndex(mqe.bp)
+		mqe.buffer[mqe.bp] = byte(mqe.c >> 19)
+		mqe.c &= 0x7FFFF
+		mqe.ct = 8
+		return
+	}
+
+	mqe.buffer[mqe.bp]++
+	if mqe.buffer[mqe.bp] == 0xFF {
+		mqe.c &= 0x7FFFFFF
+		mqe.bp++
+		mqe.ensureIndex(mqe.bp)
+		mqe.buffer[mqe.bp] = byte(mqe.c >> 20)
+		mqe.c &= 0xFFFFF
+		mqe.ct = 7
+		return
+	}
+
+	mqe.bp++
+	mqe.ensureIndex(mqe.bp)
+	mqe.buffer[mqe.bp] = byte(mqe.c >> 19)
+	mqe.c &= 0x7FFFF
+	mqe.ct = 8
 }
 
 // Flush finalizes encoding and returns the encoded data
 func (mqe *MQEncoder) Flush() []byte {
 	// setbits: fill remaining bits with 1's for flushing
-	// Mirror OpenJPEG's opj_mqc_setbits() - always fill 0xFFFF
+	// Mirror OpenJPEG's opj_mqc_setbits()
 	tempC := mqe.c + mqe.a
-
-	// Fill with 0xFFFF to match OpenJPEG exactly
 	mqe.c |= 0xFFFF
-
 	if mqe.c >= tempC {
 		mqe.c -= 0x8000
 	}
@@ -159,39 +150,44 @@ func (mqe *MQEncoder) Flush() []byte {
 	// Output final bytes
 	mqe.c <<= uint(mqe.ct)
 	mqe.byteout()
-
 	mqe.c <<= uint(mqe.ct)
 	mqe.byteout()
 
-	// Write last byte if not 0xFF
-	if mqe.lastByte != 0xFF {
-		mqe.output.WriteByte(mqe.lastByte)
+	// It is forbidden that a coding pass ends with 0xFF
+	if mqe.buffer[mqe.bp] != 0xFF {
+		mqe.bp++
 	}
 
-	return mqe.output.Bytes()
+	if mqe.bp < mqe.start {
+		return []byte{}
+	}
+	return mqe.buffer[mqe.start:mqe.bp]
 }
 
 // GetBuffer returns the current output buffer (for layered encoding)
 func (mqe *MQEncoder) GetBuffer() []byte {
-	return mqe.output.Bytes()
+	if mqe.bp < mqe.start {
+		return []byte{}
+	}
+	return mqe.buffer[mqe.start:mqe.bp]
 }
 
 // NumBytes returns the current number of bytes in the output buffer
 // This is used for rate tracking in multi-layer encoding (following OpenJPEG)
 func (mqe *MQEncoder) NumBytes() int {
-	return mqe.output.Len()
+	if mqe.bp < mqe.start {
+		return 0
+	}
+	return mqe.bp - mqe.start
 }
 
 // FlushToOutput flushes the encoder to the output buffer
 // This is used for pass termination in multi-layer encoding
 func (mqe *MQEncoder) FlushToOutput() {
 	// setbits: fill remaining bits with 1's for flushing
-	// Mirror OpenJPEG's opj_mqc_setbits() - always fill 0xFFFF
+	// Mirror OpenJPEG's opj_mqc_setbits()
 	tempC := mqe.c + mqe.a
-
-	// Fill with 0xFFFF to match OpenJPEG exactly
 	mqe.c |= 0xFFFF
-
 	if mqe.c >= tempC {
 		mqe.c -= 0x8000
 	}
@@ -199,31 +195,23 @@ func (mqe *MQEncoder) FlushToOutput() {
 	// Output final bytes
 	mqe.c <<= uint(mqe.ct)
 	mqe.byteout()
-
 	mqe.c <<= uint(mqe.ct)
 	mqe.byteout()
 
-	// Write last byte if not 0xFF
-	if mqe.lastByte != 0xFF {
-		mqe.output.WriteByte(mqe.lastByte)
+	// It is forbidden that a coding pass ends with 0xFF
+	if mqe.buffer[mqe.bp] != 0xFF {
+		mqe.bp++
 	}
-
-	// Reset state for next pass (but don't reset output buffer or contexts)
-	mqe.a = 0x8000
-	mqe.c = 0
-	mqe.ct = 12
-	mqe.lastByte = 0
-	mqe.hasOutput = false
 }
 
 // Reset resets the encoder state
 func (mqe *MQEncoder) Reset() {
-	mqe.output.Reset()
+	mqe.buffer = make([]byte, 1, 1024)
+	mqe.start = 1
+	mqe.bp = 0
 	mqe.a = 0x8000
 	mqe.c = 0
 	mqe.ct = 12
-	mqe.lastByte = 0
-	mqe.hasOutput = false
 }
 
 // ResetContext resets a context to initial state
@@ -246,4 +234,36 @@ func (mqe *MQEncoder) GetContextState(contextID int) uint8 {
 // SetContextState sets the state of a context
 func (mqe *MQEncoder) SetContextState(contextID int, state uint8) {
 	mqe.contexts[contextID] = state
+}
+
+// RestartInitEnc reinitializes MQC state after a terminated pass.
+// Mirrors OpenJPEG opj_mqc_restart_init_enc().
+func (mqe *MQEncoder) RestartInitEnc() {
+	mqe.a = 0x8000
+	mqe.c = 0
+	mqe.ct = 12
+	if mqe.bp > mqe.start-1 {
+		mqe.bp--
+	}
+	if mqe.bp >= 0 && mqe.bp < len(mqe.buffer) && mqe.buffer[mqe.bp] == 0xFF {
+		mqe.ct = 13
+	}
+}
+
+func (mqe *MQEncoder) ensureIndex(idx int) {
+	if idx < len(mqe.buffer) {
+		return
+	}
+	needed := idx + 1
+	if needed <= cap(mqe.buffer) {
+		mqe.buffer = mqe.buffer[:needed]
+		return
+	}
+	newCap := cap(mqe.buffer) * 2
+	if newCap < needed {
+		newCap = needed
+	}
+	newBuf := make([]byte, needed, newCap)
+	copy(newBuf, mqe.buffer)
+	mqe.buffer = newBuf
 }

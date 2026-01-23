@@ -97,110 +97,58 @@ type BitWriter interface {
 
 // Decode decodes the tag tree value for the specified leaf position (x, y)
 // up to the threshold value. Returns the decoded value.
-// The threshold parameter indicates we only need to know if value < threshold.
-// Implementation follows ISO/IEC 15444-1 Section B.10.2
+// Implementation follows OpenJPEG's opj_tgt_decode().
 func (tt *TagTree) Decode(br BitReader, x, y, threshold int) (int, error) {
 	if x < 0 || x >= tt.width || y < 0 || y >= tt.height {
 		return 0, fmt.Errorf("tag tree position out of bounds: (%d,%d) not in [0,%d)x[0,%d)",
 			x, y, tt.width, tt.height)
 	}
 
-	// Traverse from root (level = levels-1) down to leaf (level = 0)
-	// maintaining the path to the target leaf node
-	level := tt.levels - 1
+	type nodePos struct {
+		level int
+		idx   int
+	}
+	stack := make([]nodePos, 0, tt.levels)
 
-	// Position in current level
-	px := x
-	py := y
-
-	// Parent node value (minimum value for child nodes)
-	parentValue := 0
-	parentKnown := false // Whether parent value is exactly known (read a 1 bit)
-
-	// Decode from root to leaf
-	for level >= 0 {
-		// Calculate position at current level
-		// Each parent covers a 2x2 block of children
-		shift := level
-		px = x >> shift
-		py = y >> shift
-
-		// Ensure position is within bounds for this level
-		if px >= tt.levelWidths[level] {
-			px = tt.levelWidths[level] - 1
-		}
-		if py >= tt.levelHeights[level] {
-			py = tt.levelHeights[level] - 1
-		}
-
-		// Get node index at current level
+	px, py := x, y
+	for level := 0; level < tt.levels; level++ {
 		idx := py*tt.levelWidths[level] + px
-
-		// Ensure the node state is at least the parent value
-		if tt.states[level][idx] < parentValue {
-			tt.states[level][idx] = parentValue
-			tt.nodes[level][idx] = parentValue
+		stack = append(stack, nodePos{level: level, idx: idx})
+		if level < tt.levels-1 {
+			px /= 2
+			py /= 2
 		}
-
-		// If parent value is known and >= threshold, return it
-		// (all descendants have value >= parent value >= threshold)
-		if parentValue >= threshold {
-			return parentValue, nil
-		}
-
-		// If parent value is exactly known (from reading 1-bit)
-		// children inherit this value directly
-		if parentKnown {
-			if level == 0 {
-				return tt.states[level][idx], nil
-			}
-			// Continue to next level with inherited value
-			parentValue = tt.states[level][idx]
-			level--
-			continue
-		}
-
-		// Decode bits until state[idx] >= threshold or we read a 1 bit
-		valueKnown := false
-		for tt.states[level][idx] < threshold {
-			bit, err := br.ReadBit()
-			if err != nil {
-				// End of stream - return current state
-				return tt.states[level][idx], nil
-			}
-
-			if bit == 0 {
-				// 0 bit means value is at least states[idx]+1
-				tt.states[level][idx]++
-			} else {
-				// 1 bit means value equals states[idx] exactly
-				valueKnown = true
-				break
-			}
-		}
-
-		// Update node value
-		tt.nodes[level][idx] = tt.states[level][idx]
-
-		if level == 0 {
-			// At leaf level - return final value
-			return tt.states[level][idx], nil
-		}
-
-		// If current node value >= threshold, all descendants >= threshold
-		if tt.states[level][idx] >= threshold {
-			return tt.states[level][idx], nil
-		}
-
-		// Store parent value and whether it's exactly known for next level
-		parentValue = tt.states[level][idx]
-		parentKnown = valueKnown
-
-		// Move to child level
-		level--
 	}
 
-	return 0, nil
+	low := 0
+	for i := len(stack) - 1; i >= 0; i-- {
+		node := stack[i]
+		level := node.level
+		idx := node.idx
+
+		if low > tt.low[level][idx] {
+			tt.low[level][idx] = low
+		} else {
+			low = tt.low[level][idx]
+		}
+
+		for low < threshold && low < tt.nodes[level][idx] {
+			bit, err := br.ReadBit()
+			if err != nil {
+				return tt.nodes[level][idx], err
+			}
+			if bit != 0 {
+				tt.nodes[level][idx] = low
+			} else {
+				low++
+			}
+		}
+
+		tt.low[level][idx] = low
+	}
+
+	leaf := stack[0]
+	return tt.nodes[leaf.level][leaf.idx], nil
 }
 
 // Width returns the width of the tag tree (number of code-blocks in x direction)

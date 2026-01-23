@@ -3,6 +3,7 @@ package t2
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
@@ -90,6 +91,7 @@ type SubbandDecoder struct {
 type CodeBlockDecoder struct {
 	x0, y0    int
 	x1, y1    int
+	band      int
 	data      []byte // Compressed data
 	numPasses int
 	t1Decoder BlockDecoder // Can be EBCOT T1 or HTJ2K decoder
@@ -249,7 +251,6 @@ func (r *ROIInfo) blockMask(compIdx, x0, y0, x1, y1 int) [][]bool {
 	return out
 }
 
-
 // NewTileDecoder creates a new tile decoder
 func NewTileDecoder(
 	tile *codestream.Tile,
@@ -321,7 +322,6 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)
 	}
 
-	// Decode code-blocks for all components from the parsed packets
 	if err := td.decodeAllCodeBlocks(packets); err != nil {
 		return nil, fmt.Errorf("failed to decode code-blocks: %w", err)
 	}
@@ -421,9 +421,6 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 					existing, ok := cbDataMap[key]
 
-					// Save base offset BEFORE appending data
-					baseOffset := len(existing.data)
-
 					if ok {
 						// Append to existing data
 						existing.data = append(existing.data, cbData...)
@@ -435,20 +432,22 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 					dataOffset += cbIncl.DataLength
 
-					// Accumulate PassLengths from each layer
+					// Accumulate PassLengths from each layer (convert to cumulative)
 					if cbIncl.PassLengths != nil && len(cbIncl.PassLengths) > 0 {
 						if existing.passLengths == nil {
-							// First layer: use as-is
 							existing.passLengths = make([]int, len(cbIncl.PassLengths))
-							copy(existing.passLengths, cbIncl.PassLengths)
-
+							total := 0
+							for i, passLen := range cbIncl.PassLengths {
+								total += passLen
+								existing.passLengths[i] = total
+							}
 						} else {
-							// Subsequent layers: append with offset (baseOffset was saved before append)
+							total := existing.passLengths[len(existing.passLengths)-1]
 							for _, passLen := range cbIncl.PassLengths {
-								existing.passLengths = append(existing.passLengths, baseOffset+passLen)
+								total += passLen
+								existing.passLengths = append(existing.passLengths, total)
 							}
 						}
-
 					}
 					if cbIncl.UseTERMALL {
 						existing.useTERMALL = true
@@ -505,8 +504,8 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		for res := 0; res <= comp.numLevels; res++ {
 			if res == 0 {
 				// Resolution 0: LL subband only
-				llWidth := comp.width >> comp.numLevels
-				llHeight := comp.height >> comp.numLevels
+				llWidth := subbandDim(comp.width, comp.numLevels, res)
+				llHeight := subbandDim(comp.height, comp.numLevels, res)
 				numCBX := (llWidth + cbWidth - 1) / cbWidth
 				numCBY := (llHeight + cbHeight - 1) / cbHeight
 
@@ -515,9 +514,8 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 				}
 			} else {
 				// Resolution r: HL, LH, HH subbands
-				level := comp.numLevels - res + 1
-				sbWidth := comp.width >> level
-				sbHeight := comp.height >> level
+				sbWidth := subbandDim(comp.width, comp.numLevels, res)
+				sbHeight := subbandDim(comp.height, comp.numLevels, res)
 				numCBX := (sbWidth + cbWidth - 1) / cbWidth
 				numCBY := (sbHeight + cbHeight - 1) / cbHeight
 
@@ -540,6 +538,16 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 
 			// For each subband in this resolution
 			for _, layout := range layouts {
+				band := 0
+				if res > 0 {
+					if layout.x0 > 0 && layout.y0 == 0 {
+						band = 1 // HL
+					} else if layout.x0 == 0 && layout.y0 > 0 {
+						band = 2 // LH
+					} else if layout.x0 > 0 && layout.y0 > 0 {
+						band = 3 // HH
+					}
+				}
 				// For each code-block in this subband
 				for cby := 0; cby < layout.numCBY; cby++ {
 					for cbx := 0; cbx < layout.numCBX; cbx++ {
@@ -601,14 +609,18 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 							y0:        y0,
 							x1:        x1,
 							y1:        y1,
+							band:      band,
 							data:      cbInfoData.data,
 							numPasses: numPasses,
 							t1Decoder: func() BlockDecoder {
-							if td.isHTJ2K && td.blockDecoderFactory != nil {
-								return td.blockDecoderFactory(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
-							}
-							return t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
-						}(),
+								if td.isHTJ2K && td.blockDecoderFactory != nil {
+									return td.blockDecoderFactory(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+								}
+								return t1.NewT1Decoder(actualWidth, actualHeight, int(td.cod.CodeBlockStyle))
+							}(),
+						}
+						if orientSetter, ok := cbd.t1Decoder.(interface{ SetOrientation(int) }); ok {
+							orientSetter.SetOrientation(band)
 						}
 
 						// Decode the code-block
@@ -638,11 +650,11 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								// Multi-layer mode
 								// Check if this is EBCOT T1 (has DecodeLayeredWithMode) or HTJ2K (use DecodeLayered)
 								if t1Dec, ok := cbd.t1Decoder.(interface {
-									DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error
+									DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, resetContexts bool) error
 								}); ok {
 									// EBCOT T1 decoder with TERMALL mode support
-									lossless := td.cod.Transformation == 1
-									err = t1Dec.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, lossless)
+									resetContexts := (td.cod.CodeBlockStyle & 0x02) != 0
+									err = t1Dec.DecodeLayeredWithMode(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0, cbInfoData.useTERMALL, resetContexts)
 								} else {
 									// HTJ2K or other decoder - use standard DecodeLayered
 									err = cbd.t1Decoder.DecodeLayered(cbInfoData.data, cbInfoData.passLengths, cbInfoData.maxBitplane, 0)
@@ -705,22 +717,26 @@ func (td *TileDecoder) buildPrecinctOrder(comp *ComponentDecoder, cbWidth, cbHei
 
 	for res := 0; res <= comp.numLevels; res++ {
 		order[res] = make(map[int][]int)
+		type cbEntry struct {
+			cbx    int
+			cby    int
+			global int
+		}
+		precinctBands := make(map[int]map[int][]cbEntry)
+		addEntry := func(pIdx, band, cbxLocal, cbyLocal, global int) {
+			if precinctBands[pIdx] == nil {
+				precinctBands[pIdx] = make(map[int][]cbEntry)
+			}
+			precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
+		}
+
 		if res == 0 {
-			llWidth := comp.width >> comp.numLevels
-			llHeight := comp.height >> comp.numLevels
-			if llWidth < 1 {
-				llWidth = 1
-			}
-			if llHeight < 1 {
-				llHeight = 1
-			}
+			llWidth := subbandDim(comp.width, comp.numLevels, res)
+			llHeight := subbandDim(comp.height, comp.numLevels, res)
 			numCBX := (llWidth + cbWidth - 1) / cbWidth
 			numCBY := (llHeight + cbHeight - 1) / cbHeight
 
-			resWidth := comp.width >> (comp.numLevels - res)
-			if resWidth < 1 {
-				resWidth = 1
-			}
+			resWidth := resolutionDim(comp.width, comp.numLevels, res)
 			numPrecinctX := (resWidth + pw - 1) / pw
 			if numPrecinctX < 1 {
 				numPrecinctX = 1
@@ -733,63 +749,79 @@ func (td *TileDecoder) buildPrecinctOrder(comp *ComponentDecoder, cbWidth, cbHei
 					px := x0 / pw
 					py := y0 / ph
 					pIdx := py*numPrecinctX + px
-					order[res][pIdx] = append(order[res][pIdx], globalCBIdx)
+					localX := x0 - px*pw
+					localY := y0 - py*ph
+					cbxLocal := localX / cbWidth
+					cbyLocal := localY / cbHeight
+					addEntry(pIdx, 0, cbxLocal, cbyLocal, globalCBIdx)
 					globalCBIdx++
 				}
 			}
-			continue
-		}
+		} else {
+			sbWidth := subbandDim(comp.width, comp.numLevels, res)
+			sbHeight := subbandDim(comp.height, comp.numLevels, res)
+			numCBX := (sbWidth + cbWidth - 1) / cbWidth
+			numCBY := (sbHeight + cbHeight - 1) / cbHeight
 
-		level := comp.numLevels - res + 1
-		if level < 0 {
-			level = 0
-		}
-		sbWidth := comp.width >> level
-		sbHeight := comp.height >> level
-		if sbWidth < 1 {
-			sbWidth = 1
-		}
-		if sbHeight < 1 {
-			sbHeight = 1
-		}
-		numCBX := (sbWidth + cbWidth - 1) / cbWidth
-		numCBY := (sbHeight + cbHeight - 1) / cbHeight
+			resWidth := resolutionDim(comp.width, comp.numLevels, res)
+			numPrecinctX := (resWidth + pw - 1) / pw
+			if numPrecinctX < 1 {
+				numPrecinctX = 1
+			}
 
-		resWidth := comp.width >> (comp.numLevels - res)
-		if resWidth < 1 {
-			resWidth = 1
-		}
-		numPrecinctX := (resWidth + pw - 1) / pw
-		if numPrecinctX < 1 {
-			numPrecinctX = 1
-		}
+			subbands := []struct {
+				x0, y0 int
+				band   int
+			}{
+				{sbWidth, 0, 1},        // HL
+				{0, sbHeight, 2},       // LH
+				{sbWidth, sbHeight, 3}, // HH
+			}
 
-		subbands := []struct {
-			x0, y0 int
-			band   int
-		}{
-			{sbWidth, 0, 1},        // HL
-			{0, sbHeight, 2},       // LH
-			{sbWidth, sbHeight, 3}, // HH
-		}
-
-		for _, sb := range subbands {
-			for cby := 0; cby < numCBY; cby++ {
-				for cbx := 0; cbx < numCBX; cbx++ {
-					x0 := sb.x0 + cbx*cbWidth
-					y0 := sb.y0 + cby*cbHeight
-					resX, resY := td.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
-					if resX < 0 {
-						resX = 0
+			for _, sb := range subbands {
+				for cby := 0; cby < numCBY; cby++ {
+					for cbx := 0; cbx < numCBX; cbx++ {
+						x0 := sb.x0 + cbx*cbWidth
+						y0 := sb.y0 + cby*cbHeight
+						resX, resY := td.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
+						if resX < 0 {
+							resX = 0
+						}
+						if resY < 0 {
+							resY = 0
+						}
+						px := resX / pw
+						py := resY / ph
+						pIdx := py*numPrecinctX + px
+						localX := resX - px*pw
+						localY := resY - py*ph
+						cbxLocal := localX / cbWidth
+						cbyLocal := localY / cbHeight
+						addEntry(pIdx, sb.band, cbxLocal, cbyLocal, globalCBIdx)
+						globalCBIdx++
 					}
-					if resY < 0 {
-						resY = 0
+				}
+			}
+		}
+
+		bands := []int{0}
+		if res > 0 {
+			bands = []int{1, 2, 3}
+		}
+		for pIdx, bandMap := range precinctBands {
+			for _, band := range bands {
+				entries := bandMap[band]
+				if len(entries) == 0 {
+					continue
+				}
+				sort.Slice(entries, func(i, j int) bool {
+					if entries[i].cby != entries[j].cby {
+						return entries[i].cby < entries[j].cby
 					}
-					px := resX / pw
-					py := resY / ph
-					pIdx := py*numPrecinctX + px
-					order[res][pIdx] = append(order[res][pIdx], globalCBIdx)
-					globalCBIdx++
+					return entries[i].cbx < entries[j].cbx
+				})
+				for _, entry := range entries {
+					order[res][pIdx] = append(order[res][pIdx], entry.global)
 				}
 			}
 		}
@@ -913,10 +945,6 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 					numLevels := int(td.cod.NumberOfDecompositionLevels)
 					effectiveBitDepth := baseBitDepth + numLevels + T1_NMSEDEC_FRACBITS
 					maxBP := effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
-					if cbIdx == 0 {  // Debug first codeblock
-						fmt.Printf("[T2 DEBUG] CB%d: baseBitDepth=%d, effectiveBitDepth=%d, ZeroBitplanes=%d, maxBP=%d\n",
-							cbIdx, baseBitDepth, effectiveBitDepth, cbIncl.ZeroBitplanes, maxBP)
-					}
 					if maxBP > maxBitplaneMap[cbIdx] {
 						maxBitplaneMap[cbIdx] = maxBP
 					}
@@ -963,9 +991,13 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				y0:        y0,
 				x1:        x1,
 				y1:        y1,
+				band:      0,
 				data:      cbData,
 				numPasses: (maxBitplane + 1) * 3,
 				t1Decoder: blockDecoder,
+			}
+			if orientSetter, ok := cbd.t1Decoder.(interface{ SetOrientation(int) }); ok {
+				orientSetter.SetOrientation(0)
 			}
 
 			// Decode the code-block

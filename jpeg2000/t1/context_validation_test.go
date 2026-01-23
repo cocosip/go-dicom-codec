@@ -1,190 +1,87 @@
 package t1
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 )
 
-// TestSignContextLUTAlignment 验证 Sign Context LUT 与 OpenJPEG 的对齐
-// 参考: OpenJPEG t1_luts.h lut_ctxno_sc[256]
-func TestSignContextLUTAlignment(t *testing.T) {
-	// 从 OpenJPEG t1_luts.h 提取的 lut_ctxno_sc[256]
-	openjpeg_lut_ctxno_sc := [256]uint8{
-		0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb,
-		0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd,
-		0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0x9, 0xd, 0xa, 0x9, 0xc, 0xa, 0xb,
-		0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0x9, 0xb, 0xa, 0x9, 0xc, 0xa, 0xd,
-		0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb,
-		0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd,
-		0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0x9, 0xd, 0xa, 0x9, 0xc, 0xa, 0xb,
-		0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0x9, 0xb, 0xa, 0x9, 0xc, 0xa, 0xd,
-		0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb,
-		0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc,
-		0xd, 0xd, 0xd, 0xd, 0xb, 0xb, 0xb, 0xb, 0xd, 0xa, 0xd, 0xa, 0xa, 0xb, 0xa, 0xb,
-		0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0xc, 0xd, 0xa, 0xc, 0x9, 0xa, 0xb, 0x9, 0xc,
-		0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc,
-		0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xa, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd, 0xb, 0xd,
-		0xb, 0xb, 0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xa, 0xc, 0x9, 0xa, 0xd, 0x9, 0xc,
-		0xb, 0xb, 0xb, 0xb, 0xd, 0xd, 0xd, 0xd, 0xb, 0xa, 0xb, 0xa, 0xa, 0xd, 0xa, 0xd,
-	}
+func TestOpenJPEGLUTAlignment(t *testing.T) {
+	zc := parseOpenJPEGLUT(t, "lut_ctxno_zc", 2048)
+	sc := parseOpenJPEGLUT(t, "lut_ctxno_sc", 256)
+	spb := parseOpenJPEGLUT(t, "lut_spb", 256)
 
-	// 验证每个值
-	errorCount := 0
-	for i := 0; i < 256; i++ {
-		expected := openjpeg_lut_ctxno_sc[i]
-		actual := lut_ctxno_sc[i] // lut_ctxno_sc now stores absolute values directly
-
-		if actual != expected {
-			t.Errorf("lut_ctxno_sc[%d]: 期望 0x%x, 得到 0x%x", i, expected, actual)
-			errorCount++
-			if errorCount >= 10 {
-				t.Fatalf("发现太多错误，停止检查")
-			}
+	for i, v := range zc {
+		if lut_ctxno_zc[i] != uint8(v) {
+			t.Fatalf("lut_ctxno_zc[%d] mismatch: got %d want %d", i, lut_ctxno_zc[i], v)
 		}
 	}
-
-	if errorCount == 0 {
-		t.Logf("✅ 所有 256 个 Sign Context LUT 条目与 OpenJPEG 完全一致")
+	for i, v := range sc {
+		if lut_ctxno_sc[i] != uint8(v) {
+			t.Fatalf("lut_ctxno_sc[%d] mismatch: got 0x%X want 0x%X", i, lut_ctxno_sc[i], v)
+		}
+	}
+	for i, v := range spb {
+		if lut_spb[i] != v {
+			t.Fatalf("lut_spb[%d] mismatch: got %d want %d", i, lut_spb[i], v)
+		}
 	}
 }
 
-// TestSignPredictionLUTAlignment 验证 Sign Prediction LUT 与 OpenJPEG 的对齐
-// 参考: OpenJPEG t1_luts.h lut_spb[256]
-func TestSignPredictionLUTAlignment(t *testing.T) {
-	// 从 OpenJPEG t1_luts.h 提取的 lut_spb[256]
-	openjpeg_lut_spb := [256]int{
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
-		0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
-		0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1,
-		0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1,
-		1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
-		0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1,
-	}
-
-	// 验证每个值
-	errorCount := 0
-	for i := 0; i < 256; i++ {
-		expected := openjpeg_lut_spb[i]
-		actual := lut_spb[i]
-
-		if actual != expected {
-			t.Errorf("lut_spb[%d]: 期望 %d, 得到 %d", i, expected, actual)
-			errorCount++
-			if errorCount >= 10 {
-				t.Fatalf("发现太多错误，停止检查")
-			}
-		}
-	}
-
-	if errorCount == 0 {
-		t.Logf("✅ 所有 256 个 Sign Prediction LUT 条目与 OpenJPEG 完全一致")
-	}
-}
-
-// TestZeroCodingContextLogic 验证 Zero Coding 上下文计算逻辑
-// OpenJPEG 使用预计算的 2048 项 LUT，我们动态计算
-// 需要验证动态计算的结果与 OpenJPEG LUT 一致
 func TestZeroCodingContextLogic(t *testing.T) {
-	// 从 OpenJPEG t1_luts.h 提取的部分 lut_ctxno_zc 值
-	// 完整表有 2048 项，我们测试关键样本
 	testCases := []struct {
 		name     string
 		flags    uint32
 		expected uint8
 	}{
+		{name: "NoNeighbors", flags: 0, expected: 0},
+		{name: "WestOnly", flags: T1_SIG_W, expected: 5},
+		{name: "NorthOnly", flags: T1_SIG_N, expected: 3},
+		{name: "WestEast", flags: T1_SIG_W | T1_SIG_E, expected: 8},
+		{name: "NorthSouth", flags: T1_SIG_N | T1_SIG_S, expected: 4},
+		{name: "CardinalFour", flags: T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E, expected: 8},
 		{
-			name:     "无邻居显著",
-			flags:    0,
-			expected: 0, // 上下文 0
-		},
-		{
-			name:     "仅左邻居(W)",
-			flags:    T1_SIG_W,
-			expected: 5, // idx=(1<<3)=8, lut_ctxno_zc[8]=5
-		},
-		{
-			name:     "仅上邻居(N)",
-			flags:    T1_SIG_N,
-			expected: 3, // idx=(1<<1)=2, lut_ctxno_zc[2]=3
-		},
-		{
-			name:     "左右邻居(W+E)",
-			flags:    T1_SIG_W | T1_SIG_E,
-			expected: 8, // idx=(1<<3)|(1<<5)=40, lut_ctxno_zc[40]=8
-		},
-		{
-			name:     "上下邻居(N+S)",
-			flags:    T1_SIG_N | T1_SIG_S,
-			expected: 4, // idx=(1<<1)|(1<<7)=130, lut_ctxno_zc[130]=4
-		},
-		{
-			name:     "四周邻居(N+S+W+E)",
-			flags:    T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E,
-			expected: 8, // idx=(1<<1)|(1<<3)|(1<<5)|(1<<7)=170, lut_ctxno_zc[170]=8
-		},
-		{
-			name:     "所有8个邻居",
+			name:     "AllNeighbors",
 			flags:    T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E | T1_SIG_NW | T1_SIG_NE | T1_SIG_SW | T1_SIG_SE,
-			expected: 8, // h=2, v=2, d=4 → sum=12 → context 8
+			expected: 8,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := getZeroCodingContext(tc.flags)
-			if actual != tc.expected {
-				t.Errorf("期望上下文 %d, 得到 %d", tc.expected, actual)
+			if got := getZeroCodingContext(tc.flags, 0); got != tc.expected {
+				t.Fatalf("context mismatch: got %d want %d", got, tc.expected)
 			}
 		})
 	}
 }
 
-// TestMagnitudeRefinementContext 验证幅度精化上下文计算
 func TestMagnitudeRefinementContext(t *testing.T) {
 	testCases := []struct {
 		name     string
 		flags    uint32
 		expected uint8
 	}{
-		{
-			name:     "无邻居显著",
-			flags:    0,
-			expected: 14, // 上下文 14 (CTX_MR_START + 0)
-		},
-		{
-			name:     "1个邻居",
-			flags:    T1_SIG_W,
-			expected: 15, // 上下文 15 (CTX_MR_START + 1)
-		},
-		{
-			name:     "2个邻居",
-			flags:    T1_SIG_W | T1_SIG_E,
-			expected: 15, // 上下文 15 (CTX_MR_START + 1)
-		},
-		{
-			name:     "3个邻居",
-			flags:    T1_SIG_W | T1_SIG_E | T1_SIG_N,
-			expected: 16, // 上下文 16 (CTX_MR_START + 2)
-		},
-		{
-			name:     "4个邻居",
-			flags:    T1_SIG_W | T1_SIG_E | T1_SIG_N | T1_SIG_S,
-			expected: 16, // 上下文 16 (CTX_MR_START + 2)
-		},
+		{name: "NoNeighbors", flags: 0, expected: 14},
+		{name: "OneNeighbor", flags: T1_SIG_W, expected: 15},
+		{name: "TwoNeighbors", flags: T1_SIG_W | T1_SIG_E, expected: 15},
+		{name: "ThreeNeighbors", flags: T1_SIG_W | T1_SIG_E | T1_SIG_N, expected: 16},
+		{name: "FourNeighbors", flags: T1_SIG_W | T1_SIG_E | T1_SIG_N | T1_SIG_S, expected: 16},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := getMagRefinementContext(tc.flags)
-			if actual != tc.expected {
-				t.Errorf("期望上下文 %d, 得到 %d", tc.expected, actual)
+			if got := getMagRefinementContext(tc.flags); got != tc.expected {
+				t.Fatalf("context mismatch: got %d want %d", got, tc.expected)
 			}
 		})
 	}
 }
 
-// TestSignCodingContextExtraction 验证符号编码上下文提取
 func TestSignCodingContextExtraction(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -192,80 +89,69 @@ func TestSignCodingContextExtraction(t *testing.T) {
 		expected uint8
 	}{
 		{
-			name:     "全正邻居 (all significant, all positive)",
-			flags:    T1_SIG_E | T1_SIG_W | T1_SIG_N | T1_SIG_S, // No SIGN flags = all positive
-			expected: 0xd, // idx=170 (0xaa), lut_ctxno_sc[170]=0xd (13)
+			name:     "AllPositive",
+			flags:    T1_SIG_E | T1_SIG_W | T1_SIG_N | T1_SIG_S,
+			expected: 0xD,
 		},
 		{
-			name:     "东负西负 (E+W both negative)",
-			flags:    T1_SIG_E | T1_SIG_W | T1_SIGN_E | T1_SIGN_W, // Both SIGN flags set = both negative
-			expected: 0xc, // idx=45 (0x2d), lut_ctxno_sc[45]=0xc (12)
+			name:     "EastWestNegative",
+			flags:    T1_SIG_E | T1_SIG_W | T1_SIGN_E | T1_SIGN_W,
+			expected: 0xC,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := getSignCodingContext(tc.flags)
-			if actual != tc.expected {
-				t.Errorf("期望上下文 %d, 得到 %d", tc.expected, actual)
+			if got := getSignCodingContext(tc.flags); got != tc.expected {
+				t.Fatalf("context mismatch: got %d want %d", got, tc.expected)
 			}
 		})
 	}
 }
 
-// TestContextConstants 验证上下文常量定义
 func TestContextConstants(t *testing.T) {
-	// 验证上下文范围定义
 	tests := []struct {
-		name     string
-		start    int
-		end      int
-		count    int
-		constant string
+		name  string
+		start int
+		end   int
+		count int
 	}{
-		{"Zero Coding", CTX_ZC_START, CTX_ZC_END, 9, "CTX_ZC"},
-		{"Sign Coding", CTX_SC_START, CTX_SC_END, 5, "CTX_SC"},
-		{"Magnitude Refinement", CTX_MR_START, CTX_MR_END, 3, "CTX_MR"},
+		{name: "ZeroCoding", start: CTX_ZC_START, end: CTX_ZC_END, count: 9},
+		{name: "SignCoding", start: CTX_SC_START, end: CTX_SC_END, count: 5},
+		{name: "MagnitudeRefinement", start: CTX_MR_START, end: CTX_MR_END, count: 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			actualCount := tt.end - tt.start + 1
-			if actualCount != tt.count {
-				t.Errorf("%s: 期望 %d 个上下文, 得到 %d", tt.constant, tt.count, actualCount)
+			if got := tt.end-tt.start+1; got != tt.count {
+				t.Fatalf("context count mismatch: got %d want %d", got, tt.count)
 			}
 		})
 	}
 
-	// 验证总上下文数
 	if NUM_CONTEXTS != 19 {
-		t.Errorf("NUM_CONTEXTS 应为 19, 得到 %d", NUM_CONTEXTS)
+		t.Fatalf("NUM_CONTEXTS = %d, want 19", NUM_CONTEXTS)
 	}
-
-	// 验证 Run-Length 和 Uniform 上下文
 	if CTX_RL != 17 {
-		t.Errorf("CTX_RL 应为 17, 得到 %d", CTX_RL)
+		t.Fatalf("CTX_RL = %d, want 17", CTX_RL)
 	}
 	if CTX_UNI != 18 {
-		t.Errorf("CTX_UNI 应为 18, 得到 %d", CTX_UNI)
+		t.Fatalf("CTX_UNI = %d, want 18", CTX_UNI)
 	}
 }
 
-// TestStateFlagDefinitions 验证状态标志定义
 func TestStateFlagDefinitions(t *testing.T) {
-	// 验证基本标志
 	if T1_SIG != 0x0001 {
-		t.Errorf("T1_SIG 应为 0x0001")
+		t.Fatalf("T1_SIG = 0x%04X, want 0x0001", T1_SIG)
 	}
 	if T1_REFINE != 0x0002 {
-		t.Errorf("T1_REFINE 应为 0x0002")
+		t.Fatalf("T1_REFINE = 0x%04X, want 0x0002", T1_REFINE)
 	}
 	if T1_VISIT != 0x0004 {
-		t.Errorf("T1_VISIT 应为 0x0004")
+		t.Fatalf("T1_VISIT = 0x%04X, want 0x0004", T1_VISIT)
 	}
 
-	// 验证邻居显著性标志
-	expectedNeighbors := []struct {
+	expected := []struct {
 		flag uint32
 		name string
 	}{
@@ -279,44 +165,84 @@ func TestStateFlagDefinitions(t *testing.T) {
 		{T1_SIG_SE, "T1_SIG_SE"},
 	}
 
-	allNeighbors := uint32(0)
-	for _, n := range expectedNeighbors {
+	var mask uint32
+	for _, n := range expected {
 		if n.flag == 0 {
-			t.Errorf("%s 不应为 0", n.name)
+			t.Fatalf("%s flag is zero", n.name)
 		}
-		// 检查标志是否唯一（单个比特）
 		if n.flag&(n.flag-1) != 0 {
-			t.Errorf("%s 应该是单个比特: 0x%x", n.name, n.flag)
+			t.Fatalf("%s flag is not a single bit: 0x%X", n.name, n.flag)
 		}
-		allNeighbors |= n.flag
+		mask |= n.flag
 	}
 
-	// 验证邻居掩码
-	if T1_SIG_NEIGHBORS != allNeighbors {
-		t.Errorf("T1_SIG_NEIGHBORS 不匹配: 期望 0x%x, 得到 0x%x", allNeighbors, T1_SIG_NEIGHBORS)
+	if T1_SIG_NEIGHBORS != mask {
+		t.Fatalf("T1_SIG_NEIGHBORS = 0x%X, want 0x%X", T1_SIG_NEIGHBORS, mask)
 	}
 }
 
-// BenchmarkSignContextLUT 基准测试符号上下文查找
-func BenchmarkSignContextLUT(b *testing.B) {
-	flags := uint32(T1_SIG_E | T1_SIG_W | T1_SIGN_E | T1_SIGN_W)
-	for i := 0; i < b.N; i++ {
-		_ = getSignCodingContext(flags)
+func parseOpenJPEGLUT(t *testing.T, name string, expectedLen int) []int {
+	t.Helper()
+	source := readOpenJPEGFile(t, "t1_luts.h")
+	start := strings.Index(source, name)
+	if start == -1 {
+		t.Fatalf("OpenJPEG %s not found", name)
 	}
+	section := source[start:]
+	open := strings.Index(section, "{")
+	if open == -1 {
+		t.Fatalf("OpenJPEG %s opening brace not found", name)
+	}
+	close := strings.Index(section, "};")
+	if close == -1 {
+		t.Fatalf("OpenJPEG %s closing brace not found", name)
+	}
+	section = section[open+1 : close]
+
+	re := regexp.MustCompile(`0x[0-9a-fA-F]+|\d+`)
+	matches := re.FindAllString(section, -1)
+	values := make([]int, 0, len(matches))
+	for _, match := range matches {
+		value, err := strconv.ParseInt(match, 0, 32)
+		if err != nil {
+			t.Fatalf("invalid %s value %q: %v", name, match, err)
+		}
+		values = append(values, int(value))
+	}
+	if expectedLen > 0 && len(values) != expectedLen {
+		t.Fatalf("OpenJPEG %s length = %d, want %d", name, len(values), expectedLen)
+	}
+	return values
 }
 
-// BenchmarkZeroCodingContext 基准测试零编码上下文计算
-func BenchmarkZeroCodingContext(b *testing.B) {
-	flags := uint32(T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E)
-	for i := 0; i < b.N; i++ {
-		_ = getZeroCodingContext(flags)
+func readOpenJPEGFile(t *testing.T, name string) string {
+	t.Helper()
+	root := findRepoRoot(t)
+	path := filepath.Join(root, "fo-dicom-codec-code", "Native", "Common", "OpenJPEG", name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read OpenJPEG file %s: %v", path, err)
 	}
+	return string(data)
 }
 
-// BenchmarkMagRefinementContext 基准测试幅度精化上下文
-func BenchmarkMagRefinementContext(b *testing.B) {
-	flags := uint32(T1_SIG_N | T1_SIG_S | T1_SIG_W)
-	for i := 0; i < b.N; i++ {
-		_ = getMagRefinementContext(flags)
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to determine test file location")
 	}
+	dir := filepath.Dir(file)
+	for i := 0; i < 6; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("go.mod not found while locating repo root")
+	return ""
 }

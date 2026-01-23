@@ -62,6 +62,7 @@ type PrecinctCodeBlock struct {
 	X0, Y0         int    // Top-left coordinates
 	X1, Y1         int    // Bottom-right coordinates
 	CBX, CBY       int    // Code-block grid position within precinct
+	Band           int    // Subband index (0=LL,1=HL,2=LH,3=HH)
 	Included       bool   // Has been included in at least one packet
 	NumPassesTotal int    // Total number of passes decoded so far
 	ZeroBitPlanes  int    // Number of missing MSB bit-planes
@@ -78,6 +79,9 @@ type PrecinctCodeBlock struct {
 	// Rate-distortion support
 	Passes       []t1.PassData // Detailed per-pass data (rate/distortion)
 	CompleteData []byte        // Full MQ bitstream for all passes
+
+	// Packet header state (OpenJPEG: numlenbits)
+	NumLenBits int
 }
 
 // Layer represents a quality layer

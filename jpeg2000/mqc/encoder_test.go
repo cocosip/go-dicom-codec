@@ -116,8 +116,8 @@ func TestMQEncoderReset(t *testing.T) {
 	if mqe.ct != 12 {
 		t.Errorf("After reset ct = %d, want 12", mqe.ct)
 	}
-	if mqe.output.Len() != 0 {
-		t.Errorf("After reset output length = %d, want 0", mqe.output.Len())
+	if len(mqe.GetBuffer()) != 0 {
+		t.Errorf("After reset output length = %d, want 0", len(mqe.GetBuffer()))
 	}
 }
 

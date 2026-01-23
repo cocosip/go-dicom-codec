@@ -211,3 +211,9 @@ To add a new codec (e.g., JPEG-LS):
 ## Roadmap
 
 See [TODO.md](TODO.md) for current development priorities and planned features.
+
+## 源码目录
+
+- OpenJPEG的源码在当前根目录下的 fo-dicom-codec-code/Native/Common/OpenJPEG
+
+- OpenJPH的源码在当前根目录下的 fo-dicom-codec-code/Native/Common/OpenJPH

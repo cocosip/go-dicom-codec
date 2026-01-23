@@ -171,6 +171,7 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 
 // parseTile parses a single tile
 func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
+	tileStart := p.offset
 	// Read SOT
 	marker, err := p.readMarker()
 	if err != nil {
@@ -239,9 +240,8 @@ func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 		}
 	}
 
-	// Read tile data
-	// For now, we'll read until the next marker or EOF
-	tile.Data = p.readTileData()
+	// Read tile data using Psot length when available.
+	tile.Data = p.readTileDataWithLength(tileStart, sot.Psot)
 
 	return tile, nil
 }
@@ -643,5 +643,21 @@ func (p *Parser) readTileData() []byte {
 		p.offset++
 	}
 
+	return p.data[start:p.offset]
+}
+
+func (p *Parser) readTileDataWithLength(tileStart int, psot uint32) []byte {
+	if psot == 0 {
+		return p.readTileData()
+	}
+	remaining := int(psot) - (p.offset - tileStart)
+	if remaining <= 0 {
+		return []byte{}
+	}
+	if p.offset+remaining > len(p.data) {
+		remaining = len(p.data) - p.offset
+	}
+	start := p.offset
+	p.offset += remaining
 	return p.data[start:p.offset]
 }

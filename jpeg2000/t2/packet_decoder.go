@@ -38,26 +38,46 @@ type PacketDecoder struct {
 
 	// Precinct -> code-block order mapping per resolution (mirrors encoder traversal)
 	cbPrecinctOrder map[int]map[int][]int
+	// Precinct -> code-block positions (CBX/CBY) in packet header order
+	cbPrecinctPositions map[int]map[int]map[int][]cbPosition
+	// Precinct -> code-block grid dimensions used for tag-tree decoding
+	cbPrecinctDims map[int]map[int]map[int]cbGridDim
+
+	// Persisted code-block states per component/resolution/precinct for tag-tree decoding
+	cbStates map[string]*packetHeaderContext
+}
+
+type cbGridDim struct {
+	numCBX int
+	numCBY int
+}
+
+type packetHeaderContext struct {
+	incl   *TagTreeDecoder
+	zbp    *TagTreeDecoder
+	states []*CodeBlockState
 }
 
 // NewPacketDecoder creates a new packet decoder
 func NewPacketDecoder(data []byte, numComponents, numLayers, numResolutions int, progression ProgressionOrder, codeBlockStyle uint8) *PacketDecoder {
 	return &PacketDecoder{
-		data:            data,
-		offset:          0,
-		numComponents:   numComponents,
-		numLayers:       numLayers,
-		numResolutions:  numResolutions,
-		progression:     progression,
-		imageWidth:      0,  // Will be set later if needed
-		imageHeight:     0,  // Will be set later if needed
-		cbWidth:         64, // Default code-block size
-		cbHeight:        64, // Default code-block size
-		numLevels:       numResolutions - 1,
-		codeBlockStyle:  codeBlockStyle,
-		packets:         make([]Packet, 0),
-		cbIncluded:      make(map[string]bool),
-		cbPrecinctOrder: make(map[int]map[int][]int),
+		data:                data,
+		offset:              0,
+		numComponents:       numComponents,
+		numLayers:           numLayers,
+		numResolutions:      numResolutions,
+		progression:         progression,
+		imageWidth:          0,  // Will be set later if needed
+		imageHeight:         0,  // Will be set later if needed
+		cbWidth:             64, // Default code-block size
+		cbHeight:            64, // Default code-block size
+		numLevels:           numResolutions - 1,
+		codeBlockStyle:      codeBlockStyle,
+		packets:             make([]Packet, 0),
+		cbIncluded:          make(map[string]bool),
+		cbPrecinctOrder:     make(map[int]map[int][]int),
+		cbPrecinctPositions: make(map[int]map[int]map[int][]cbPosition),
+		cbPrecinctDims:      make(map[int]map[int]map[int]cbGridDim),
 	}
 }
 
@@ -76,34 +96,11 @@ func (pd *PacketDecoder) SetPrecinctSize(width, height int) {
 }
 
 // calculatePrecinctCBDimensions calculates code-block grid dimensions for a precinct
-func (pd *PacketDecoder) calculatePrecinctCBDimensions(resolution, precinctIdx int) (int, int) {
-	// For resolution 0 (LL subband)
-	if resolution == 0 {
-		llWidth := pd.imageWidth >> pd.numLevels
-		llHeight := pd.imageHeight >> pd.numLevels
-		if llWidth < 1 {
-			llWidth = 1
-		}
-		if llHeight < 1 {
-			llHeight = 1
-		}
-		numCBX := (llWidth + pd.cbWidth - 1) / pd.cbWidth
-		numCBY := (llHeight + pd.cbHeight - 1) / pd.cbHeight
-		return numCBX, numCBY
-	}
+func (pd *PacketDecoder) calculatePrecinctCBDimensions(resolution, precinctIdx, band int) (int, int) {
+	sbWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
+	sbHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
 
-	// For higher resolutions (HL, LH, HH subbands)
-	level := pd.numLevels - resolution + 1
-	sbWidth := pd.imageWidth >> level
-	sbHeight := pd.imageHeight >> level
-	if sbWidth < 1 {
-		sbWidth = 1
-	}
-	if sbHeight < 1 {
-		sbHeight = 1
-	}
-
-	// Each resolution has 3 subbands (HL, LH, HH), all with same dimensions
+	// Each resolution has 3 subbands (HL, LH, HH) for res>0, all with same dimensions.
 	numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
 	numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
 
@@ -112,25 +109,37 @@ func (pd *PacketDecoder) calculatePrecinctCBDimensions(resolution, precinctIdx i
 	return numCBX, numCBY
 }
 
+func (pd *PacketDecoder) precinctCBDimensions(resolution, precinctIdx, band int) (int, int) {
+	if pd.cbPrecinctDims != nil {
+		if resMap, ok := pd.cbPrecinctDims[resolution]; ok {
+			if bandMap, ok := resMap[precinctIdx]; ok {
+				if dim, ok := bandMap[band]; ok {
+					if dim.numCBX > 0 && dim.numCBY > 0 {
+						return dim.numCBX, dim.numCBY
+					}
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
+func (pd *PacketDecoder) precinctCBPositions(resolution, precinctIdx, band int) []cbPosition {
+	if pd.cbPrecinctPositions == nil {
+		return nil
+	}
+	if resMap, ok := pd.cbPrecinctPositions[resolution]; ok {
+		if bandMap, ok := resMap[precinctIdx]; ok {
+			return bandMap[band]
+		}
+	}
+	return nil
+}
+
 // calculateNumPrecincts calculates the number of precincts for a given resolution
 func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
-	// Get resolution dimensions
-	// Formula: size = imageSize / (2^(numLevels - resolution))
-	divisor := pd.numLevels - resolution
-	if divisor < 0 {
-		divisor = 0
-	}
-
-	resWidth := pd.imageWidth >> divisor
-	resHeight := pd.imageHeight >> divisor
-
-	// Ensure minimum size
-	if resWidth < 1 {
-		resWidth = 1
-	}
-	if resHeight < 1 {
-		resHeight = 1
-	}
+	resWidth := resolutionDim(pd.imageWidth, pd.numLevels, resolution)
+	resHeight := resolutionDim(pd.imageHeight, pd.numLevels, resolution)
 
 	// Default precinct size is entire resolution (single precinct)
 	precinctWidth := pd.precinctWidth
@@ -160,16 +169,15 @@ func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
 func (pd *PacketDecoder) calculateNumCodeBlocks(resolution int) int {
 	if resolution == 0 {
 		// Resolution 0: LL subband only (single subband at top-left)
-		llWidth := pd.imageWidth >> pd.numLevels
-		llHeight := pd.imageHeight >> pd.numLevels
+		llWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
+		llHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
 		numCBX := (llWidth + pd.cbWidth - 1) / pd.cbWidth
 		numCBY := (llHeight + pd.cbHeight - 1) / pd.cbHeight
 		return numCBX * numCBY
 	} else {
 		// Resolution r > 0: HL, LH, HH subbands (3 subbands)
-		level := pd.numLevels - resolution + 1
-		sbWidth := pd.imageWidth >> level
-		sbHeight := pd.imageHeight >> level
+		sbWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
+		sbHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
 		numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
 		numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
 		// 3 subbands (HL, LH, HH), each with numCBX * numCBY code-blocks
@@ -179,27 +187,31 @@ func (pd *PacketDecoder) calculateNumCodeBlocks(resolution int) int {
 
 // DecodePackets decodes all packets according to progression order
 func (pd *PacketDecoder) DecodePackets() ([]Packet, error) {
-	// NOTE: We do NOT remove byte-stuffing upfront!
-	// Instead, the bitReader will handle stuffed bytes during header parsing,
-	// and we'll unstuff packet bodies when reading them.
+	// Packet headers use OpenJPEG-style bit stuffing handled by PacketHeaderParser.
+	// Packet bodies are raw code-block data (no byte stuffing).
 	pd.offset = 0
 
 	pd.buildPrecinctOrder()
 
 	switch pd.progression {
 	case ProgressionLRCP:
-		return pd.decodeLRCP()
+		return pd.decodeComplete(pd.decodeLRCP())
 	case ProgressionRLCP:
-		return pd.decodeRLCP()
+		return pd.decodeComplete(pd.decodeRLCP())
 	case ProgressionRPCL:
-		return pd.decodeRPCL()
+		return pd.decodeComplete(pd.decodeRPCL())
 	case ProgressionPCRL:
-		return pd.decodePCRL()
+		return pd.decodeComplete(pd.decodePCRL())
 	case ProgressionCPRL:
-		return pd.decodeCPRL()
+		return pd.decodeComplete(pd.decodeCPRL())
 	default:
 		return nil, fmt.Errorf("unsupported progression order: %v", pd.progression)
 	}
+}
+
+// decodeComplete is a helper to log packet count when debug is on.
+func (pd *PacketDecoder) decodeComplete(pkts []Packet, err error) ([]Packet, error) {
+	return pkts, err
 }
 
 // decodeLRCP decodes packets in Layer-Resolution-Component-Position order
@@ -329,87 +341,84 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 		return packet, nil
 	}
 
-	// Check for empty packet (header not present)
-	if pd.offset < len(pd.data) && pd.data[pd.offset] == 0x00 {
-		packet.HeaderPresent = false
-		pd.offset++
-		return packet, nil
+	bands := pd.bandsForResolution(resolution)
+	bandStates := make([]*packetHeaderBand, 0, len(bands))
+
+	if pd.cbStates == nil {
+		pd.cbStates = make(map[string]*packetHeaderContext)
 	}
 
-	packet.HeaderPresent = true
+	for _, band := range bands {
+		numCBX, numCBY := pd.precinctCBDimensions(resolution, precinctIdx, band)
+		if numCBX == 0 || numCBY == 0 {
+			continue
+		}
+		positions := pd.precinctCBPositions(resolution, precinctIdx, band)
+		stateKey := fmt.Sprintf("%d:%d:%d:%d", component, resolution, precinctIdx, band)
+		ctx := pd.cbStates[stateKey]
+		if ctx == nil {
+			ctx = &packetHeaderContext{}
+			pd.cbStates[stateKey] = ctx
+		}
+		bandStates = append(bandStates, &packetHeaderBand{
+			numCBX:          numCBX,
+			numCBY:          numCBY,
+			cbPositions:     positions,
+			inclTagTree:     ctx.incl,
+			zbpTagTree:      ctx.zbp,
+			codeBlockStates: ctx.states,
+		})
+	}
 
-	// Calculate code-block grid dimensions for this precinct at this resolution
-	numCBX, numCBY := pd.calculatePrecinctCBDimensions(resolution, precinctIdx)
-
-	// Use PacketHeaderParser for tag-tree decoding (aligned with OpenJPEG)
-	parser := NewPacketHeaderParser(pd.data[pd.offset:], numCBX, numCBY)
-	parser.SetLayer(layer)
-
-	parsedPacket, err := parser.ParseHeader()
+	termAll := (pd.codeBlockStyle & 0x04) != 0
+	header, cbIncls, bytesRead, headerPresent, err := parsePacketHeaderMulti(pd.data[pd.offset:], layer, bandStates, termAll)
 	if err != nil {
 		return packet, fmt.Errorf("failed to parse packet header: %w", err)
 	}
 
-	if !parsedPacket.HeaderPresent {
-		packet.HeaderPresent = false
+	packet.HeaderPresent = headerPresent
+	if !packet.HeaderPresent {
+		pd.offset += bytesRead
 		return packet, nil
 	}
 
-	// Advance offset by the number of bytes consumed
-	pd.offset += parser.Position()
+	pd.offset += bytesRead
+	for i, band := range bands {
+		stateKey := fmt.Sprintf("%d:%d:%d:%d", component, resolution, precinctIdx, band)
+		ctx := pd.cbStates[stateKey]
+		if ctx == nil || i >= len(bandStates) {
+			continue
+		}
+		ctx.states = bandStates[i].codeBlockStates
+		ctx.incl = bandStates[i].inclTagTree
+		ctx.zbp = bandStates[i].zbpTagTree
+	}
 
-	packet.Header = parsedPacket.Header
-	packet.CodeBlockIncls = parsedPacket.CodeBlockIncls
+	packet.Header = header
+	packet.CodeBlockIncls = cbIncls
+
+	// Fallback: if data length missing, infer from remaining bytes for single included block
+	includedWithZero := 0
+	for _, cb := range packet.CodeBlockIncls {
+		if cb.Included && cb.DataLength <= 0 {
+			includedWithZero++
+		}
+	}
+	if includedWithZero == 1 {
+		remain := len(pd.data) - pd.offset
+		for i := range packet.CodeBlockIncls {
+			if packet.CodeBlockIncls[i].Included && packet.CodeBlockIncls[i].DataLength <= 0 {
+				packet.CodeBlockIncls[i].DataLength = remain
+			}
+		}
+	}
 
 	// Decode packet body (code-block contributions)
-	// Check if TERMALL mode is enabled (bit 2 of CodeBlockStyle)
-	useTERMALL := (pd.codeBlockStyle & 0x04) != 0
-
 	body := &bytes.Buffer{}
 	for i := range packet.CodeBlockIncls {
 		cbIncl := &packet.CodeBlockIncls[i] // Get pointer to modify the slice element
 		if cbIncl.Included && cbIncl.DataLength > 0 {
-			// In TERMALL mode, read PassLengths metadata first
-			if useTERMALL {
-				// Read PassLengths metadata (byte-stuffed)
-				if pd.offset >= len(pd.data) {
-					continue
-				}
-
-				// Read number of passes (1 byte) with unstuffing
-				numPassesByte, bytesRead := readByteWithUnstuff(pd.data, pd.offset)
-				pd.offset += bytesRead
-				numPasses := int(numPassesByte)
-
-				// Sanity check: numPasses should match cbIncl.NumPasses
-				if numPasses != cbIncl.NumPasses {
-					// Mismatch - skip this CB
-					continue
-				}
-
-				// Read pass lengths (2 bytes each, big-endian) with unstuffing
-				cbIncl.PassLengths = make([]int, numPasses)
-				for j := 0; j < numPasses; j++ {
-					byte1, bytesRead1 := readByteWithUnstuff(pd.data, pd.offset)
-					pd.offset += bytesRead1
-					byte2, bytesRead2 := readByteWithUnstuff(pd.data, pd.offset)
-					pd.offset += bytesRead2
-
-					passLen := uint16(byte1)<<8 | uint16(byte2)
-					cbIncl.PassLengths[j] = int(passLen)
-				}
-				cbIncl.UseTERMALL = true
-
-				// Adjust DataLength: subtract unstuffed metadata size
-				unstuffedMetadataBytes := 1 + numPasses*2
-				if cbIncl.DataLength >= unstuffedMetadataBytes {
-					cbIncl.DataLength -= unstuffedMetadataBytes
-				} else {
-					cbIncl.DataLength = 0
-				}
-			}
-
-			// Read code-block data with unstuffing
+			// Read code-block data (raw bytes)
 			if cbIncl.DataLength == 0 {
 				continue
 			}
@@ -417,13 +426,13 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				break
 			}
 
-			// Read and unstuff code-block data
-			cbData, bytesRead := readAndUnstuff(pd.data[pd.offset:], cbIncl.DataLength)
-			if len(cbData) > 0 {
-				cbIncl.Data = cbData
-				body.Write(cbData)
-				pd.offset += bytesRead
+			if pd.offset+cbIncl.DataLength > len(pd.data) {
+				cbIncl.DataLength = len(pd.data) - pd.offset
 			}
+			cbData := pd.data[pd.offset : pd.offset+cbIncl.DataLength]
+			cbIncl.Data = cbData
+			body.Write(cbData)
+			pd.offset += cbIncl.DataLength
 		}
 	}
 	packet.Body = body.Bytes()
@@ -660,6 +669,13 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 		return
 	}
 
+	if pd.cbPrecinctPositions == nil {
+		pd.cbPrecinctPositions = make(map[int]map[int]map[int][]cbPosition)
+	}
+	if pd.cbPrecinctDims == nil {
+		pd.cbPrecinctDims = make(map[int]map[int]map[int]cbGridDim)
+	}
+
 	pw, ph := pd.precinctWidth, pd.precinctHeight
 	if pw == 0 {
 		pw = 1 << 15
@@ -675,24 +691,27 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 		if pd.cbPrecinctOrder[res] == nil {
 			pd.cbPrecinctOrder[res] = make(map[int][]int)
 		}
+		type cbEntry struct {
+			cbx    int
+			cby    int
+			global int
+		}
+		precinctBands := make(map[int]map[int][]cbEntry)
+		addEntry := func(pIdx, band, cbxLocal, cbyLocal, global int) {
+			if precinctBands[pIdx] == nil {
+				precinctBands[pIdx] = make(map[int][]cbEntry)
+			}
+			precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
+		}
 
 		if res == 0 {
-			llWidth := pd.imageWidth >> pd.numLevels
-			llHeight := pd.imageHeight >> pd.numLevels
-			if llWidth < 1 {
-				llWidth = 1
-			}
-			if llHeight < 1 {
-				llHeight = 1
-			}
+			llWidth := subbandDim(pd.imageWidth, pd.numLevels, res)
+			llHeight := subbandDim(pd.imageHeight, pd.numLevels, res)
 
 			numCBX := (llWidth + cbw - 1) / cbw
 			numCBY := (llHeight + cbh - 1) / cbh
 
-			resWidth := pd.imageWidth >> (pd.numLevels - res)
-			if resWidth < 1 {
-				resWidth = 1
-			}
+			resWidth := resolutionDim(pd.imageWidth, pd.numLevels, res)
 			numPrecinctX := (resWidth + pw - 1) / pw
 			if numPrecinctX < 1 {
 				numPrecinctX = 1
@@ -705,65 +724,106 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 					px := x0 / pw
 					py := y0 / ph
 					pIdx := py*numPrecinctX + px
-					pd.cbPrecinctOrder[res][pIdx] = append(pd.cbPrecinctOrder[res][pIdx], globalCBIdx)
+					localX := x0 - px*pw
+					localY := y0 - py*ph
+					cbxLocal := localX / cbw
+					cbyLocal := localY / cbh
+					addEntry(pIdx, 0, cbxLocal, cbyLocal, globalCBIdx)
 					globalCBIdx++
 				}
 			}
-			continue
-		}
+		} else {
+			sbWidth := subbandDim(pd.imageWidth, pd.numLevels, res)
+			sbHeight := subbandDim(pd.imageHeight, pd.numLevels, res)
 
-		level := pd.numLevels - res + 1
-		if level < 0 {
-			level = 0
-		}
-		sbWidth := pd.imageWidth >> level
-		sbHeight := pd.imageHeight >> level
-		if sbWidth < 1 {
-			sbWidth = 1
-		}
-		if sbHeight < 1 {
-			sbHeight = 1
-		}
+			numCBX := (sbWidth + cbw - 1) / cbw
+			numCBY := (sbHeight + cbh - 1) / cbh
 
-		numCBX := (sbWidth + cbw - 1) / cbw
-		numCBY := (sbHeight + cbh - 1) / cbh
+			resWidth := resolutionDim(pd.imageWidth, pd.numLevels, res)
+			numPrecinctX := (resWidth + pw - 1) / pw
+			if numPrecinctX < 1 {
+				numPrecinctX = 1
+			}
 
-		resWidth := pd.imageWidth >> (pd.numLevels - res)
-		if resWidth < 1 {
-			resWidth = 1
-		}
-		numPrecinctX := (resWidth + pw - 1) / pw
-		if numPrecinctX < 1 {
-			numPrecinctX = 1
-		}
+			subbands := []struct {
+				x0, y0 int
+				band   int
+			}{
+				{sbWidth, 0, 1},        // HL
+				{0, sbHeight, 2},       // LH
+				{sbWidth, sbHeight, 3}, // HH
+			}
 
-		subbands := []struct {
-			x0, y0 int
-			band   int
-		}{
-			{sbWidth, 0, 1},        // HL
-			{0, sbHeight, 2},       // LH
-			{sbWidth, sbHeight, 3}, // HH
-		}
-
-		for _, sb := range subbands {
-			for cby := 0; cby < numCBY; cby++ {
-				for cbx := 0; cbx < numCBX; cbx++ {
-					x0 := sb.x0 + cbx*cbw
-					y0 := sb.y0 + cby*cbh
-					resX, resY := pd.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
-					if resX < 0 {
-						resX = 0
+			for _, sb := range subbands {
+				for cby := 0; cby < numCBY; cby++ {
+					for cbx := 0; cbx < numCBX; cbx++ {
+						x0 := sb.x0 + cbx*cbw
+						y0 := sb.y0 + cby*cbh
+						resX, resY := pd.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
+						if resX < 0 {
+							resX = 0
+						}
+						if resY < 0 {
+							resY = 0
+						}
+						px := resX / pw
+						py := resY / ph
+						pIdx := py*numPrecinctX + px
+						localX := resX - px*pw
+						localY := resY - py*ph
+						cbxLocal := localX / cbw
+						cbyLocal := localY / cbh
+						addEntry(pIdx, sb.band, cbxLocal, cbyLocal, globalCBIdx)
+						globalCBIdx++
 					}
-					if resY < 0 {
-						resY = 0
-					}
-					px := resX / pw
-					py := resY / ph
-					pIdx := py*numPrecinctX + px
-					pd.cbPrecinctOrder[res][pIdx] = append(pd.cbPrecinctOrder[res][pIdx], globalCBIdx)
-					globalCBIdx++
 				}
+			}
+		}
+
+		bands := []int{0}
+		if res > 0 {
+			bands = []int{1, 2, 3}
+		}
+		for pIdx, bandMap := range precinctBands {
+			for _, band := range bands {
+				entries := bandMap[band]
+				if len(entries) == 0 {
+					continue
+				}
+				sort.Slice(entries, func(i, j int) bool {
+					if entries[i].cby != entries[j].cby {
+						return entries[i].cby < entries[j].cby
+					}
+					return entries[i].cbx < entries[j].cbx
+				})
+
+				if pd.cbPrecinctPositions[res] == nil {
+					pd.cbPrecinctPositions[res] = make(map[int]map[int][]cbPosition)
+				}
+				if pd.cbPrecinctPositions[res][pIdx] == nil {
+					pd.cbPrecinctPositions[res][pIdx] = make(map[int][]cbPosition)
+				}
+				if pd.cbPrecinctDims[res] == nil {
+					pd.cbPrecinctDims[res] = make(map[int]map[int]cbGridDim)
+				}
+				if pd.cbPrecinctDims[res][pIdx] == nil {
+					pd.cbPrecinctDims[res][pIdx] = make(map[int]cbGridDim)
+				}
+
+				positions := make([]cbPosition, 0, len(entries))
+				maxX, maxY := 0, 0
+				for _, entry := range entries {
+					pd.cbPrecinctOrder[res][pIdx] = append(pd.cbPrecinctOrder[res][pIdx], entry.global)
+					positions = append(positions, cbPosition{X: entry.cbx, Y: entry.cby})
+					if entry.cbx+1 > maxX {
+						maxX = entry.cbx + 1
+					}
+					if entry.cby+1 > maxY {
+						maxY = entry.cby + 1
+					}
+				}
+				pd.cbPrecinctPositions[res][pIdx][band] = positions
+				pd.cbPrecinctDims[res][pIdx][band] = cbGridDim{numCBX: maxX, numCBY: maxY}
 			}
 		}
 	}
@@ -787,6 +847,13 @@ func (pd *PacketDecoder) toResolutionCoordinates(globalX, globalY, resolution, b
 		resY = globalY - sbHeight
 	}
 	return resX, resY
+}
+
+func (pd *PacketDecoder) bandsForResolution(resolution int) []int {
+	if resolution == 0 {
+		return []int{0}
+	}
+	return []int{1, 2, 3}
 }
 
 // precinctIndicesForResolution returns sorted precinct indices that contain code-blocks for a resolution.

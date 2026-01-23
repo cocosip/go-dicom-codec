@@ -6,9 +6,6 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
 
-// Debug flag - set to false to disable all debug output
-const debugEnabled = false
-
 // T1Decoder implements EBCOT Tier-1 decoding
 // Reference: ISO/IEC 15444-1:2019 Annex D
 type T1Decoder struct {
@@ -29,6 +26,9 @@ type T1Decoder struct {
 
 	// Current bit-plane being decoded
 	bitplane int
+
+	// Subband orientation (0=LL, 1=HL, 2=LH, 3=HH)
+	orientation int
 
 	// Decoding parameters
 	roishift     int  // ROI shift value
@@ -54,11 +54,16 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 	// Parse code-block style flags
 	// Reference: ISO/IEC 15444-1:2019 Table A.18
 	t1.cblkstyle = cblkstyle
-	t1.resetctx = (cblkstyle & 0x01) != 0     // Bit 0: Selective arithmetic coding bypass
-	t1.termall = (cblkstyle & 0x02) != 0      // Bit 1: Termination on each coding pass
-	t1.segmentation = (cblkstyle & 0x04) != 0 // Bit 2: Segmentation symbols
+	t1.resetctx = (cblkstyle & 0x02) != 0     // Bit 1: Reset context probabilities
+	t1.termall = (cblkstyle & 0x04) != 0      // Bit 2: Termination on each coding pass
+	t1.segmentation = (cblkstyle & 0x20) != 0 // Bit 5: Segmentation symbols
 
 	return t1
+}
+
+// SetOrientation sets the subband orientation for zero coding context lookup.
+func (t1 *T1Decoder) SetOrientation(orient int) {
+	t1.orientation = orient
 }
 
 // DecodeWithBitplane decodes a code-block starting from a specific bitplane
@@ -238,19 +243,11 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 
 	t1.roishift = roishift
 
-	// DEBUG: Print decoder input parameters
-	fmt.Printf("\n[T1 DECODER DEBUG] %dx%d\n", t1.width, t1.height)
-	fmt.Printf("  Input data: %d bytes\n", len(data))
-	fmt.Printf("  NumPasses: %d, MaxBitplane: %d, ROIShift: %d, TERMALL: %v\n",
-		numPasses, maxBitplane, roishift, useTERMALL)
-	fmt.Printf("  First 10 bytes: ")
-	for i := 0; i < 10 && i < len(data); i++ {
-		fmt.Printf("%02x ", data[i])
-	}
-	fmt.Printf("\n")
-
-	// Initialize MQ decoder
+	// Initialize MQ decoder with OpenJPEG default context states
 	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
+	t1.mqc.SetContextState(CTX_UNI, 46)
+	t1.mqc.SetContextState(CTX_RL, 3)
+	t1.mqc.SetContextState(CTX_ZC_START, 4)
 
 	// Decode bit-planes from MSB to LSB
 	// Each bit-plane has up to 3 coding passes
@@ -288,6 +285,9 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 			if useTERMALL && passIdx < numPasses {
 				t1.mqc.ReinitAfterTermination()
 				t1.mqc.ResetContexts()
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			}
 		}
 
@@ -302,6 +302,9 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 			if useTERMALL && passIdx < numPasses {
 				t1.mqc.ReinitAfterTermination()
 				t1.mqc.ResetContexts()
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			}
 		}
 
@@ -316,6 +319,9 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 			if useTERMALL && passIdx < numPasses {
 				t1.mqc.ReinitAfterTermination()
 				t1.mqc.ResetContexts()
+				t1.mqc.SetContextState(CTX_UNI, 46)
+				t1.mqc.SetContextState(CTX_RL, 3)
+				t1.mqc.SetContextState(CTX_ZC_START, 4)
 			}
 		}
 
@@ -324,21 +330,11 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
 			t1.mqc.ResetContexts()
+			t1.mqc.SetContextState(CTX_UNI, 46)
+			t1.mqc.SetContextState(CTX_RL, 3)
+			t1.mqc.SetContextState(CTX_ZC_START, 4)
 		}
 	}
-
-	// DEBUG: Print decoder output (padded data)
-	paddedWidth := t1.width + 2
-	fmt.Printf("  Decoding complete. Passes decoded: %d\n", passIdx)
-	fmt.Printf("  First 10 coefficients (padded): ")
-	for i := 0; i < 10; i++ {
-		// First row starts at paddedWidth + 1 (skip top padding and left padding)
-		idx := paddedWidth + 1 + i
-		if idx < len(t1.data) {
-			fmt.Printf("%d ", t1.data[idx])
-		}
-	}
-	fmt.Printf("\n")
 
 	return nil
 }
@@ -361,8 +357,11 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 
 	t1.roishift = roishift
 
-	// Initialize MQ decoder
+	// Initialize MQ decoder with OpenJPEG default context states
 	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
+	t1.mqc.SetContextState(CTX_UNI, 46)
+	t1.mqc.SetContextState(CTX_RL, 3)
+	t1.mqc.SetContextState(CTX_ZC_START, 4)
 
 	// Determine starting bit-plane from number of passes
 	// Each bit-plane has 3 passes, so numBitplanes = ceil(numPasses / 3)
@@ -423,6 +422,9 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses {
 			t1.mqc.ResetContexts()
+			t1.mqc.SetContextState(CTX_UNI, 46)
+			t1.mqc.SetContextState(CTX_RL, 3)
+			t1.mqc.SetContextState(CTX_ZC_START, 4)
 		}
 	}
 
@@ -453,8 +455,6 @@ func (t1 *T1Decoder) GetData() []int32 {
 // - Have at least one significant neighbor
 func (t1 *T1Decoder) decodeSigPropPass() error {
 	paddedWidth := t1.width + 2
-	sigCount := 0 // DEBUG counter
-	decodeCount := 0
 
 	for y := 0; y < t1.height; y++ {
 		for x := 0; x < t1.width; x++ {
@@ -472,12 +472,10 @@ func (t1 *T1Decoder) decodeSigPropPass() error {
 			}
 
 			// Decode significance bit
-			ctx := getZeroCodingContext(flags)
+			ctx := getZeroCodingContext(flags, t1.orientation)
 			bit := t1.mqc.Decode(int(ctx))
-			decodeCount++
 
 			if bit != 0 {
-				sigCount++ // DEBUG
 				// Coefficient becomes significant
 				// Decode sign bit
 				signCtx := getSignCodingContext(flags)
@@ -556,8 +554,6 @@ func (t1 *T1Decoder) decodeMagRefPass() error {
 // This matches OpenJPEG's opj_t1_dec_clnpass() implementation and the encoder
 func (t1 *T1Decoder) decodeCleanupPass() error {
 	paddedWidth := t1.width + 2
-	sigCount := 0 // DEBUG counter
-	mqDecodeCount := 0
 
 	// Process in groups of 4 rows (vertical RL decoding)
 	for k := 0; k < t1.height; k += 4 {
@@ -588,7 +584,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				if canUseRL {
 					// Decode run-length bit
 					rlBit := t1.mqc.Decode(CTX_RL)
-					mqDecodeCount++
 
 					if rlBit == 0 {
 						// All 4 remain insignificant
@@ -613,7 +608,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 						flags := t1.flags[idx]
 
 						// Decode significance bit
-						ctx := getZeroCodingContext(flags)
+						ctx := getZeroCodingContext(flags, t1.orientation)
 						bit := t1.mqc.Decode(int(ctx))
 
 						if bit != 0 {
@@ -621,7 +616,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 							alreadySig := (flags & T1_SIG) != 0
 
 							if !alreadySig {
-								sigCount++ // DEBUG
 								// Coefficient becomes significant
 								// Decode sign bit
 								signBit := t1.mqc.Decode(CTX_UNI)
@@ -685,7 +679,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				alreadySig := (flags & T1_SIG) != 0
 
 				// Decode significance bit (always, even for already-significant coefficients)
-				ctx := getZeroCodingContext(flags)
+				ctx := getZeroCodingContext(flags, t1.orientation)
 				bit := t1.mqc.Decode(int(ctx))
 
 				if bit != 0 {

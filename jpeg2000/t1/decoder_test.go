@@ -18,9 +18,9 @@ func TestT1DecoderBasic(t *testing.T) {
 		{"32x32 block", 32, 32, 0},
 		{"64x64 block", 64, 64, 0},
 		{"Non-square 8x4", 8, 4, 0},
-		{"With reset context", 32, 32, 0x01},
-		{"With termall", 32, 32, 0x02},
-		{"With segmentation", 32, 32, 0x04},
+		{"With reset context", 32, 32, 0x02},
+		{"With termall", 32, 32, 0x04},
+		{"With segmentation", 32, 32, 0x20},
 	}
 
 	for _, tt := range tests {
@@ -68,7 +68,7 @@ func TestContextModeling(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				ctx := getZeroCodingContext(tt.flags)
+				ctx := getZeroCodingContext(tt.flags, 0)
 				// Context should be in valid range [0, 8]
 				if ctx < CTX_ZC_START || ctx > CTX_ZC_START+8 {
 					t.Errorf("getZeroCodingContext() = %d, out of valid range [%d, %d]",
@@ -295,10 +295,10 @@ func TestCodeBlockStyle(t *testing.T) {
 		wantSegmentation bool
 	}{
 		{"No flags", 0x00, false, false, false},
-		{"Reset context", 0x01, true, false, false},
-		{"Terminate all", 0x02, false, true, false},
-		{"Segmentation", 0x04, false, false, true},
-		{"All flags", 0x07, true, true, true},
+		{"Reset context", 0x02, true, false, false},
+		{"Terminate all", 0x04, false, true, false},
+		{"Segmentation", 0x20, false, false, true},
+		{"All flags", 0x26, true, true, true},
 	}
 
 	for _, tt := range tests {

@@ -2,7 +2,6 @@ package t2
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"sort"
 )
@@ -44,14 +43,30 @@ func (pe *PacketEncoder) AddCodeBlock(component, resolution, precinctIdx int, co
 		pe.precincts[component][resolution] = make(map[int][]*Precinct)
 	}
 	if pe.precincts[component][resolution][precinctIdx] == nil {
-		pe.precincts[component][resolution][precinctIdx] = []*Precinct{{
+		pe.precincts[component][resolution][precinctIdx] = []*Precinct{}
+	}
+
+	// Add code-block to precinct (one precinct per band)
+	var precinct *Precinct
+	for _, p := range pe.precincts[component][resolution][precinctIdx] {
+		if p.SubbandIdx == codeBlock.Band {
+			precinct = p
+			break
+		}
+	}
+	if precinct == nil {
+		precinct = &Precinct{
 			Index:      precinctIdx,
+			SubbandIdx: codeBlock.Band,
 			CodeBlocks: make([]*PrecinctCodeBlock, 0),
-		}}
+		}
+		pe.precincts[component][resolution][precinctIdx] = append(
+			pe.precincts[component][resolution][precinctIdx],
+			precinct,
+		)
 	}
 
 	// Add code-block to precinct
-	precinct := pe.precincts[component][resolution][precinctIdx][0]
 	precinct.CodeBlocks = append(precinct.CodeBlocks, codeBlock)
 
 	// Update grid dimensions based on code-block position
@@ -94,15 +109,16 @@ func (pe *PacketEncoder) encodeLRCP() ([]Packet, error) {
 				}
 
 				for _, precinctIdx := range pe.sortedPrecincts(comp, res) {
-					precincts := pe.precincts[comp][res][precinctIdx]
-					for _, precinct := range precincts {
-						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
-						if err != nil {
-							return nil, fmt.Errorf("failed to encode packet (L=%d,R=%d,C=%d,P=%d): %w",
-								layer, res, comp, precinctIdx, err)
-						}
-						pe.packets = append(pe.packets, packet)
+					precincts := pe.getPrecincts(comp, res, precinctIdx)
+					if len(precincts) == 0 {
+						continue
 					}
+					packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precincts)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode packet (L=%d,R=%d,C=%d,P=%d): %w",
+							layer, res, comp, precinctIdx, err)
+					}
+					pe.packets = append(pe.packets, packet)
 				}
 			}
 		}
@@ -122,15 +138,16 @@ func (pe *PacketEncoder) encodeRLCP() ([]Packet, error) {
 				}
 
 				for _, precinctIdx := range pe.sortedPrecincts(comp, res) {
-					precincts := pe.precincts[comp][res][precinctIdx]
-					for _, precinct := range precincts {
-						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
-						if err != nil {
-							return nil, fmt.Errorf("failed to encode packet (R=%d,L=%d,C=%d,P=%d): %w",
-								res, layer, comp, precinctIdx, err)
-						}
-						pe.packets = append(pe.packets, packet)
+					precincts := pe.getPrecincts(comp, res, precinctIdx)
+					if len(precincts) == 0 {
+						continue
 					}
+					packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precincts)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode packet (R=%d,L=%d,C=%d,P=%d): %w",
+							res, layer, comp, precinctIdx, err)
+					}
+					pe.packets = append(pe.packets, packet)
 				}
 			}
 		}
@@ -144,19 +161,17 @@ func (pe *PacketEncoder) encodeRPCL() ([]Packet, error) {
 	for res := 0; res < pe.numResolutions; res++ {
 		for _, precinctIdx := range pe.sortedPrecinctsAllComponents(res) {
 			for comp := 0; comp < pe.numComponents; comp++ {
-				precincts := pe.getPrecincts(comp, res, precinctIdx)
-				if precincts == nil {
-					continue
-				}
 				for layer := 0; layer < pe.numLayers; layer++ {
-					for _, precinct := range precincts {
-						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
-						if err != nil {
-							return nil, fmt.Errorf("failed to encode packet (R=%d,P=%d,C=%d,L=%d): %w",
-								res, precinctIdx, comp, layer, err)
-						}
-						pe.packets = append(pe.packets, packet)
+					precincts := pe.getPrecincts(comp, res, precinctIdx)
+					if len(precincts) == 0 {
+						continue
 					}
+					packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precincts)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode packet (R=%d,P=%d,C=%d,L=%d): %w",
+							res, precinctIdx, comp, layer, err)
+					}
+					pe.packets = append(pe.packets, packet)
 				}
 			}
 		}
@@ -169,19 +184,17 @@ func (pe *PacketEncoder) encodePCRL() ([]Packet, error) {
 	for _, precinctIdx := range pe.sortedPrecinctsAll() {
 		for comp := 0; comp < pe.numComponents; comp++ {
 			for res := 0; res < pe.numResolutions; res++ {
-				precincts := pe.getPrecincts(comp, res, precinctIdx)
-				if precincts == nil {
-					continue
-				}
 				for layer := 0; layer < pe.numLayers; layer++ {
-					for _, precinct := range precincts {
-						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
-						if err != nil {
-							return nil, fmt.Errorf("failed to encode packet (P=%d,C=%d,R=%d,L=%d): %w",
-								precinctIdx, comp, res, layer, err)
-						}
-						pe.packets = append(pe.packets, packet)
+					precincts := pe.getPrecincts(comp, res, precinctIdx)
+					if len(precincts) == 0 {
+						continue
 					}
+					packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precincts)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode packet (P=%d,C=%d,R=%d,L=%d): %w",
+							precinctIdx, comp, res, layer, err)
+					}
+					pe.packets = append(pe.packets, packet)
 				}
 			}
 		}
@@ -194,19 +207,17 @@ func (pe *PacketEncoder) encodeCPRL() ([]Packet, error) {
 	for comp := 0; comp < pe.numComponents; comp++ {
 		for _, precinctIdx := range pe.sortedPrecinctsAll() {
 			for res := 0; res < pe.numResolutions; res++ {
-				precincts := pe.getPrecincts(comp, res, precinctIdx)
-				if precincts == nil {
-					continue
-				}
 				for layer := 0; layer < pe.numLayers; layer++ {
-					for _, precinct := range precincts {
-						packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precinct)
-						if err != nil {
-							return nil, fmt.Errorf("failed to encode packet (C=%d,P=%d,R=%d,L=%d): %w",
-								comp, precinctIdx, res, layer, err)
-						}
-						pe.packets = append(pe.packets, packet)
+					precincts := pe.getPrecincts(comp, res, precinctIdx)
+					if len(precincts) == 0 {
+						continue
 					}
+					packet, err := pe.encodePacket(layer, res, comp, precinctIdx, precincts)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode packet (C=%d,P=%d,R=%d,L=%d): %w",
+							comp, precinctIdx, res, layer, err)
+					}
+					pe.packets = append(pe.packets, packet)
 				}
 			}
 		}
@@ -272,52 +283,62 @@ func sortKeys(m map[int]struct{}) []int {
 }
 
 // encodePacket encodes a single packet
-func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx int, precinct *Precinct) (Packet, error) {
+func (pe *PacketEncoder) encodePacket(layer, resolution, component, precinctIdx int, precincts []*Precinct) (Packet, error) {
 	packet := Packet{
 		LayerIndex:      layer,
 		ResolutionLevel: resolution,
 		ComponentIndex:  component,
 		PrecinctIndex:   precinctIdx,
-		HeaderPresent:   len(precinct.CodeBlocks) > 0,
+		HeaderPresent:   false,
 	}
 
-	if !packet.HeaderPresent {
-		// Empty packet
-		return packet, nil
-	}
+	ordered := orderPrecinctsByBand(precincts, resolution)
 
 	// Encode packet header with tag-tree encoding (aligned with OpenJPEG)
 	// This properly handles PassLengths and TERMALL metadata for multi-layer encoding
-	header, cbIncls, err := pe.encodePacketHeaderWithTagTree(precinct, layer, resolution)
+	header, cbIncls, err := pe.encodePacketHeaderWithTagTreeMulti(ordered, layer)
 	if err != nil {
 		return packet, fmt.Errorf("failed to encode packet header: %w", err)
 	}
 	packet.Header = header
 	packet.CodeBlockIncls = cbIncls
+	packet.HeaderPresent = len(header) > 0
 
 	// Encode packet body (code-block contributions for this layer)
 	body := &bytes.Buffer{}
 	for i := range cbIncls {
 		cbIncl := &cbIncls[i]
 		if cbIncl.Included {
-			// In TERMALL mode, prepend PassLengths metadata before code-block data
-			if cbIncl.UseTERMALL && len(cbIncl.PassLengths) > 0 {
-				// Write number of passes (1 byte)
-				numPasses := byte(len(cbIncl.PassLengths))
-				body.WriteByte(numPasses)
-				// Write each pass length (2 bytes each, big-endian)
-				for _, passLen := range cbIncl.PassLengths {
-					_ = binary.Write(body, binary.BigEndian, uint16(passLen))
-				}
-				// Note: DataLength was already updated in encodePacketHeaderLayered
-			}
-			// Write code-block data (will be byte-stuffed later by encoder.go)
 			body.Write(cbIncl.Data)
 		}
 	}
 	packet.Body = body.Bytes()
 
 	return packet, nil
+}
+
+func orderPrecinctsByBand(precincts []*Precinct, resolution int) []*Precinct {
+	if len(precincts) == 0 {
+		return nil
+	}
+
+	var bandOrder []int
+	if resolution == 0 {
+		bandOrder = []int{0}
+	} else {
+		bandOrder = []int{1, 2, 3}
+	}
+
+	ordered := make([]*Precinct, 0, len(precincts))
+	for _, band := range bandOrder {
+		for _, precinct := range precincts {
+			if precinct != nil && precinct.SubbandIdx == band {
+				ordered = append(ordered, precinct)
+			}
+		}
+	}
+
+	return ordered
 }
 
 // encodePacketHeader encodes a packet header

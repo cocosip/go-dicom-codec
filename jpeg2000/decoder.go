@@ -103,7 +103,6 @@ func (d *Decoder) Decode(data []byte) error {
 		return fmt.Errorf("invalid ROI configuration: %w", err)
 	}
 
-	// Decode all tiles
 	if err := d.decodeTiles(); err != nil {
 		return fmt.Errorf("failed to decode tiles: %w", err)
 	}
@@ -796,39 +795,21 @@ func (d *Decoder) decodeTiles() error {
 		}
 	} else if d.cs != nil && d.cs.COD != nil && d.components == 3 {
 		if d.cs.COD.MultipleComponentTransform == 1 {
+			// OpenJPEG: use RCT for reversible (5/3), ICT for irreversible (9/7).
 			if d.cs.COD.Transformation == 1 {
 				r, g, b := colorspace.ApplyInverseRCTToComponents(d.data[0], d.data[1], d.data[2])
 				d.data[0], d.data[1], d.data[2] = r, g, b
 			} else {
-				r, g, b := colorspace.ConvertComponentsYCbCrToRGB(d.data[0], d.data[1], d.data[2])
+				r, g, b := colorspace.ApplyInverseICTToComponents(d.data[0], d.data[1], d.data[2])
 				d.data[0], d.data[1], d.data[2] = r, g, b
 			}
 		}
-	}
-
-	// DEBUG: Print first few values before inverse DC level shift
-	if len(d.data) > 0 && len(d.data[0]) > 0 {
-		fmt.Printf("DEBUG decoder: Before inverse DC shift, first 10 values: ")
-		for i := 0; i < 10 && i < len(d.data[0]); i++ {
-			fmt.Printf("%d ", d.data[0][i])
-		}
-		fmt.Printf("\n")
-		fmt.Printf("DEBUG decoder: BitDepth=%d, IsSigned=%v\n", d.bitDepth, d.isSigned)
 	}
 
 	// Apply inverse DC level shift AFTER inverse MCT (to match OpenJPEG order)
 	// OpenJPEG decode: T1^-1 -> DWT^-1 -> MCT^-1 -> DC shift^-1
 	// This is the exact reverse of encode: DC shift -> MCT -> DWT -> T1
 	d.applyInverseDCLevelShift()
-
-	// DEBUG: Print first few values after inverse DC level shift
-	if len(d.data) > 0 && len(d.data[0]) > 0 {
-		fmt.Printf("DEBUG decoder: After inverse DC shift, first 10 values: ")
-		for i := 0; i < 10 && i < len(d.data[0]); i++ {
-			fmt.Printf("%d ", d.data[0][i])
-		}
-		fmt.Printf("\n")
-	}
 
 	return nil
 }

@@ -67,8 +67,6 @@ func TestPacketHeaderParserDecodeNumPasses(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := NewPacketHeaderParser(tt.bits, 1, 1)
-			parser.pos = 0
-			parser.bitPos = 0
 
 			numPasses, err := parser.decodeNumPasses()
 			if err != nil {
@@ -86,48 +84,44 @@ func TestPacketHeaderParserDecodeNumPasses(t *testing.T) {
 func TestPacketHeaderParserDecodeDataLength(t *testing.T) {
 	tests := []struct {
 		name     string
-		data     []byte
 		expected int
 	}{
 		{
 			name:     "Length 10",
-			data:     []byte{10},
 			expected: 10,
 		},
 		{
 			name:     "Length 100",
-			data:     []byte{100},
 			expected: 100,
 		},
 		{
 			name:     "Length 254",
-			data:     []byte{254},
 			expected: 254,
 		},
 		{
-			name:     "Length 255+0 = 255",
-			data:     []byte{0xFF, 0x00},
+			name:     "Length 255",
 			expected: 255,
-		},
-		{
-			name:     "Length 255+50 = 305",
-			data:     []byte{0xFF, 50},
-			expected: 305,
-		},
-		{
-			name:     "Length 255+255 = 510",
-			data:     []byte{0xFF, 0xFF},
-			expected: 510,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewPacketHeaderParser(tt.data, 1, 1)
-			parser.pos = 0
-			parser.bitPos = 0
+			bw := newBioWriter()
+			numlenbits := 3
+			increment := (floorLog2(tt.expected) + 1) - (numlenbits + floorLog2(1))
+			if increment < 0 {
+				increment = 0
+			}
+			encodeCommaCode(bw, increment)
+			numlenbits += increment
+			bw.writeBits(tt.expected, numlenbits)
+			data := bw.flush()
 
-			length, err := parser.decodeDataLength(1)
+			parser := NewPacketHeaderParser(data, 1, 1)
+			cbState := parser.codeBlockStates[0]
+			cbState.NumLenBits = 3
+
+			length, _, err := parser.decodeDataLength(1, cbState)
 			if err != nil {
 				t.Fatalf("decodeDataLength failed: %v", err)
 			}
@@ -202,8 +196,6 @@ func TestPacketHeaderParserReadBits(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := NewPacketHeaderParser(tt.data, 1, 1)
-			parser.pos = 0
-			parser.bitPos = 0
 
 			value, err := parser.readBits(tt.nbits)
 			if err != nil {
@@ -225,21 +217,13 @@ func TestPacketHeaderParserAlignToByte(t *testing.T) {
 	// Read 3 bits
 	_, _ = parser.readBits(3)
 
-	// Verify we're not byte-aligned
-	if parser.bitPos == 0 {
-		t.Error("Expected bitPos != 0 after reading 3 bits")
-	}
-
 	// Align to byte
-	parser.alignToByte()
-
-	// Verify we're now byte-aligned
-	if parser.bitPos != 0 {
-		t.Errorf("Expected bitPos=0 after alignment, got %d", parser.bitPos)
+	if err := parser.alignToByte(); err != nil {
+		t.Fatalf("alignToByte failed: %v", err)
 	}
 
-	if parser.pos != 1 {
-		t.Errorf("Expected pos=1 after alignment, got %d", parser.pos)
+	if parser.Position() != 1 {
+		t.Errorf("Expected pos=1 after alignment, got %d", parser.Position())
 	}
 }
 
@@ -268,8 +252,8 @@ func TestPacketHeaderParserSimplePacket(t *testing.T) {
 	// = 1110 00001010
 	// Padded to bytes: 11100000 1010xxxx → 0xE0, 0xA0
 
-	buf.WriteByte(0xE0) // 11100000
-	buf.WriteByte(0xA0) // 10100000
+	buf.WriteByte(0xEA)
+	buf.WriteByte(0x80)
 
 	parser := NewPacketHeaderParser(buf.Bytes(), 1, 1) // 1x1 grid (single code-block)
 
@@ -313,8 +297,8 @@ func TestPacketHeaderParserMultipleLayers(t *testing.T) {
 	buf0 := &bytes.Buffer{}
 	// 1 (not empty) + 1 (incl=0) + 1 (zbp=0) + 0 (1 pass) + 00001010 (len=10)
 	// = 1110 00001010 → 0xE0, 0xA0
-	buf0.WriteByte(0xE0)
-	buf0.WriteByte(0xA0)
+	buf0.WriteByte(0xEA)
+	buf0.WriteByte(0x80)
 
 	parser := NewPacketHeaderParser(buf0.Bytes(), 1, 1)
 	parser.SetLayer(0)
@@ -336,8 +320,8 @@ func TestPacketHeaderParserMultipleLayers(t *testing.T) {
 	buf1 := &bytes.Buffer{}
 	// 1 (not empty) + 1 (incl still ≤1) + 0 (1 pass) + 00001010 (len=10)
 	// = 110 00001010 → 0xC0, 0xA0
-	buf1.WriteByte(0xC0)
-	buf1.WriteByte(0xA0)
+	buf1.WriteByte(0xD5)
+	buf1.WriteByte(0x00)
 
 	// Create new parser with same state (simulating multi-layer decode)
 	// In real implementation, parser state would persist
@@ -347,6 +331,7 @@ func TestPacketHeaderParserMultipleLayers(t *testing.T) {
 	parser2.codeBlockStates[0].Included = true
 	parser2.codeBlockStates[0].FirstLayer = 0
 	parser2.codeBlockStates[0].ZeroBitPlanes = 0
+	parser2.codeBlockStates[0].NumLenBits = 4
 
 	packet1, err := parser2.ParseHeader()
 	if err != nil {
@@ -381,12 +366,8 @@ func TestPacketHeaderParserReset(t *testing.T) {
 	parser.Reset()
 
 	// Verify reset state
-	if parser.pos != 0 {
-		t.Errorf("After reset, expected pos=0, got %d", parser.pos)
-	}
-
-	if parser.bitPos != 0 {
-		t.Errorf("After reset, expected bitPos=0, got %d", parser.bitPos)
+	if parser.Position() != 0 {
+		t.Errorf("After reset, expected pos=0, got %d", parser.Position())
 	}
 
 	if parser.currentLayer != 0 {

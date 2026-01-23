@@ -261,13 +261,12 @@ func getSignCodingContext(flags uint32) uint8 {
 }
 
 // getZeroCodingContext returns the zero coding context for a coefficient
-// based on its neighbor significance
-// Uses OpenJPEG lut_ctxno_zc table with orientation 0 (simplest approach)
+// based on its neighbor significance and subband orientation.
 // 9-bit neighbor significance index layout:
 //   Bit 0: NW, Bit 1: N, Bit 2: NE
 //   Bit 3: W,  Bit 4: (unused), Bit 5: E
 //   Bit 6: SW, Bit 7: S, Bit 8: SE
-func getZeroCodingContext(flags uint32) uint8 {
+func getZeroCodingContext(flags uint32, orient int) uint8 {
 	// Build 9-bit index according to OpenJPEG layout
 	idx := uint16(0)
 
@@ -297,9 +296,11 @@ func getZeroCodingContext(flags uint32) uint8 {
 		idx |= (1 << 8)
 	}
 
-	// Use orientation 0 (offset = 0)
-	// For full orientation support, add: orientation * 512
-	return lut_ctxno_zc[idx]
+	if orient < 0 || orient > 3 {
+		orient = 0
+	}
+	offset := uint16(orient) * 512
+	return lut_ctxno_zc[offset+idx]
 }
 
 // getMagRefinementContext returns the magnitude refinement context
