@@ -53,6 +53,45 @@ func TestForwardInverse97_1D(t *testing.T) {
 	}
 }
 
+func TestForwardInverse97_1DParity(t *testing.T) {
+	tests := []struct {
+		name string
+		size int
+		even bool
+	}{
+		{"Even start size 6", 6, true},
+		{"Odd start size 6", 6, false},
+		{"Even start size 9", 9, true},
+		{"Odd start size 9", 9, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := make([]float64, tt.size)
+			for i := range original {
+				original[i] = float64((i*5)%13) + 0.25
+			}
+
+			data := make([]float64, tt.size)
+			copy(data, original)
+
+			Forward97_1DWithParity(data, tt.even)
+			Inverse97_1DWithParity(data, tt.even)
+
+			maxError := 0.0
+			for i := range data {
+				err := math.Abs(data[i] - original[i])
+				if err > maxError {
+					maxError = err
+				}
+			}
+			if maxError > 1e-10 {
+				t.Errorf("Parity reconstruction error too large: %e", maxError)
+			}
+		})
+	}
+}
+
 // TestForwardInverse97_2D tests 2D forward and inverse 9/7 transform
 func TestForwardInverse97_2D(t *testing.T) {
 	tests := []struct {
@@ -102,6 +141,34 @@ func TestForwardInverse97_2D(t *testing.T) {
 				t.Errorf("Reconstruction error too large: %e", maxError)
 			}
 		})
+	}
+}
+
+func TestForwardInverse97_2DParity(t *testing.T) {
+	width, height := 15, 21
+	size := width * height
+	original := make([]float64, size)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			original[y*width+x] = float64(x-y) * 0.5
+		}
+	}
+
+	data := make([]float64, size)
+	copy(data, original)
+
+	Forward97_2DWithParity(data, width, height, width, false, false)
+	Inverse97_2DWithParity(data, width, height, width, false, false)
+
+	maxError := 0.0
+	for i := range data {
+		err := math.Abs(data[i] - original[i])
+		if err > maxError {
+			maxError = err
+		}
+	}
+	if maxError > 1e-10 {
+		t.Errorf("2D parity reconstruction error too large: %e", maxError)
 	}
 }
 
@@ -160,6 +227,37 @@ func TestForwardInverseMultilevel97(t *testing.T) {
 				t.Errorf("Avg reconstruction error too large: %e", avgError)
 			}
 		})
+	}
+}
+
+func TestForwardInverseMultilevel97Parity(t *testing.T) {
+	width, height := 64, 48
+	levels := 3
+	x0, y0 := 3, 1
+	size := width * height
+
+	original := make([]float64, size)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			original[y*width+x] = float64(x+y) / 7.0
+		}
+	}
+
+	data := make([]float64, size)
+	copy(data, original)
+
+	ForwardMultilevel97WithParity(data, width, height, levels, x0, y0)
+	InverseMultilevel97WithParity(data, width, height, levels, x0, y0)
+
+	maxError := 0.0
+	for i := range data {
+		err := math.Abs(data[i] - original[i])
+		if err > maxError {
+			maxError = err
+		}
+	}
+	if maxError > 1e-9 {
+		t.Errorf("Multilevel parity reconstruction error too large: %e", maxError)
 	}
 }
 

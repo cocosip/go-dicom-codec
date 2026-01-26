@@ -26,10 +26,12 @@ type BlockDecoderFactory func(width, height int, cblkstyle int) BlockDecoder
 // TileDecoder decodes a single JPEG 2000 tile
 type TileDecoder struct {
 	// Tile information
-	tile *codestream.Tile
-	siz  *codestream.SIZSegment
-	cod  *codestream.CODSegment
-	qcd  *codestream.QCDSegment
+	tile   *codestream.Tile
+	siz    *codestream.SIZSegment
+	cod    *codestream.CODSegment
+	qcd    *codestream.QCDSegment
+	tileX0 int
+	tileY0 int
 
 	// Component decoders
 	components []*ComponentDecoder
@@ -242,6 +244,15 @@ func NewTileDecoder(
 	isHTJ2K bool,
 	blockDecoderFactory BlockDecoderFactory,
 ) *TileDecoder {
+	numTilesX := int((siz.Xsiz - siz.XTOsiz + siz.XTsiz - 1) / siz.XTsiz)
+	if numTilesX <= 0 {
+		numTilesX = 1
+	}
+	tileX := tile.Index % numTilesX
+	tileY := tile.Index / numTilesX
+	tileX0 := int(siz.XTOsiz) + tileX*int(siz.XTsiz)
+	tileY0 := int(siz.YTOsiz) + tileY*int(siz.YTsiz)
+
 	td := &TileDecoder{
 		tile:                tile,
 		siz:                 siz,
@@ -250,6 +261,8 @@ func NewTileDecoder(
 		roi:                 roi,
 		isHTJ2K:             isHTJ2K,
 		blockDecoderFactory: blockDecoderFactory,
+		tileX0:              tileX0,
+		tileY0:              tileY0,
 	}
 
 	return td
@@ -1140,7 +1153,7 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 		copy(comp.samples, comp.coefficients)
 
 		// Apply inverse multilevel wavelet transform
-		wavelet.InverseMultilevel(comp.samples, comp.width, comp.height, comp.numLevels)
+		wavelet.InverseMultilevelWithParity(comp.samples, comp.width, comp.height, comp.numLevels, td.tileX0, td.tileY0)
 	} else if td.cod.Transformation == 0 {
 		// 9/7 irreversible wavelet (lossy)
 		// First, apply dequantization if needed
@@ -1154,7 +1167,7 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 		floatCoeffs := wavelet.ConvertInt32ToFloat64(dequantized)
 
 		// Apply inverse multilevel 9/7 wavelet transform
-		wavelet.InverseMultilevel97(floatCoeffs, comp.width, comp.height, comp.numLevels)
+		wavelet.InverseMultilevel97WithParity(floatCoeffs, comp.width, comp.height, comp.numLevels, td.tileX0, td.tileY0)
 
 		// Convert back to int32 with rounding
 		comp.samples = wavelet.ConvertFloat64ToInt32(floatCoeffs)

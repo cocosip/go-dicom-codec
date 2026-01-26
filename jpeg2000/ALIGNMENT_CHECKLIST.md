@@ -15,9 +15,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Bitplane range (zero-bitplane/max-bitplane) and ROI shift handling
 
 ### Wavelet transforms (DWT)
-- [ ] 5/3 reversible lifting steps and boundary extension
-- [ ] 9/7 irreversible lifting steps and rounding policy
-- [ ] Multi-level decomposition alignment and precision growth
+- [x] 5/3 reversible lifting steps and boundary extension
+- [x] 9/7 irreversible lifting steps and rounding policy
+- [x] Multi-level decomposition alignment and precision growth
 
 ### Quantization & dequantization
 - [ ] QCD/QCC step size derivation per subband

@@ -8,14 +8,14 @@ package wavelet
 // These are the lifting scheme coefficients for the CDF 9/7 wavelet
 const (
 	// Analysis (forward transform)
-	alpha97 = -1.586134342059924  // Predict 1
-	beta97  = -0.052980118572961  // Update 1
-	gamma97 = 0.882911075530934   // Predict 2
-	delta97 = 0.443506852043971   // Update 2
+	alpha97 = -1.586134342059924 // Predict 1
+	beta97  = -0.052980118572961 // Update 1
+	gamma97 = 0.882911075530934  // Predict 2
+	delta97 = 0.443506852043971  // Update 2
 
 	// Normalization factors
-	K97  = 1.230174104914001  // Low-pass gain
-	K97i = 1.0 / K97           // High-pass gain (1/K)
+	K97  = 1.230174104914001 // Low-pass gain
+	K97i = 1.0 / K97         // High-pass gain (1/K)
 )
 
 // Forward97_1D performs the forward 9/7 wavelet transform on a 1D signal
@@ -25,88 +25,108 @@ const (
 //
 // Note: Uses floating-point arithmetic (irreversible/lossy)
 func Forward97_1D(data []float64) {
+	Forward97_1DWithParity(data, true)
+}
+
+// Forward97_1DWithParity performs the forward 9/7 wavelet transform on a 1D signal.
+// even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+func Forward97_1DWithParity(data []float64, even bool) {
 	n := len(data)
 	if n <= 1 {
 		return
 	}
 
-	nL := (n + 1) / 2 // Low-pass (even indices)
-	nH := n / 2       // High-pass (odd indices)
-
-	temp := make([]float64, n)
-
-	// Step 1: Predict 1 (alpha)
-	// H[i] = X[2i+1] + alpha * (X[2i] + X[2i+2])
-	for i := 0; i < nH; i++ {
-		left := data[2*i]
-		var right float64
-		if 2*i+2 < n {
-			right = data[2*i+2]
-		} else {
-			right = data[2*i] // Mirror boundary
-		}
-		temp[nL+i] = data[2*i+1] + alpha97*(left+right)
+	nL, nH := splitLengths(n, even)
+	if nL == 0 || nH == 0 {
+		return
 	}
 
-	// Step 2: Update 1 (beta)
-	// L[i] = X[2i] + beta * (H[i-1] + H[i])
-	for i := 0; i < nL; i++ {
-		var left, right float64
-		if i > 0 {
-			left = temp[nL+i-1]
-		} else {
-			left = temp[nL] // First high-pass coefficient
+	low := make([]float64, nL)
+	high := make([]float64, nH)
+
+	if even {
+		for i := 0; i < nL; i++ {
+			low[i] = data[2*i]
 		}
-		if i < nH {
-			right = temp[nL+i]
-		} else {
-			right = temp[nL+nH-1] // Last high-pass coefficient
+		for i := 0; i < nH; i++ {
+			high[i] = data[2*i+1]
 		}
-		temp[i] = data[2*i] + beta97*(left+right)
+	} else {
+		for i := 0; i < nL; i++ {
+			low[i] = data[2*i+1]
+		}
+		for i := 0; i < nH; i++ {
+			high[i] = data[2*i]
+		}
 	}
 
-	// Copy temp back to data for next steps
-	copy(data, temp)
-
-	// Step 3: Predict 2 (gamma)
-	// H[i] = H[i] + gamma * (L[i] + L[i+1])
+	// Predict 1
 	for i := 0; i < nH; i++ {
-		left := data[i]
-		var right float64
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
+		}
+		rightIdx := leftIdx
 		if i+1 < nL {
-			right = data[i+1]
-		} else {
-			right = data[nL-1]
+			rightIdx = i + 1
 		}
-		temp[nL+i] = data[nL+i] + gamma97*(left+right)
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] += alpha97 * (left + right)
 	}
 
-	// Step 4: Update 2 (delta)
-	// L[i] = L[i] + delta * (H[i-1] + H[i])
+	// Update 1
 	for i := 0; i < nL; i++ {
-		var left, right float64
+		left := high[0]
 		if i > 0 {
-			left = temp[nL+i-1]
-		} else {
-			left = temp[nL]
+			left = high[i-1]
 		}
+		right := high[nH-1]
 		if i < nH {
-			right = temp[nL+i]
-		} else {
-			right = temp[nL+nH-1]
+			right = high[i]
 		}
-		temp[i] = data[i] + delta97*(left+right)
+		low[i] += beta97 * (left + right)
 	}
 
-	// Step 5: Normalization
+	// Predict 2
+	for i := 0; i < nH; i++ {
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
+		}
+		rightIdx := leftIdx
+		if i+1 < nL {
+			rightIdx = i + 1
+		}
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] += gamma97 * (left + right)
+	}
+
+	// Update 2
 	for i := 0; i < nL; i++ {
-		temp[i] *= K97
+		left := high[0]
+		if i > 0 {
+			left = high[i-1]
+		}
+		right := high[nH-1]
+		if i < nH {
+			right = high[i]
+		}
+		low[i] += delta97 * (left + right)
+	}
+
+	// Normalization
+	for i := 0; i < nL; i++ {
+		low[i] *= K97
 	}
 	for i := 0; i < nH; i++ {
-		temp[nL+i] *= K97i
+		high[i] *= K97i
 	}
 
-	copy(data, temp)
+	// Deinterleave back to [L | H]
+	copy(data[:nL], low)
+	copy(data[nL:], high)
 }
 
 // Inverse97_1D performs the inverse 9/7 wavelet transform on a 1D signal
@@ -114,97 +134,108 @@ func Forward97_1D(data []float64) {
 // Input: data with first half = L, second half = H (will be modified in-place)
 // Output: reconstructed signal
 func Inverse97_1D(data []float64) {
+	Inverse97_1DWithParity(data, true)
+}
+
+// Inverse97_1DWithParity performs the inverse 9/7 wavelet transform on a 1D signal.
+// even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+func Inverse97_1DWithParity(data []float64, even bool) {
 	n := len(data)
 	if n <= 1 {
 		return
 	}
 
-	nL := (n + 1) / 2
-	nH := n / 2
+	nL, nH := splitLengths(n, even)
+	if nL == 0 || nH == 0 {
+		return
+	}
 
-	temp := make([]float64, n)
-	copy(temp, data)
+	low := make([]float64, nL)
+	high := make([]float64, nH)
 
-	// Step 1: Inverse normalization
+	copy(low, data[:nL])
+	copy(high, data[nL:])
+
+	// Inverse normalization
 	for i := 0; i < nL; i++ {
-		temp[i] /= K97
+		low[i] /= K97
 	}
 	for i := 0; i < nH; i++ {
-		temp[nL+i] /= K97i
+		high[i] /= K97i
 	}
 
-	// Step 2: Inverse update 2 (delta)
-	// L[i] = L[i] - delta * (H[i-1] + H[i])
+	// Inverse update 2
 	for i := 0; i < nL; i++ {
-		var left, right float64
+		left := high[0]
 		if i > 0 {
-			left = temp[nL+i-1]
-		} else {
-			left = temp[nL]
+			left = high[i-1]
 		}
+		right := high[nH-1]
 		if i < nH {
-			right = temp[nL+i]
-		} else {
-			right = temp[nL+nH-1]
+			right = high[i]
 		}
-		temp[i] = temp[i] - delta97*(left+right)
+		low[i] -= delta97 * (left + right)
 	}
 
-	// Copy to data for next step
-	copy(data, temp)
-
-	// Step 3: Inverse predict 2 (gamma)
-	// H[i] = H[i] - gamma * (L[i] + L[i+1])
+	// Inverse predict 2
 	for i := 0; i < nH; i++ {
-		left := data[i]
-		var right float64
-		if i+1 < nL {
-			right = data[i+1]
-		} else {
-			right = data[nL-1]
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
 		}
-		temp[nL+i] = data[nL+i] - gamma97*(left+right)
+		rightIdx := leftIdx
+		if i+1 < nL {
+			rightIdx = i + 1
+		}
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] -= gamma97 * (left + right)
 	}
 
-	// Step 4: Inverse update 1 (beta)
-	// X[2i] = L[i] - beta * (H[i-1] + H[i])
+	// Inverse update 1
 	for i := 0; i < nL; i++ {
-		var left, right float64
+		left := high[0]
 		if i > 0 {
-			left = temp[nL+i-1]
-		} else {
-			left = temp[nL]
+			left = high[i-1]
 		}
+		right := high[nH-1]
 		if i < nH {
-			right = temp[nL+i]
-		} else {
-			right = temp[nL+nH-1]
+			right = high[i]
 		}
-		temp[i] = data[i] - beta97*(left+right)
+		low[i] -= beta97 * (left + right)
 	}
 
-	// Copy to data for final step
-	copy(data, temp)
-
-	// Step 5: Inverse predict 1 (alpha)
-	// X[2i+1] = H[i] - alpha * (X[2i] + X[2i+2])
+	// Inverse predict 1
 	for i := 0; i < nH; i++ {
-		left := data[i]
-		var right float64
-		if i+1 < nL {
-			right = data[i+1]
-		} else {
-			right = data[nL-1]
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
 		}
-		temp[2*i+1] = data[nL+i] - alpha97*(left+right)
+		rightIdx := leftIdx
+		if i+1 < nL {
+			rightIdx = i + 1
+		}
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] -= alpha97 * (left + right)
 	}
 
-	// Copy even samples
-	for i := 0; i < nL; i++ {
-		temp[2*i] = data[i]
+	// Interleave back to samples
+	if even {
+		for i := 0; i < nL; i++ {
+			data[2*i] = low[i]
+		}
+		for i := 0; i < nH; i++ {
+			data[2*i+1] = high[i]
+		}
+	} else {
+		for i := 0; i < nH; i++ {
+			data[2*i] = high[i]
+		}
+		for i := 0; i < nL; i++ {
+			data[2*i+1] = low[i]
+		}
 	}
-
-	copy(data, temp)
 }
 
 // Forward97_2D performs the forward 9/7 wavelet transform on a 2D image
@@ -216,6 +247,12 @@ func Inverse97_1D(data []float64) {
 // For the first level, stride == width
 // For subsequent levels, stride remains the original width while width shrinks
 func Forward97_2D(data []float64, width, height, stride int) {
+	Forward97_2DWithParity(data, width, height, stride, true, true)
+}
+
+// Forward97_2DWithParity performs the forward 9/7 wavelet transform on a 2D image
+// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+func Forward97_2DWithParity(data []float64, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -230,7 +267,7 @@ func Forward97_2D(data []float64, width, height, stride int) {
 			}
 
 			// Transform row
-			Forward97_1D(row)
+			Forward97_1DWithParity(row, evenRow)
 
 			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
@@ -249,7 +286,7 @@ func Forward97_2D(data []float64, width, height, stride int) {
 			}
 
 			// Transform column
-			Forward97_1D(col)
+			Forward97_1DWithParity(col, evenCol)
 
 			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
@@ -264,6 +301,12 @@ func Forward97_2D(data []float64, width, height, stride int) {
 // Input: data with subbands (LL, HL, LH, HH), width, height, stride
 // Output: reconstructed image
 func Inverse97_2D(data []float64, width, height, stride int) {
+	Inverse97_2DWithParity(data, width, height, stride, true, true)
+}
+
+// Inverse97_2DWithParity performs the inverse 9/7 wavelet transform on a 2D image
+// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+func Inverse97_2DWithParity(data []float64, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -278,7 +321,7 @@ func Inverse97_2D(data []float64, width, height, stride int) {
 			}
 
 			// Inverse transform column
-			Inverse97_1D(col)
+			Inverse97_1DWithParity(col, evenCol)
 
 			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
@@ -297,7 +340,7 @@ func Inverse97_2D(data []float64, width, height, stride int) {
 			}
 
 			// Inverse transform row
-			Inverse97_1D(row)
+			Inverse97_1DWithParity(row, evenRow)
 
 			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
@@ -311,6 +354,11 @@ func Inverse97_2D(data []float64, width, height, stride int) {
 // levels: number of decomposition levels (1 = one level, 2 = two levels, etc.)
 // After each level, only the LL subband is further decomposed
 func ForwardMultilevel97(data []float64, width, height, levels int) {
+	ForwardMultilevel97WithParity(data, width, height, levels, 0, 0)
+}
+
+// ForwardMultilevel97WithParity performs multilevel 9/7 wavelet decomposition with origin parity.
+func ForwardMultilevel97WithParity(data []float64, width, height, levels int, x0, y0 int) {
 	// Keep the original stride (full width) throughout all levels
 	// This is critical: after level 1, the LL subband is stored in the top-left,
 	// but the row stride remains the original full width
@@ -320,20 +368,28 @@ func ForwardMultilevel97(data []float64, width, height, levels int) {
 	curWidth := width
 	curHeight := height
 
+	curX0 := x0
+	curY0 := y0
+
 	for level := 0; level < levels; level++ {
 		if curWidth <= 1 && curHeight <= 1 {
 			break
 		}
 
+		evenRow := isEven(curX0)
+		evenCol := isEven(curY0)
+
 		// Transform current level in-place with original stride
 		// For level 0: curWidth == originalStride
 		// For level 1+: curWidth < originalStride (only process LL subband)
-		Forward97_2D(data, curWidth, curHeight, originalStride)
+		Forward97_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 
 		// Next level will work only on LL subband (top-left region)
 		// Update dimensions for next iteration
 		curWidth = (curWidth + 1) / 2
 		curHeight = (curHeight + 1) / 2
+		curX0 = nextCoord(curX0)
+		curY0 = nextCoord(curY0)
 	}
 }
 
@@ -341,27 +397,40 @@ func ForwardMultilevel97(data []float64, width, height, levels int) {
 // levels: number of decomposition levels to inverse
 // Reconstructs from coarsest to finest
 func InverseMultilevel97(data []float64, width, height, levels int) {
+	InverseMultilevel97WithParity(data, width, height, levels, 0, 0)
+}
+
+// InverseMultilevel97WithParity performs multilevel 9/7 wavelet reconstruction with origin parity.
+func InverseMultilevel97WithParity(data []float64, width, height, levels int, x0, y0 int) {
 	// Keep the original stride (full width) throughout all levels
 	originalStride := width
 
 	// Calculate dimensions at each level
 	levelWidths := make([]int, levels+1)
 	levelHeights := make([]int, levels+1)
+	levelX0 := make([]int, levels+1)
+	levelY0 := make([]int, levels+1)
 	levelWidths[0] = width
 	levelHeights[0] = height
+	levelX0[0] = x0
+	levelY0[0] = y0
 
 	for i := 1; i <= levels; i++ {
 		levelWidths[i] = (levelWidths[i-1] + 1) / 2
 		levelHeights[i] = (levelHeights[i-1] + 1) / 2
+		levelX0[i] = nextCoord(levelX0[i-1])
+		levelY0[i] = nextCoord(levelY0[i-1])
 	}
 
 	// Inverse transform from coarsest to finest
 	for level := levels - 1; level >= 0; level-- {
 		curWidth := levelWidths[level]
 		curHeight := levelHeights[level]
+		evenRow := isEven(levelX0[level])
+		evenCol := isEven(levelY0[level])
 
 		// Inverse transform this level in-place with original stride
-		Inverse97_2D(data, curWidth, curHeight, originalStride)
+		Inverse97_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 	}
 }
 

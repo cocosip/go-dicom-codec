@@ -1521,7 +1521,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	}
 
 	// Apply wavelet transform
-	transformedData, err := e.applyWaveletTransform(tileData, actualWidth, actualHeight)
+	transformedData, err := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
 	if err != nil {
 		return fmt.Errorf("wavelet transform failed: %w", err)
 	}
@@ -1560,7 +1560,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 }
 
 // applyWaveletTransform applies wavelet transform to tile data
-func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) ([][]int32, error) {
+func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y0 int) ([][]int32, error) {
 	if e.params.NumLevels == 0 {
 		// No transform
 		return tileData, nil
@@ -1575,7 +1575,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 			copy(transformed[c], tileData[c])
 
 			// Apply forward multilevel DWT
-			wavelet.ForwardMultilevel(transformed[c], width, height, e.params.NumLevels)
+			wavelet.ForwardMultilevelWithParity(transformed[c], width, height, e.params.NumLevels, x0, y0)
 		}
 		return transformed, nil
 	} else {
@@ -1597,7 +1597,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height int) (
 			floatData := wavelet.ConvertInt32ToFloat64(tileData[c])
 
 			// Apply forward multilevel 9/7 DWT
-			wavelet.ForwardMultilevel97(floatData, width, height, e.params.NumLevels)
+			wavelet.ForwardMultilevel97WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
 
 			// Convert to int32 first
 			coeffs := wavelet.ConvertFloat64ToInt32(floatData)

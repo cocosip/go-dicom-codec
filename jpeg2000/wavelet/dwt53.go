@@ -15,54 +15,75 @@ package wavelet
 // - In-place processing minimizes memory allocations
 // - Typical performance: ~100ns for 64 samples, ~1.5µs for 1024 samples
 func Forward53_1D(data []int32) {
+	Forward53_1DWithParity(data, true)
+}
+
+// Forward53_1DWithParity performs the forward 5/3 wavelet transform on a 1D signal
+// even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+func Forward53_1DWithParity(data []int32, even bool) {
 	n := len(data)
 	if n <= 1 {
+		if !even && n == 1 {
+			data[0] *= 2
+		}
 		return
 	}
 
-	// Number of low-pass and high-pass coefficients
-	nL := (n + 1) / 2 // Low-pass (even indices)
-	nH := n / 2       // High-pass (odd indices)
+	nL, nH := splitLengths(n, even)
+	if nL == 0 || nH == 0 {
+		return
+	}
 
-	// Temporary buffers
-	temp := make([]int32, n)
+	low := make([]int32, nL)
+	high := make([]int32, nH)
 
-	// Step 1: Predict (high-pass filter)
-	// H[i] = X[2i+1] - floor((X[2i] + X[2i+2]) / 2)
+	if even {
+		for i := 0; i < nL; i++ {
+			low[i] = data[2*i]
+		}
+		for i := 0; i < nH; i++ {
+			high[i] = data[2*i+1]
+		}
+	} else {
+		for i := 0; i < nL; i++ {
+			low[i] = data[2*i+1]
+		}
+		for i := 0; i < nH; i++ {
+			high[i] = data[2*i]
+		}
+	}
+
+	// Predict
 	for i := 0; i < nH; i++ {
-		// Get neighboring even samples
-		left := data[2*i]
-		var right int32
-		if 2*i+2 < n {
-			right = data[2*i+2]
-		} else {
-			right = data[2*i] // Mirror boundary
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
 		}
-		// Predict odd sample from neighboring even samples
-		temp[nL+i] = data[2*i+1] - ((left + right) >> 1)
+		rightIdx := leftIdx
+		if i+1 < nL {
+			rightIdx = i + 1
+		}
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] = high[i] - ((left + right) >> 1)
 	}
 
-	// Step 2: Update (low-pass filter)
-	// L[i] = X[2i] + floor((H[i-1] + H[i] + 2) / 4)
+	// Update
 	for i := 0; i < nL; i++ {
-		// Get neighboring high-pass coefficients
-		var left, right int32
+		left := high[0]
 		if i > 0 {
-			left = temp[nL+i-1]
-		} else {
-			left = temp[nL] // First high-pass coefficient
+			left = high[i-1]
 		}
+		right := high[nH-1]
 		if i < nH {
-			right = temp[nL+i]
-		} else {
-			right = temp[nL+nH-1] // Last high-pass coefficient
+			right = high[i]
 		}
-		// Update even sample
-		temp[i] = data[2*i] + ((left + right + 2) >> 2)
+		low[i] = low[i] + ((left + right + 2) >> 2)
 	}
 
-	// Copy result back
-	copy(data, temp)
+	// Deinterleave back to [L | H]
+	copy(data[:nL], low)
+	copy(data[nL:], high)
 }
 
 // Inverse53_1D performs the inverse 5/3 wavelet transform on a 1D signal
@@ -76,47 +97,75 @@ func Forward53_1D(data []int32) {
 // - Performance similar to Forward53_1D
 // - Optimization: could benefit from SIMD for large signals
 func Inverse53_1D(data []int32) {
+	Inverse53_1DWithParity(data, true)
+}
+
+// Inverse53_1DWithParity performs the inverse 5/3 wavelet transform on a 1D signal.
+// even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+func Inverse53_1DWithParity(data []int32, even bool) {
 	n := len(data)
 	if n <= 1 {
+		if !even && n == 1 {
+			data[0] /= 2
+		}
 		return
 	}
 
-	nL := (n + 1) / 2
-	nH := n / 2
+	nL, nH := splitLengths(n, even)
+	if nL == 0 || nH == 0 {
+		return
+	}
 
-	temp := make([]int32, n)
+	low := make([]int32, nL)
+	high := make([]int32, nH)
 
-	// Step 1: Reverse update
-	// X[2i] = L[i] - floor((H[i-1] + H[i] + 2) / 4)
+	copy(low, data[:nL])
+	copy(high, data[nL:])
+
+	// Reverse update
 	for i := 0; i < nL; i++ {
-		var left, right int32
+		left := high[0]
 		if i > 0 {
-			left = data[nL+i-1]
-		} else {
-			left = data[nL]
+			left = high[i-1]
 		}
+		right := high[nH-1]
 		if i < nH {
-			right = data[nL+i]
-		} else {
-			right = data[nL+nH-1]
+			right = high[i]
 		}
-		temp[2*i] = data[i] - ((left + right + 2) >> 2)
+		low[i] = low[i] - ((left + right + 2) >> 2)
 	}
 
-	// Step 2: Reverse predict
-	// X[2i+1] = H[i] + floor((X[2i] + X[2i+2]) / 2)
+	// Reverse predict
 	for i := 0; i < nH; i++ {
-		left := temp[2*i]
-		var right int32
-		if 2*i+2 < n {
-			right = temp[2*i+2]
-		} else {
-			right = temp[2*i]
+		leftIdx := i
+		if leftIdx >= nL {
+			leftIdx = nL - 1
 		}
-		temp[2*i+1] = data[nL+i] + ((left + right) >> 1)
+		rightIdx := leftIdx
+		if i+1 < nL {
+			rightIdx = i + 1
+		}
+		left := low[leftIdx]
+		right := low[rightIdx]
+		high[i] = high[i] + ((left + right) >> 1)
 	}
 
-	copy(data, temp)
+	// Interleave back to samples
+	if even {
+		for i := 0; i < nL; i++ {
+			data[2*i] = low[i]
+		}
+		for i := 0; i < nH; i++ {
+			data[2*i+1] = high[i]
+		}
+	} else {
+		for i := 0; i < nH; i++ {
+			data[2*i] = high[i]
+		}
+		for i := 0; i < nL; i++ {
+			data[2*i+1] = low[i]
+		}
+	}
 }
 
 // Forward53_2D performs the forward 5/3 wavelet transform on a 2D image
@@ -136,6 +185,12 @@ func Inverse53_1D(data []int32) {
 // - Typical performance: ~13µs for 64x64, ~102µs for 256x256
 // - Potential optimization: transpose for better column access pattern
 func Forward53_2D(data []int32, width, height, stride int) {
+	Forward53_2DWithParity(data, width, height, stride, true, true)
+}
+
+// Forward53_2DWithParity performs the forward 5/3 wavelet transform on a 2D image
+// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+func Forward53_2DWithParity(data []int32, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -152,7 +207,7 @@ func Forward53_2D(data []int32, width, height, stride int) {
 			}
 
 			// Transform row
-			Forward53_1D(row)
+			Forward53_1DWithParity(row, evenRow)
 
 			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
@@ -171,7 +226,7 @@ func Forward53_2D(data []int32, width, height, stride int) {
 			}
 
 			// Transform column
-			Forward53_1D(col)
+			Forward53_1DWithParity(col, evenCol)
 
 			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
@@ -186,6 +241,12 @@ func Forward53_2D(data []int32, width, height, stride int) {
 // Input: data with subbands (LL, HL, LH, HH), width, height, stride
 // Output: reconstructed image
 func Inverse53_2D(data []int32, width, height, stride int) {
+	Inverse53_2DWithParity(data, width, height, stride, true, true)
+}
+
+// Inverse53_2DWithParity performs the inverse 5/3 wavelet transform on a 2D image
+// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+func Inverse53_2DWithParity(data []int32, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
@@ -200,7 +261,7 @@ func Inverse53_2D(data []int32, width, height, stride int) {
 			}
 
 			// Inverse transform column
-			Inverse53_1D(col)
+			Inverse53_1DWithParity(col, evenCol)
 
 			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
@@ -219,7 +280,7 @@ func Inverse53_2D(data []int32, width, height, stride int) {
 			}
 
 			// Inverse transform row
-			Inverse53_1D(row)
+			Inverse53_1DWithParity(row, evenRow)
 
 			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
@@ -233,6 +294,11 @@ func Inverse53_2D(data []int32, width, height, stride int) {
 // levels: number of decomposition levels (1 = one level, 2 = two levels, etc.)
 // After each level, only the LL subband is further decomposed
 func ForwardMultilevel(data []int32, width, height, levels int) {
+	ForwardMultilevelWithParity(data, width, height, levels, 0, 0)
+}
+
+// ForwardMultilevelWithParity performs multilevel 5/3 wavelet decomposition with origin parity.
+func ForwardMultilevelWithParity(data []int32, width, height, levels int, x0, y0 int) {
 	// Keep the original stride (full width) throughout all levels
 	// This is critical: after level 1, the LL subband is stored in the top-left,
 	// but the row stride remains the original full width
@@ -242,20 +308,28 @@ func ForwardMultilevel(data []int32, width, height, levels int) {
 	curWidth := width
 	curHeight := height
 
+	curX0 := x0
+	curY0 := y0
+
 	for level := 0; level < levels; level++ {
 		if curWidth <= 1 && curHeight <= 1 {
 			break
 		}
 
+		evenRow := isEven(curX0)
+		evenCol := isEven(curY0)
+
 		// Transform current level in-place with original stride
 		// For level 0: curWidth == originalStride
 		// For level 1+: curWidth < originalStride (only process LL subband)
-		Forward53_2D(data, curWidth, curHeight, originalStride)
+		Forward53_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 
 		// Next level will work only on LL subband (top-left region)
 		// Update dimensions for next iteration
 		curWidth = (curWidth + 1) / 2
 		curHeight = (curHeight + 1) / 2
+		curX0 = nextCoord(curX0)
+		curY0 = nextCoord(curY0)
 	}
 }
 
@@ -263,26 +337,39 @@ func ForwardMultilevel(data []int32, width, height, levels int) {
 // levels: number of decomposition levels to inverse
 // Reconstructs from coarsest to finest
 func InverseMultilevel(data []int32, width, height, levels int) {
+	InverseMultilevelWithParity(data, width, height, levels, 0, 0)
+}
+
+// InverseMultilevelWithParity performs multilevel 5/3 wavelet reconstruction with origin parity.
+func InverseMultilevelWithParity(data []int32, width, height, levels int, x0, y0 int) {
 	// Keep the original stride (full width) throughout all levels
 	originalStride := width
 
 	// Calculate dimensions at each level
 	levelWidths := make([]int, levels+1)
 	levelHeights := make([]int, levels+1)
+	levelX0 := make([]int, levels+1)
+	levelY0 := make([]int, levels+1)
 	levelWidths[0] = width
 	levelHeights[0] = height
+	levelX0[0] = x0
+	levelY0[0] = y0
 
 	for i := 1; i <= levels; i++ {
 		levelWidths[i] = (levelWidths[i-1] + 1) / 2
 		levelHeights[i] = (levelHeights[i-1] + 1) / 2
+		levelX0[i] = nextCoord(levelX0[i-1])
+		levelY0[i] = nextCoord(levelY0[i-1])
 	}
 
 	// Inverse transform from coarsest to finest
 	for level := levels - 1; level >= 0; level-- {
 		curWidth := levelWidths[level]
 		curHeight := levelHeights[level]
+		evenRow := isEven(levelX0[level])
+		evenCol := isEven(levelY0[level])
 
 		// Inverse transform this level in-place with original stride
-		Inverse53_2D(data, curWidth, curHeight, originalStride)
+		Inverse53_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 	}
 }

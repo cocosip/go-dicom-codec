@@ -49,6 +49,41 @@ func TestForwardInverse53_1D(t *testing.T) {
 	}
 }
 
+func TestForwardInverse53_1DParity(t *testing.T) {
+	tests := []struct {
+		name string
+		size int
+		even bool
+	}{
+		{"Even start size 5", 5, true},
+		{"Odd start size 5", 5, false},
+		{"Even start size 8", 8, true},
+		{"Odd start size 8", 8, false},
+		{"Odd start size 1", 1, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := make([]int32, tt.size)
+			for i := range original {
+				original[i] = int32(i*7 - 30)
+			}
+
+			data := make([]int32, tt.size)
+			copy(data, original)
+
+			Forward53_1DWithParity(data, tt.even)
+			Inverse53_1DWithParity(data, tt.even)
+
+			for i := range data {
+				if data[i] != original[i] {
+					t.Errorf("Parity reconstruction failed at %d: got %d, want %d", i, data[i], original[i])
+				}
+			}
+		})
+	}
+}
+
 // TestForwardInverse53_2D tests perfect reconstruction for 2D transform
 func TestForwardInverse53_2D(t *testing.T) {
 	tests := []struct {
@@ -62,9 +97,9 @@ func TestForwardInverse53_2D(t *testing.T) {
 		{"16x16", 16, 16},
 		{"32x32", 32, 32},
 		{"64x64", 64, 64},
-		{"128x64", 128, 64}, // Non-square
+		{"128x64", 128, 64},   // Non-square
 		{"100x100", 100, 100}, // Non-power-of-2
-		{"33x17", 33, 17}, // Odd dimensions
+		{"33x17", 33, 17},     // Odd dimensions
 	}
 
 	for _, tt := range tests {
@@ -104,6 +139,31 @@ func TestForwardInverse53_2D(t *testing.T) {
 				t.Errorf("Total reconstruction errors: %d/%d", errors, size)
 			}
 		})
+	}
+}
+
+func TestForwardInverse53_2DParity(t *testing.T) {
+	width, height := 17, 19
+	size := width * height
+
+	original := make([]int32, size)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			original[y*width+x] = int32(x*3 - y*2)
+		}
+	}
+
+	data := make([]int32, size)
+	copy(data, original)
+
+	Forward53_2DWithParity(data, width, height, width, false, true)
+	Inverse53_2DWithParity(data, width, height, width, false, true)
+
+	for i := range data {
+		if data[i] != original[i] {
+			t.Errorf("2D parity reconstruction failed at %d: got %d, want %d", i, data[i], original[i])
+			break
+		}
 	}
 }
 
@@ -166,6 +226,32 @@ func TestForwardInverseMultilevel(t *testing.T) {
 				t.Logf("Perfect reconstruction for %dx%d with %d levels", tt.width, tt.height, tt.levels)
 			}
 		})
+	}
+}
+
+func TestForwardInverseMultilevelParity(t *testing.T) {
+	width, height := 64, 48
+	levels := 3
+	x0, y0 := 1, 2
+	size := width * height
+
+	original := make([]int32, size)
+	rng := rand.New(rand.NewPCG(7, 0))
+	for i := range original {
+		original[i] = int32(rng.IntN(1024) - 512)
+	}
+
+	data := make([]int32, size)
+	copy(data, original)
+
+	ForwardMultilevelWithParity(data, width, height, levels, x0, y0)
+	InverseMultilevelWithParity(data, width, height, levels, x0, y0)
+
+	for i := range data {
+		if data[i] != original[i] {
+			t.Errorf("Multilevel parity reconstruction failed at %d: got %d, want %d", i, data[i], original[i])
+			break
+		}
 	}
 }
 
