@@ -32,6 +32,8 @@ type TileDecoder struct {
 	qcd    *codestream.QCDSegment
 	tileX0 int
 	tileY0 int
+	tileX1 int
+	tileY1 int
 
 	// Component decoders
 	components []*ComponentDecoder
@@ -53,6 +55,8 @@ type TileDecoder struct {
 // ComponentDecoder decodes a single component within a tile
 type ComponentDecoder struct {
 	componentIdx int
+	x0           int
+	y0           int
 	width        int
 	height       int
 	numLevels    int // Number of DWT levels
@@ -250,8 +254,26 @@ func NewTileDecoder(
 	}
 	tileX := tile.Index % numTilesX
 	tileY := tile.Index / numTilesX
-	tileX0 := int(siz.XTOsiz) + tileX*int(siz.XTsiz)
-	tileY0 := int(siz.YTOsiz) + tileY*int(siz.YTsiz)
+	tileGridX0 := int(siz.XTOsiz) + tileX*int(siz.XTsiz)
+	tileGridY0 := int(siz.YTOsiz) + tileY*int(siz.YTsiz)
+	tileGridX1 := tileGridX0 + int(siz.XTsiz)
+	tileGridY1 := tileGridY0 + int(siz.YTsiz)
+	tileX0 := tileGridX0
+	tileY0 := tileGridY0
+	if tileX0 < int(siz.XOsiz) {
+		tileX0 = int(siz.XOsiz)
+	}
+	if tileY0 < int(siz.YOsiz) {
+		tileY0 = int(siz.YOsiz)
+	}
+	tileX1 := tileGridX1
+	tileY1 := tileGridY1
+	if tileX1 > int(siz.Xsiz) {
+		tileX1 = int(siz.Xsiz)
+	}
+	if tileY1 > int(siz.Ysiz) {
+		tileY1 = int(siz.Ysiz)
+	}
 
 	td := &TileDecoder{
 		tile:                tile,
@@ -263,6 +285,8 @@ func NewTileDecoder(
 		blockDecoderFactory: blockDecoderFactory,
 		tileX0:              tileX0,
 		tileY0:              tileY0,
+		tileX1:              tileX1,
+		tileY1:              tileY1,
 	}
 
 	return td
@@ -276,10 +300,32 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	td.decodedData = make([][]int32, numComponents)
 
 	for i := 0; i < numComponents; i++ {
+		dx := int(td.siz.Components[i].XRsiz)
+		dy := int(td.siz.Components[i].YRsiz)
+		if dx <= 0 {
+			dx = 1
+		}
+		if dy <= 0 {
+			dy = 1
+		}
+		compX0 := ceilDiv(td.tileX0, dx)
+		compY0 := ceilDiv(td.tileY0, dy)
+		compX1 := ceilDiv(td.tileX1, dx)
+		compY1 := ceilDiv(td.tileY1, dy)
+		compWidth := compX1 - compX0
+		compHeight := compY1 - compY0
+		if compWidth < 0 {
+			compWidth = 0
+		}
+		if compHeight < 0 {
+			compHeight = 0
+		}
 		comp := &ComponentDecoder{
 			componentIdx: i,
-			width:        int(td.siz.Xsiz), // Simplified - should calculate per-component
-			height:       int(td.siz.Ysiz),
+			x0:           compX0,
+			y0:           compY0,
+			width:        compWidth,
+			height:       compHeight,
 			numLevels:    int(td.cod.NumberOfDecompositionLevels),
 		}
 
@@ -298,7 +344,15 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 
 	// Set image dimensions and code-block size
 	cbWidth, cbHeight := td.cod.CodeBlockSize()
-	packetDec.SetImageDimensions(int(td.siz.Xsiz), int(td.siz.Ysiz), cbWidth, cbHeight)
+	if numComponents > 0 {
+		packetDec.SetImageDimensions(td.components[0].width, td.components[0].height, cbWidth, cbHeight)
+	} else {
+		packetDec.SetImageDimensions(int(td.siz.Xsiz), int(td.siz.Ysiz), cbWidth, cbHeight)
+	}
+	for i := 0; i < numComponents; i++ {
+		comp := td.components[i]
+		packetDec.SetComponentBounds(i, comp.x0, comp.y0, comp.x0+comp.width, comp.y0+comp.height)
+	}
 
 	// Set precinct size if defined in COD segment
 	if len(td.cod.PrecinctSizes) > 0 {
@@ -462,45 +516,6 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 			}
 		}
 
-		// Calculate subband dimensions for each resolution
-		// Resolution 0: LL subband (top-left after all decompositions)
-		// Resolution r > 0: HL, LH, HH subbands from decomposition level (numLevels - r + 1)
-
-		type subbandLayout struct {
-			x0, y0         int // Subband origin in coefficient array
-			width, height  int // Subband dimensions
-			numCBX, numCBY int // Number of code-blocks in X and Y
-		}
-
-		// Calculate layout for each resolution
-		resolutionLayouts := make(map[int][]subbandLayout) // [resolution][]subbandLayout
-
-		for res := 0; res <= comp.numLevels; res++ {
-			if res == 0 {
-				// Resolution 0: LL subband only
-				llWidth := subbandDim(comp.width, comp.numLevels, res)
-				llHeight := subbandDim(comp.height, comp.numLevels, res)
-				numCBX := (llWidth + cbWidth - 1) / cbWidth
-				numCBY := (llHeight + cbHeight - 1) / cbHeight
-
-				resolutionLayouts[res] = []subbandLayout{
-					{x0: 0, y0: 0, width: llWidth, height: llHeight, numCBX: numCBX, numCBY: numCBY},
-				}
-			} else {
-				// Resolution r: HL, LH, HH subbands
-				sbWidth := subbandDim(comp.width, comp.numLevels, res)
-				sbHeight := subbandDim(comp.height, comp.numLevels, res)
-				numCBX := (sbWidth + cbWidth - 1) / cbWidth
-				numCBY := (sbHeight + cbHeight - 1) / cbHeight
-
-				resolutionLayouts[res] = []subbandLayout{
-					{x0: sbWidth, y0: 0, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},        // HL
-					{x0: 0, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY},       // LH
-					{x0: sbWidth, y0: sbHeight, width: sbWidth, height: sbHeight, numCBX: numCBX, numCBY: numCBY}, // HH
-				}
-			}
-		}
-
 		// Create code-blocks with correct spatial positions
 		codeBlocks := make([]*CodeBlockDecoder, 0)
 
@@ -508,23 +523,19 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		// Iterate through all resolutions and subbands
 		globalCBIdx := 0
 		for res := 0; res <= comp.numLevels; res++ {
-			layouts := resolutionLayouts[res]
+			_, _, _, _, bands := bandInfosForResolution(comp.width, comp.height, comp.x0, comp.y0, comp.numLevels, res)
 
-			// For each subband in this resolution
-			for _, layout := range layouts {
-				band := 0
-				if res > 0 {
-					if layout.x0 > 0 && layout.y0 == 0 {
-						band = 1 // HL
-					} else if layout.x0 == 0 && layout.y0 > 0 {
-						band = 2 // LH
-					} else if layout.x0 > 0 && layout.y0 > 0 {
-						band = 3 // HH
-					}
+			for _, bandInfo := range bands {
+				if bandInfo.width <= 0 || bandInfo.height <= 0 {
+					continue
 				}
+				numCBX := (bandInfo.width + cbWidth - 1) / cbWidth
+				numCBY := (bandInfo.height + cbHeight - 1) / cbHeight
+				band := bandInfo.band
+
 				// For each code-block in this subband
-				for cby := 0; cby < layout.numCBY; cby++ {
-					for cbx := 0; cbx < layout.numCBX; cbx++ {
+				for cby := 0; cby < numCBY; cby++ {
+					for cbx := 0; cbx < numCBX; cbx++ {
 						cbIdx := globalCBIdx
 						globalCBIdx++
 
@@ -570,25 +581,25 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 							cbInfoData.maxBitplaneSet = true
 						}
 
-						// Calculate code-block bounds within the subband
+						// Calculate code-block bounds within the subband (band-local)
 						localX0 := cbx * cbWidth
 						localY0 := cby * cbHeight
 						localX1 := localX0 + cbWidth
 						localY1 := localY0 + cbHeight
 
 						// Clip to subband bounds
-						if localX1 > layout.width {
-							localX1 = layout.width
+						if localX1 > bandInfo.width {
+							localX1 = bandInfo.width
 						}
-						if localY1 > layout.height {
-							localY1 = layout.height
+						if localY1 > bandInfo.height {
+							localY1 = bandInfo.height
 						}
 
 						// Convert to global coordinates in coefficient array
-						x0 := layout.x0 + localX0
-						y0 := layout.y0 + localY0
-						x1 := layout.x0 + localX1
-						y1 := layout.y0 + localY1
+						x0 := bandInfo.offsetX + localX0
+						y0 := bandInfo.offsetY + localY0
+						x1 := bandInfo.offsetX + localX1
+						y1 := bandInfo.offsetY + localY1
 
 						actualWidth := x1 - x0
 						actualHeight := y1 - y0
@@ -753,86 +764,49 @@ func (td *TileDecoder) buildPrecinctOrder(comp *ComponentDecoder, cbWidth, cbHei
 			precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
 		}
 
-		if res == 0 {
-			llWidth := subbandDim(comp.width, comp.numLevels, res)
-			llHeight := subbandDim(comp.height, comp.numLevels, res)
-			numCBX := (llWidth + cbWidth - 1) / cbWidth
-			numCBY := (llHeight + cbHeight - 1) / cbHeight
+		resW, resH, resX0, resY0, bands := bandInfosForResolution(comp.width, comp.height, comp.x0, comp.y0, comp.numLevels, res)
+		if resW <= 0 || resH <= 0 {
+			continue
+		}
+		startX := floorDiv(resX0, pw) * pw
+		startY := floorDiv(resY0, ph) * ph
+		endX := ceilDiv(resX0+resW, pw) * pw
+		numPrecinctX := (endX - startX) / pw
+		if numPrecinctX < 1 {
+			numPrecinctX = 1
+		}
 
-			resWidth := resolutionDim(comp.width, comp.numLevels, res)
-			numPrecinctX := (resWidth + pw - 1) / pw
-			if numPrecinctX < 1 {
-				numPrecinctX = 1
+		for _, bandInfo := range bands {
+			if bandInfo.width <= 0 || bandInfo.height <= 0 {
+				continue
 			}
-
+			numCBX := (bandInfo.width + cbWidth - 1) / cbWidth
+			numCBY := (bandInfo.height + cbHeight - 1) / cbHeight
 			for cby := 0; cby < numCBY; cby++ {
 				for cbx := 0; cbx < numCBX; cbx++ {
-					x0 := cbx * cbWidth
-					y0 := cby * cbHeight
-					px := x0 / pw
-					py := y0 / ph
+					cbX0 := cbx * cbWidth
+					cbY0 := cby * cbHeight
+					absResX0 := resX0 + cbX0
+					absResY0 := resY0 + cbY0
+					px := (absResX0 - startX) / pw
+					py := (absResY0 - startY) / ph
 					pIdx := py*numPrecinctX + px
-					localX := x0 - px*pw
-					localY := y0 - py*ph
+					localX := absResX0 - (startX + px*pw)
+					localY := absResY0 - (startY + py*ph)
 					cbxLocal := localX / cbWidth
 					cbyLocal := localY / cbHeight
-					addEntry(pIdx, 0, cbxLocal, cbyLocal, globalCBIdx)
+					addEntry(pIdx, bandInfo.band, cbxLocal, cbyLocal, globalCBIdx)
 					globalCBIdx++
 				}
 			}
-		} else {
-			sbWidth := subbandDim(comp.width, comp.numLevels, res)
-			sbHeight := subbandDim(comp.height, comp.numLevels, res)
-			numCBX := (sbWidth + cbWidth - 1) / cbWidth
-			numCBY := (sbHeight + cbHeight - 1) / cbHeight
-
-			resWidth := resolutionDim(comp.width, comp.numLevels, res)
-			numPrecinctX := (resWidth + pw - 1) / pw
-			if numPrecinctX < 1 {
-				numPrecinctX = 1
-			}
-
-			subbands := []struct {
-				x0, y0 int
-				band   int
-			}{
-				{sbWidth, 0, 1},        // HL
-				{0, sbHeight, 2},       // LH
-				{sbWidth, sbHeight, 3}, // HH
-			}
-
-			for _, sb := range subbands {
-				for cby := 0; cby < numCBY; cby++ {
-					for cbx := 0; cbx < numCBX; cbx++ {
-						x0 := sb.x0 + cbx*cbWidth
-						y0 := sb.y0 + cby*cbHeight
-						resX, resY := td.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
-						if resX < 0 {
-							resX = 0
-						}
-						if resY < 0 {
-							resY = 0
-						}
-						px := resX / pw
-						py := resY / ph
-						pIdx := py*numPrecinctX + px
-						localX := resX - px*pw
-						localY := resY - py*ph
-						cbxLocal := localX / cbWidth
-						cbyLocal := localY / cbHeight
-						addEntry(pIdx, sb.band, cbxLocal, cbyLocal, globalCBIdx)
-						globalCBIdx++
-					}
-				}
-			}
 		}
 
-		bands := []int{0}
+		bandOrder := []int{0}
 		if res > 0 {
-			bands = []int{1, 2, 3}
+			bandOrder = []int{1, 2, 3}
 		}
 		for pIdx, bandMap := range precinctBands {
-			for _, band := range bands {
+			for _, band := range bandOrder {
 				entries := bandMap[band]
 				if len(entries) == 0 {
 					continue
@@ -1050,7 +1024,11 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				style := byte(0)
 				inside := false
 				if td.roi != nil {
-					shiftVal, style, inside = td.roi.context(comp.componentIdx, x0, y0, x1, y1)
+					absX0 := comp.x0 + x0
+					absY0 := comp.y0 + y0
+					absX1 := comp.x0 + x1
+					absY1 := comp.y0 + y1
+					shiftVal, style, inside = td.roi.context(comp.componentIdx, absX0, absY0, absX1, absY1)
 				}
 
 				// Use DecodeWithBitplane for accurate reconstruction
@@ -1074,7 +1052,11 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 					// Inverse General Scaling for ROI blocks (Srgn=1)
 					if style == 1 && shiftVal > 0 && inside {
-						blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
+						absX0 := comp.x0 + x0
+						absY0 := comp.y0 + y0
+						absX1 := comp.x0 + x1
+						absY1 := comp.y0 + y1
+						blockMask := td.roi.blockMask(comp.componentIdx, absX0, absY0, absX1, absY1)
 						if len(blockMask) > 0 && len(blockMask[0]) > 0 {
 							applyInverseGeneralScalingMasked(cbd.coeffs, blockMask, shiftVal)
 						} else {
@@ -1163,7 +1145,7 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 		copy(comp.samples, comp.coefficients)
 
 		// Apply inverse multilevel wavelet transform
-		wavelet.InverseMultilevelWithParity(comp.samples, comp.width, comp.height, comp.numLevels, td.tileX0, td.tileY0)
+		wavelet.InverseMultilevelWithParity(comp.samples, comp.width, comp.height, comp.numLevels, comp.x0, comp.y0)
 	} else if td.cod.Transformation == 0 {
 		// 9/7 irreversible wavelet (lossy)
 		// First, apply dequantization if needed
@@ -1175,14 +1157,14 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 		if qType == 1 || qType == 2 {
 			// Scalar derived/expounded quantization - apply dequantization
 			bitDepth := int(td.siz.Components[comp.componentIdx].BitDepth())
-			floatCoeffs = td.applyDequantizationBySubbandFloat(comp.coefficients, comp.width, comp.height, comp.numLevels, bitDepth)
+			floatCoeffs = td.applyDequantizationBySubbandFloat(comp.coefficients, comp.width, comp.height, comp.numLevels, bitDepth, comp.x0, comp.y0)
 		} else {
 			// No quantization or missing QCD, use raw coefficients
 			floatCoeffs = wavelet.ConvertInt32ToFloat64(comp.coefficients)
 		}
 
 		// Apply inverse multilevel 9/7 wavelet transform
-		wavelet.InverseMultilevel97WithParity(floatCoeffs, comp.width, comp.height, comp.numLevels, td.tileX0, td.tileY0)
+		wavelet.InverseMultilevel97WithParity(floatCoeffs, comp.width, comp.height, comp.numLevels, comp.x0, comp.y0)
 
 		// Convert back to int32 with rounding
 		comp.samples = wavelet.ConvertFloat64ToInt32(floatCoeffs)
@@ -1197,7 +1179,7 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 // coeffs: quantized wavelet coefficients in subband layout
 // width, height: dimensions of the full image
 // numLevels: number of wavelet decomposition levels
-func (td *TileDecoder) applyDequantizationBySubbandFloat(coeffs []int32, width, height, numLevels, bitDepth int) []float64 {
+func (td *TileDecoder) applyDequantizationBySubbandFloat(coeffs []int32, width, height, numLevels, bitDepth, x0, y0 int) []float64 {
 	if td.qcd == nil || len(td.qcd.SPqcd) == 0 {
 		// No dequantization
 		return wavelet.ConvertInt32ToFloat64(coeffs)
@@ -1210,41 +1192,27 @@ func (td *TileDecoder) applyDequantizationBySubbandFloat(coeffs []int32, width, 
 
 	floatCoeffs := wavelet.ConvertInt32ToFloat64(coeffs)
 
-	// Calculate subband dimensions for each level
 	subbandIdx := 0
 
-	// Process from coarsest to finest level
-	for level := numLevels; level >= 1; level-- {
-		// Calculate dimensions at this level
-		levelWidth := (width + (1 << level) - 1) >> level
-		levelHeight := (height + (1 << level) - 1) >> level
+	// LL subband (resolution 0)
+	_, _, _, _, bands := bandInfosForResolution(width, height, x0, y0, numLevels, 0)
+	if len(bands) > 0 && subbandIdx < len(stepSizes) {
+		b := bands[0]
+		if b.width > 0 && b.height > 0 {
+			td.dequantizeSubbandFloat(floatCoeffs, b.offsetX, b.offsetY, b.width, b.height, width, stepSizes[subbandIdx])
+		}
+	}
+	subbandIdx++
 
-		// At the coarsest level, we also have LL subband
-		if level == numLevels {
-			// LL subband
-			if subbandIdx < len(stepSizes) {
-				td.dequantizeSubbandFloat(floatCoeffs, 0, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+	// HL/LH/HH subbands from low to high resolution
+	for res := 1; res <= numLevels; res++ {
+		_, _, _, _, bands = bandInfosForResolution(width, height, x0, y0, numLevels, res)
+		for _, b := range bands {
+			if subbandIdx < len(stepSizes) && b.width > 0 && b.height > 0 {
+				td.dequantizeSubbandFloat(floatCoeffs, b.offsetX, b.offsetY, b.width, b.height, width, stepSizes[subbandIdx])
 			}
 			subbandIdx++
 		}
-
-		// HL subband
-		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubbandFloat(floatCoeffs, levelWidth, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
-		}
-		subbandIdx++
-
-		// LH subband
-		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubbandFloat(floatCoeffs, 0, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
-		}
-		subbandIdx++
-
-		// HH subband
-		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubbandFloat(floatCoeffs, levelWidth, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
-		}
-		subbandIdx++
 	}
 
 	return floatCoeffs

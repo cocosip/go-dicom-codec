@@ -25,6 +25,9 @@ type PacketDecoder struct {
 	numLevels      int
 	codeBlockStyle uint8 // Code-block style (for TERMALL detection)
 
+	// Per-component geometry (tile-component bounds)
+	compBounds []componentBounds
+
 	// Precinct parameters
 	precinctWidth  int // Precinct width (0 = default size of 2^15)
 	precinctHeight int // Precinct height (0 = default size of 2^15)
@@ -37,11 +40,11 @@ type PacketDecoder struct {
 	cbIncluded map[string]bool
 
 	// Precinct -> code-block order mapping per resolution (mirrors encoder traversal)
-	cbPrecinctOrder map[int]map[int][]int
+	cbPrecinctOrder map[int]map[int]map[int][]int
 	// Precinct -> code-block positions (CBX/CBY) in packet header order
-	cbPrecinctPositions map[int]map[int]map[int][]cbPosition
+	cbPrecinctPositions map[int]map[int]map[int]map[int][]cbPosition
 	// Precinct -> code-block grid dimensions used for tag-tree decoding
-	cbPrecinctDims map[int]map[int]map[int]cbGridDim
+	cbPrecinctDims map[int]map[int]map[int]map[int]cbGridDim
 
 	// Persisted code-block states per component/resolution/precinct for tag-tree decoding
 	cbStates map[string]*packetHeaderContext
@@ -50,6 +53,11 @@ type PacketDecoder struct {
 type cbGridDim struct {
 	numCBX int
 	numCBY int
+}
+
+type componentBounds struct {
+	x0, y0 int
+	x1, y1 int
 }
 
 type packetHeaderContext struct {
@@ -75,9 +83,10 @@ func NewPacketDecoder(data []byte, numComponents, numLayers, numResolutions int,
 		codeBlockStyle:      codeBlockStyle,
 		packets:             make([]Packet, 0),
 		cbIncluded:          make(map[string]bool),
-		cbPrecinctOrder:     make(map[int]map[int][]int),
-		cbPrecinctPositions: make(map[int]map[int]map[int][]cbPosition),
-		cbPrecinctDims:      make(map[int]map[int]map[int]cbGridDim),
+		compBounds:          make([]componentBounds, numComponents),
+		cbPrecinctOrder:     make(map[int]map[int]map[int][]int),
+		cbPrecinctPositions: make(map[int]map[int]map[int]map[int][]cbPosition),
+		cbPrecinctDims:      make(map[int]map[int]map[int]map[int]cbGridDim),
 	}
 }
 
@@ -87,6 +96,35 @@ func (pd *PacketDecoder) SetImageDimensions(width, height, cbWidth, cbHeight int
 	pd.imageHeight = height
 	pd.cbWidth = cbWidth
 	pd.cbHeight = cbHeight
+	if pd.compBounds == nil {
+		pd.compBounds = make([]componentBounds, pd.numComponents)
+	}
+	for i := range pd.compBounds {
+		if pd.compBounds[i].x1 == 0 && pd.compBounds[i].y1 == 0 {
+			pd.compBounds[i] = componentBounds{x0: 0, y0: 0, x1: width, y1: height}
+		}
+	}
+}
+
+// SetComponentBounds sets the tile-component bounds for a component.
+func (pd *PacketDecoder) SetComponentBounds(component, x0, y0, x1, y1 int) {
+	if component < 0 || component >= pd.numComponents {
+		return
+	}
+	if pd.compBounds == nil {
+		pd.compBounds = make([]componentBounds, pd.numComponents)
+	}
+	pd.compBounds[component] = componentBounds{x0: x0, y0: y0, x1: x1, y1: y1}
+}
+
+func (pd *PacketDecoder) componentBoundsFor(component int) componentBounds {
+	if component >= 0 && component < len(pd.compBounds) {
+		b := pd.compBounds[component]
+		if b.x1 != 0 || b.y1 != 0 {
+			return b
+		}
+	}
+	return componentBounds{x0: 0, y0: 0, x1: pd.imageWidth, y1: pd.imageHeight}
 }
 
 // SetPrecinctSize sets the precinct dimensions
@@ -96,26 +134,33 @@ func (pd *PacketDecoder) SetPrecinctSize(width, height int) {
 }
 
 // calculatePrecinctCBDimensions calculates code-block grid dimensions for a precinct
-func (pd *PacketDecoder) calculatePrecinctCBDimensions(resolution, precinctIdx, band int) (int, int) {
-	sbWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
-	sbHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
-
-	// Each resolution has 3 subbands (HL, LH, HH) for res>0, all with same dimensions.
-	numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
-	numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
-
-	// Total code-blocks in precinct = 3 subbands × numCBX × numCBY
-	// But PacketHeaderParser expects grid for one subband, so return single subband dimensions
-	return numCBX, numCBY
+func (pd *PacketDecoder) calculatePrecinctCBDimensions(component, resolution, precinctIdx, band int) (int, int) {
+	b := pd.componentBoundsFor(component)
+	width := b.x1 - b.x0
+	height := b.y1 - b.y0
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	_, _, _, _, bands := bandInfosForResolution(width, height, b.x0, b.y0, pd.numLevels, resolution)
+	for _, bandInfo := range bands {
+		if bandInfo.band == band {
+			numCBX := (bandInfo.width + pd.cbWidth - 1) / pd.cbWidth
+			numCBY := (bandInfo.height + pd.cbHeight - 1) / pd.cbHeight
+			return numCBX, numCBY
+		}
+	}
+	return 0, 0
 }
 
-func (pd *PacketDecoder) precinctCBDimensions(resolution, precinctIdx, band int) (int, int) {
+func (pd *PacketDecoder) precinctCBDimensions(component, resolution, precinctIdx, band int) (int, int) {
 	if pd.cbPrecinctDims != nil {
-		if resMap, ok := pd.cbPrecinctDims[resolution]; ok {
-			if bandMap, ok := resMap[precinctIdx]; ok {
-				if dim, ok := bandMap[band]; ok {
-					if dim.numCBX > 0 && dim.numCBY > 0 {
-						return dim.numCBX, dim.numCBY
+		if compMap, ok := pd.cbPrecinctDims[component]; ok {
+			if resMap, ok := compMap[resolution]; ok {
+				if bandMap, ok := resMap[precinctIdx]; ok {
+					if dim, ok := bandMap[band]; ok {
+						if dim.numCBX > 0 && dim.numCBY > 0 {
+							return dim.numCBX, dim.numCBY
+						}
 					}
 				}
 			}
@@ -124,22 +169,29 @@ func (pd *PacketDecoder) precinctCBDimensions(resolution, precinctIdx, band int)
 	return 0, 0
 }
 
-func (pd *PacketDecoder) precinctCBPositions(resolution, precinctIdx, band int) []cbPosition {
+func (pd *PacketDecoder) precinctCBPositions(component, resolution, precinctIdx, band int) []cbPosition {
 	if pd.cbPrecinctPositions == nil {
 		return nil
 	}
-	if resMap, ok := pd.cbPrecinctPositions[resolution]; ok {
-		if bandMap, ok := resMap[precinctIdx]; ok {
-			return bandMap[band]
+	if compMap, ok := pd.cbPrecinctPositions[component]; ok {
+		if resMap, ok := compMap[resolution]; ok {
+			if bandMap, ok := resMap[precinctIdx]; ok {
+				return bandMap[band]
+			}
 		}
 	}
 	return nil
 }
 
 // calculateNumPrecincts calculates the number of precincts for a given resolution
-func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
-	resWidth := resolutionDim(pd.imageWidth, pd.numLevels, resolution)
-	resHeight := resolutionDim(pd.imageHeight, pd.numLevels, resolution)
+func (pd *PacketDecoder) calculateNumPrecincts(component, resolution int) int {
+	b := pd.componentBoundsFor(component)
+	width := b.x1 - b.x0
+	height := b.y1 - b.y0
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	resWidth, resHeight, resX0, resY0 := resolutionDimsWithOrigin(width, height, b.x0, b.y0, pd.numLevels, resolution)
 
 	// Default precinct size is entire resolution (single precinct)
 	precinctWidth := pd.precinctWidth
@@ -151,9 +203,13 @@ func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
 		precinctHeight = 1 << 15 // Default 32768
 	}
 
-	// Calculate number of precincts based on resolution dimensions
-	numPrecinctX := (resWidth + precinctWidth - 1) / precinctWidth
-	numPrecinctY := (resHeight + precinctHeight - 1) / precinctHeight
+	// Calculate number of precincts based on resolution dimensions and origin alignment
+	startX := floorDiv(resX0, precinctWidth) * precinctWidth
+	startY := floorDiv(resY0, precinctHeight) * precinctHeight
+	endX := ceilDiv(resX0+resWidth, precinctWidth) * precinctWidth
+	endY := ceilDiv(resY0+resHeight, precinctHeight) * precinctHeight
+	numPrecinctX := (endX - startX) / precinctWidth
+	numPrecinctY := (endY - startY) / precinctHeight
 
 	if numPrecinctX == 0 {
 		numPrecinctX = 1
@@ -166,23 +222,24 @@ func (pd *PacketDecoder) calculateNumPrecincts(resolution int) int {
 }
 
 // calculateNumCodeBlocks calculates the number of code-blocks for a given resolution
-func (pd *PacketDecoder) calculateNumCodeBlocks(resolution int) int {
-	if resolution == 0 {
-		// Resolution 0: LL subband only (single subband at top-left)
-		llWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
-		llHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
-		numCBX := (llWidth + pd.cbWidth - 1) / pd.cbWidth
-		numCBY := (llHeight + pd.cbHeight - 1) / pd.cbHeight
-		return numCBX * numCBY
-	} else {
-		// Resolution r > 0: HL, LH, HH subbands (3 subbands)
-		sbWidth := subbandDim(pd.imageWidth, pd.numLevels, resolution)
-		sbHeight := subbandDim(pd.imageHeight, pd.numLevels, resolution)
-		numCBX := (sbWidth + pd.cbWidth - 1) / pd.cbWidth
-		numCBY := (sbHeight + pd.cbHeight - 1) / pd.cbHeight
-		// 3 subbands (HL, LH, HH), each with numCBX * numCBY code-blocks
-		return 3 * numCBX * numCBY
+func (pd *PacketDecoder) calculateNumCodeBlocks(component, resolution int) int {
+	b := pd.componentBoundsFor(component)
+	width := b.x1 - b.x0
+	height := b.y1 - b.y0
+	if width <= 0 || height <= 0 {
+		return 0
 	}
+	_, _, _, _, bands := bandInfosForResolution(width, height, b.x0, b.y0, pd.numLevels, resolution)
+	total := 0
+	for _, bandInfo := range bands {
+		if bandInfo.width <= 0 || bandInfo.height <= 0 {
+			continue
+		}
+		numCBX := (bandInfo.width + pd.cbWidth - 1) / pd.cbWidth
+		numCBY := (bandInfo.height + pd.cbHeight - 1) / pd.cbHeight
+		total += numCBX * numCBY
+	}
+	return total
 }
 
 // DecodePackets decodes all packets according to progression order
@@ -218,8 +275,8 @@ func (pd *PacketDecoder) decodeComplete(pkts []Packet, err error) ([]Packet, err
 func (pd *PacketDecoder) decodeLRCP() ([]Packet, error) {
 	for layer := 0; layer < pd.numLayers; layer++ {
 		for res := 0; res < pd.numResolutions; res++ {
-			precincts := pd.precinctIndicesForResolution(res)
 			for comp := 0; comp < pd.numComponents; comp++ {
+				precincts := pd.precinctIndicesForResolution(comp, res)
 				for _, precinctIdx := range precincts {
 					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
 					if err != nil {
@@ -238,9 +295,9 @@ func (pd *PacketDecoder) decodeLRCP() ([]Packet, error) {
 // decodeRLCP decodes packets in Resolution-Layer-Component-Position order
 func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 	for res := 0; res < pd.numResolutions; res++ {
-		precincts := pd.precinctIndicesForResolution(res)
 		for layer := 0; layer < pd.numLayers; layer++ {
 			for comp := 0; comp < pd.numComponents; comp++ {
+				precincts := pd.precinctIndicesForResolution(comp, res)
 				for _, precinctIdx := range precincts {
 					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
 					if err != nil {
@@ -259,7 +316,7 @@ func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 // decodeRPCL decodes packets in Resolution-Position-Component-Layer order
 func (pd *PacketDecoder) decodeRPCL() ([]Packet, error) {
 	for res := 0; res < pd.numResolutions; res++ {
-		precincts := pd.precinctIndicesForResolution(res)
+		precincts := pd.precinctIndicesForResolutionAll(res)
 		for _, precinctIdx := range precincts {
 			for comp := 0; comp < pd.numComponents; comp++ {
 				for layer := 0; layer < pd.numLayers; layer++ {
@@ -278,13 +335,16 @@ func (pd *PacketDecoder) decodeRPCL() ([]Packet, error) {
 
 // decodePCRL decodes packets in Position-Component-Resolution-Layer order
 func (pd *PacketDecoder) decodePCRL() ([]Packet, error) {
-	sets := pd.precinctIndexSets()
-	globalPrecincts := pd.globalPrecinctIndices(sets)
+	setsByComp := make([][]map[int]struct{}, pd.numComponents)
+	for comp := 0; comp < pd.numComponents; comp++ {
+		setsByComp[comp] = pd.precinctIndexSets(comp)
+	}
+	globalPrecincts := pd.globalPrecinctIndicesAll()
 
 	for _, precinctIdx := range globalPrecincts {
 		for comp := 0; comp < pd.numComponents; comp++ {
 			for res := 0; res < pd.numResolutions; res++ {
-				if _, ok := sets[res][precinctIdx]; !ok {
+				if _, ok := setsByComp[comp][res][precinctIdx]; !ok {
 					continue
 				}
 				for layer := 0; layer < pd.numLayers; layer++ {
@@ -303,13 +363,16 @@ func (pd *PacketDecoder) decodePCRL() ([]Packet, error) {
 
 // decodeCPRL decodes packets in Component-Position-Resolution-Layer order
 func (pd *PacketDecoder) decodeCPRL() ([]Packet, error) {
-	sets := pd.precinctIndexSets()
-	globalPrecincts := pd.globalPrecinctIndices(sets)
+	setsByComp := make([][]map[int]struct{}, pd.numComponents)
+	for comp := 0; comp < pd.numComponents; comp++ {
+		setsByComp[comp] = pd.precinctIndexSets(comp)
+	}
+	globalPrecincts := pd.globalPrecinctIndicesAll()
 
 	for comp := 0; comp < pd.numComponents; comp++ {
 		for _, precinctIdx := range globalPrecincts {
 			for res := 0; res < pd.numResolutions; res++ {
-				if _, ok := sets[res][precinctIdx]; !ok {
+				if _, ok := setsByComp[comp][res][precinctIdx]; !ok {
 					continue
 				}
 				for layer := 0; layer < pd.numLayers; layer++ {
@@ -349,11 +412,11 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 	}
 
 	for _, band := range bands {
-		numCBX, numCBY := pd.precinctCBDimensions(resolution, precinctIdx, band)
+		numCBX, numCBY := pd.precinctCBDimensions(component, resolution, precinctIdx, band)
 		if numCBX == 0 || numCBY == 0 {
 			continue
 		}
-		positions := pd.precinctCBPositions(resolution, precinctIdx, band)
+		positions := pd.precinctCBPositions(component, resolution, precinctIdx, band)
 		stateKey := fmt.Sprintf("%d:%d:%d:%d", component, resolution, precinctIdx, band)
 		ctx := pd.cbStates[stateKey]
 		if ctx == nil {
@@ -449,9 +512,11 @@ func (pd *PacketDecoder) decodePacketHeader(layer, resolution, component, precin
 
 	// Calculate number of code-blocks for this precinct at this resolution level
 	maxCodeBlocks := 0
-	if byRes, ok := pd.cbPrecinctOrder[resolution]; ok {
-		if order, ok := byRes[precinctIdx]; ok {
-			maxCodeBlocks = len(order)
+	if byComp, ok := pd.cbPrecinctOrder[component]; ok {
+		if byRes, ok := byComp[resolution]; ok {
+			if order, ok := byRes[precinctIdx]; ok {
+				maxCodeBlocks = len(order)
+			}
 		}
 	}
 
@@ -670,10 +735,10 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 	}
 
 	if pd.cbPrecinctPositions == nil {
-		pd.cbPrecinctPositions = make(map[int]map[int]map[int][]cbPosition)
+		pd.cbPrecinctPositions = make(map[int]map[int]map[int]map[int][]cbPosition)
 	}
 	if pd.cbPrecinctDims == nil {
-		pd.cbPrecinctDims = make(map[int]map[int]map[int]cbGridDim)
+		pd.cbPrecinctDims = make(map[int]map[int]map[int]map[int]cbGridDim)
 	}
 
 	pw, ph := pd.precinctWidth, pd.precinctHeight
@@ -685,145 +750,124 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 	}
 
 	cbw, cbh := pd.cbWidth, pd.cbHeight
-	globalCBIdx := 0
+	for comp := 0; comp < pd.numComponents; comp++ {
+		if pd.cbPrecinctOrder[comp] == nil {
+			pd.cbPrecinctOrder[comp] = make(map[int]map[int][]int)
+		}
+		if pd.cbPrecinctPositions[comp] == nil {
+			pd.cbPrecinctPositions[comp] = make(map[int]map[int]map[int][]cbPosition)
+		}
+		if pd.cbPrecinctDims[comp] == nil {
+			pd.cbPrecinctDims[comp] = make(map[int]map[int]map[int]cbGridDim)
+		}
 
-	for res := 0; res < pd.numResolutions; res++ {
-		if pd.cbPrecinctOrder[res] == nil {
-			pd.cbPrecinctOrder[res] = make(map[int][]int)
+		b := pd.componentBoundsFor(comp)
+		compWidth := b.x1 - b.x0
+		compHeight := b.y1 - b.y0
+		if compWidth <= 0 || compHeight <= 0 {
+			continue
 		}
-		type cbEntry struct {
-			cbx    int
-			cby    int
-			global int
-		}
-		precinctBands := make(map[int]map[int][]cbEntry)
-		addEntry := func(pIdx, band, cbxLocal, cbyLocal, global int) {
-			if precinctBands[pIdx] == nil {
-				precinctBands[pIdx] = make(map[int][]cbEntry)
+
+		globalCBIdx := 0
+		for res := 0; res < pd.numResolutions; res++ {
+			if pd.cbPrecinctOrder[comp][res] == nil {
+				pd.cbPrecinctOrder[comp][res] = make(map[int][]int)
 			}
-			precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
-		}
-
-		if res == 0 {
-			llWidth := subbandDim(pd.imageWidth, pd.numLevels, res)
-			llHeight := subbandDim(pd.imageHeight, pd.numLevels, res)
-
-			numCBX := (llWidth + cbw - 1) / cbw
-			numCBY := (llHeight + cbh - 1) / cbh
-
-			resWidth := resolutionDim(pd.imageWidth, pd.numLevels, res)
-			numPrecinctX := (resWidth + pw - 1) / pw
-			if numPrecinctX < 1 {
-				numPrecinctX = 1
+			type cbEntry struct {
+				cbx    int
+				cby    int
+				global int
 			}
-
-			for cby := 0; cby < numCBY; cby++ {
-				for cbx := 0; cbx < numCBX; cbx++ {
-					x0 := cbx * cbw
-					y0 := cby * cbh
-					px := x0 / pw
-					py := y0 / ph
-					pIdx := py*numPrecinctX + px
-					localX := x0 - px*pw
-					localY := y0 - py*ph
-					cbxLocal := localX / cbw
-					cbyLocal := localY / cbh
-					addEntry(pIdx, 0, cbxLocal, cbyLocal, globalCBIdx)
-					globalCBIdx++
+			precinctBands := make(map[int]map[int][]cbEntry)
+			addEntry := func(pIdx, band, cbxLocal, cbyLocal, global int) {
+				if precinctBands[pIdx] == nil {
+					precinctBands[pIdx] = make(map[int][]cbEntry)
 				}
+				precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
 			}
-		} else {
-			sbWidth := subbandDim(pd.imageWidth, pd.numLevels, res)
-			sbHeight := subbandDim(pd.imageHeight, pd.numLevels, res)
 
-			numCBX := (sbWidth + cbw - 1) / cbw
-			numCBY := (sbHeight + cbh - 1) / cbh
-
-			resWidth := resolutionDim(pd.imageWidth, pd.numLevels, res)
-			numPrecinctX := (resWidth + pw - 1) / pw
+			resW, resH, resX0, resY0, bands := bandInfosForResolution(compWidth, compHeight, b.x0, b.y0, pd.numLevels, res)
+			if resW <= 0 || resH <= 0 {
+				continue
+			}
+			startX := floorDiv(resX0, pw) * pw
+			startY := floorDiv(resY0, ph) * ph
+			endX := ceilDiv(resX0+resW, pw) * pw
+			numPrecinctX := (endX - startX) / pw
 			if numPrecinctX < 1 {
 				numPrecinctX = 1
 			}
 
-			subbands := []struct {
-				x0, y0 int
-				band   int
-			}{
-				{sbWidth, 0, 1},        // HL
-				{0, sbHeight, 2},       // LH
-				{sbWidth, sbHeight, 3}, // HH
-			}
-
-			for _, sb := range subbands {
+			for _, bandInfo := range bands {
+				if bandInfo.width <= 0 || bandInfo.height <= 0 {
+					continue
+				}
+				numCBX := (bandInfo.width + cbw - 1) / cbw
+				numCBY := (bandInfo.height + cbh - 1) / cbh
 				for cby := 0; cby < numCBY; cby++ {
 					for cbx := 0; cbx < numCBX; cbx++ {
-						x0 := sb.x0 + cbx*cbw
-						y0 := sb.y0 + cby*cbh
-						resX, resY := pd.toResolutionCoordinates(x0, y0, res, sb.band, sbWidth, sbHeight)
-						if resX < 0 {
-							resX = 0
-						}
-						if resY < 0 {
-							resY = 0
-						}
-						px := resX / pw
-						py := resY / ph
+						cbX0 := cbx * cbw
+						cbY0 := cby * cbh
+						absResX0 := resX0 + cbX0
+						absResY0 := resY0 + cbY0
+						px := (absResX0 - startX) / pw
+						py := (absResY0 - startY) / ph
 						pIdx := py*numPrecinctX + px
-						localX := resX - px*pw
-						localY := resY - py*ph
+						localX := absResX0 - (startX + px*pw)
+						localY := absResY0 - (startY + py*ph)
 						cbxLocal := localX / cbw
 						cbyLocal := localY / cbh
-						addEntry(pIdx, sb.band, cbxLocal, cbyLocal, globalCBIdx)
+						addEntry(pIdx, bandInfo.band, cbxLocal, cbyLocal, globalCBIdx)
 						globalCBIdx++
 					}
 				}
 			}
-		}
 
-		bands := []int{0}
-		if res > 0 {
-			bands = []int{1, 2, 3}
-		}
-		for pIdx, bandMap := range precinctBands {
-			for _, band := range bands {
-				entries := bandMap[band]
-				if len(entries) == 0 {
-					continue
-				}
-				sort.Slice(entries, func(i, j int) bool {
-					if entries[i].cby != entries[j].cby {
-						return entries[i].cby < entries[j].cby
+			bandOrder := []int{0}
+			if res > 0 {
+				bandOrder = []int{1, 2, 3}
+			}
+			for pIdx, bandMap := range precinctBands {
+				for _, band := range bandOrder {
+					entries := bandMap[band]
+					if len(entries) == 0 {
+						continue
 					}
-					return entries[i].cbx < entries[j].cbx
-				})
+					sort.Slice(entries, func(i, j int) bool {
+						if entries[i].cby != entries[j].cby {
+							return entries[i].cby < entries[j].cby
+						}
+						return entries[i].cbx < entries[j].cbx
+					})
 
-				if pd.cbPrecinctPositions[res] == nil {
-					pd.cbPrecinctPositions[res] = make(map[int]map[int][]cbPosition)
-				}
-				if pd.cbPrecinctPositions[res][pIdx] == nil {
-					pd.cbPrecinctPositions[res][pIdx] = make(map[int][]cbPosition)
-				}
-				if pd.cbPrecinctDims[res] == nil {
-					pd.cbPrecinctDims[res] = make(map[int]map[int]cbGridDim)
-				}
-				if pd.cbPrecinctDims[res][pIdx] == nil {
-					pd.cbPrecinctDims[res][pIdx] = make(map[int]cbGridDim)
-				}
+					if pd.cbPrecinctPositions[comp][res] == nil {
+						pd.cbPrecinctPositions[comp][res] = make(map[int]map[int][]cbPosition)
+					}
+					if pd.cbPrecinctPositions[comp][res][pIdx] == nil {
+						pd.cbPrecinctPositions[comp][res][pIdx] = make(map[int][]cbPosition)
+					}
+					if pd.cbPrecinctDims[comp][res] == nil {
+						pd.cbPrecinctDims[comp][res] = make(map[int]map[int]cbGridDim)
+					}
+					if pd.cbPrecinctDims[comp][res][pIdx] == nil {
+						pd.cbPrecinctDims[comp][res][pIdx] = make(map[int]cbGridDim)
+					}
 
-				positions := make([]cbPosition, 0, len(entries))
-				maxX, maxY := 0, 0
-				for _, entry := range entries {
-					pd.cbPrecinctOrder[res][pIdx] = append(pd.cbPrecinctOrder[res][pIdx], entry.global)
-					positions = append(positions, cbPosition{X: entry.cbx, Y: entry.cby})
-					if entry.cbx+1 > maxX {
-						maxX = entry.cbx + 1
+					positions := make([]cbPosition, 0, len(entries))
+					maxX, maxY := 0, 0
+					for _, entry := range entries {
+						pd.cbPrecinctOrder[comp][res][pIdx] = append(pd.cbPrecinctOrder[comp][res][pIdx], entry.global)
+						positions = append(positions, cbPosition{X: entry.cbx, Y: entry.cby})
+						if entry.cbx+1 > maxX {
+							maxX = entry.cbx + 1
+						}
+						if entry.cby+1 > maxY {
+							maxY = entry.cby + 1
+						}
 					}
-					if entry.cby+1 > maxY {
-						maxY = entry.cby + 1
-					}
+					pd.cbPrecinctPositions[comp][res][pIdx][band] = positions
+					pd.cbPrecinctDims[comp][res][pIdx][band] = cbGridDim{numCBX: maxX, numCBY: maxY}
 				}
-				pd.cbPrecinctPositions[res][pIdx][band] = positions
-				pd.cbPrecinctDims[res][pIdx][band] = cbGridDim{numCBX: maxX, numCBY: maxY}
 			}
 		}
 	}
@@ -857,8 +901,12 @@ func (pd *PacketDecoder) bandsForResolution(resolution int) []int {
 }
 
 // precinctIndicesForResolution returns sorted precinct indices that contain code-blocks for a resolution.
-func (pd *PacketDecoder) precinctIndicesForResolution(resolution int) []int {
-	order := pd.cbPrecinctOrder[resolution]
+func (pd *PacketDecoder) precinctIndicesForResolution(component, resolution int) []int {
+	byComp, ok := pd.cbPrecinctOrder[component]
+	if !ok {
+		return nil
+	}
+	order := byComp[resolution]
 	indices := make([]int, 0, len(order))
 	for idx := range order {
 		indices = append(indices, idx)
@@ -867,22 +915,44 @@ func (pd *PacketDecoder) precinctIndicesForResolution(resolution int) []int {
 	return indices
 }
 
-func (pd *PacketDecoder) precinctIndexSets() []map[int]struct{} {
+func (pd *PacketDecoder) precinctIndicesForResolutionAll(resolution int) []int {
+	union := make(map[int]struct{})
+	for comp := 0; comp < pd.numComponents; comp++ {
+		if byComp, ok := pd.cbPrecinctOrder[comp]; ok {
+			for idx := range byComp[resolution] {
+				union[idx] = struct{}{}
+			}
+		}
+	}
+	indices := make([]int, 0, len(union))
+	for idx := range union {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+	return indices
+}
+
+func (pd *PacketDecoder) precinctIndexSets(component int) []map[int]struct{} {
 	sets := make([]map[int]struct{}, pd.numResolutions)
 	for res := 0; res < pd.numResolutions; res++ {
 		sets[res] = make(map[int]struct{})
-		for idx := range pd.cbPrecinctOrder[res] {
-			sets[res][idx] = struct{}{}
+		if byComp, ok := pd.cbPrecinctOrder[component]; ok {
+			for idx := range byComp[res] {
+				sets[res][idx] = struct{}{}
+			}
 		}
 	}
 	return sets
 }
 
-func (pd *PacketDecoder) globalPrecinctIndices(sets []map[int]struct{}) []int {
+func (pd *PacketDecoder) globalPrecinctIndicesAll() []int {
 	union := make(map[int]struct{})
-	for _, set := range sets {
-		for idx := range set {
-			union[idx] = struct{}{}
+	for comp := 0; comp < pd.numComponents; comp++ {
+		sets := pd.precinctIndexSets(comp)
+		for _, set := range sets {
+			for idx := range set {
+				union[idx] = struct{}{}
+			}
 		}
 	}
 	indices := make([]int, 0, len(union))

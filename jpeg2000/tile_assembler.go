@@ -11,6 +11,10 @@ type TileLayout struct {
 	// Image dimensions
 	imageWidth  int
 	imageHeight int
+	imageX0     int
+	imageY0     int
+	imageX1     int
+	imageY1     int
 
 	// Tile dimensions
 	tileWidth  int
@@ -27,9 +31,17 @@ type TileLayout struct {
 
 // NewTileLayout creates a tile layout from SIZ segment
 func NewTileLayout(siz *codestream.SIZSegment) *TileLayout {
+	imageX0 := int(siz.XOsiz)
+	imageY0 := int(siz.YOsiz)
+	imageX1 := int(siz.Xsiz)
+	imageY1 := int(siz.Ysiz)
 	layout := &TileLayout{
-		imageWidth:  int(siz.Xsiz - siz.XOsiz),
-		imageHeight: int(siz.Ysiz - siz.YOsiz),
+		imageWidth:  imageX1 - imageX0,
+		imageHeight: imageY1 - imageY0,
+		imageX0:     imageX0,
+		imageY0:     imageY0,
+		imageX1:     imageX1,
+		imageY1:     imageY1,
 		tileWidth:   int(siz.XTsiz),
 		tileHeight:  int(siz.YTsiz),
 		tileOffsetX: int(siz.XTOsiz),
@@ -37,8 +49,8 @@ func NewTileLayout(siz *codestream.SIZSegment) *TileLayout {
 	}
 
 	// Calculate number of tiles
-	layout.numTilesX = (layout.imageWidth + layout.tileWidth - 1) / layout.tileWidth
-	layout.numTilesY = (layout.imageHeight + layout.tileHeight - 1) / layout.tileHeight
+	layout.numTilesX = ceilDiv(layout.imageX1-layout.tileOffsetX, layout.tileWidth)
+	layout.numTilesY = ceilDiv(layout.imageY1-layout.tileOffsetY, layout.tileHeight)
 
 	return layout
 }
@@ -60,18 +72,30 @@ func (tl *TileLayout) GetTileBounds(tileIdx int) (x0, y0, x1, y1 int) {
 	tileY := tileIdx / tl.numTilesX
 
 	// Calculate tile bounds
-	x0 = tileX*tl.tileWidth + tl.tileOffsetX
-	y0 = tileY*tl.tileHeight + tl.tileOffsetY
-	x1 = x0 + tl.tileWidth
-	y1 = y0 + tl.tileHeight
+	gridX0 := tileX*tl.tileWidth + tl.tileOffsetX
+	gridY0 := tileY*tl.tileHeight + tl.tileOffsetY
+	gridX1 := gridX0 + tl.tileWidth
+	gridY1 := gridY0 + tl.tileHeight
 
 	// Clip to image bounds
-	if x1 > tl.imageWidth {
-		x1 = tl.imageWidth
+	if gridX0 < tl.imageX0 {
+		gridX0 = tl.imageX0
 	}
-	if y1 > tl.imageHeight {
-		y1 = tl.imageHeight
+	if gridY0 < tl.imageY0 {
+		gridY0 = tl.imageY0
 	}
+	if gridX1 > tl.imageX1 {
+		gridX1 = tl.imageX1
+	}
+	if gridY1 > tl.imageY1 {
+		gridY1 = tl.imageY1
+	}
+
+	// Convert to image-local coordinates
+	x0 = gridX0 - tl.imageX0
+	y0 = gridY0 - tl.imageY0
+	x1 = gridX1 - tl.imageX0
+	y1 = gridY1 - tl.imageY0
 
 	return
 }
@@ -178,4 +202,14 @@ func (ta *TileAssembler) ValidateTileIndex(tileIdx int) error {
 			tileIdx, ta.layout.GetTileCount()-1)
 	}
 	return nil
+}
+
+func ceilDiv(a, b int) int {
+	if b <= 0 {
+		return 0
+	}
+	if a >= 0 {
+		return (a + b - 1) / b
+	}
+	return a / b
 }

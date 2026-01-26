@@ -25,9 +25,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Dequantization precision and rounding rules
 
 ### Tile/component/subband layout
-- [ ] Tile grid boundary rules and component sampling alignment
-- [ ] Resolution/subband coordinate mapping and clipping
-- [ ] Codeblock partitioning rules at image edges
+- [x] Tile grid boundary rules and component sampling alignment
+- [x] Resolution/subband coordinate mapping and clipping
+- [x] Codeblock partitioning rules at image edges
 
 ### Precincts & geometry
 - [ ] Precinct size scaling across resolutions
