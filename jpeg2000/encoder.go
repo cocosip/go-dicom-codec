@@ -1115,20 +1115,24 @@ func (e *Encoder) getPrecinctSizeExponents(resolutionLevel int) (ppx, ppy uint8)
 	ppx = uint8(log2(precinctWidth))
 	ppy = uint8(log2(precinctHeight))
 
-	// For lower resolution levels, precincts should be smaller
-	// Clamp to resolution size to avoid precincts larger than the resolution
-	// At resolution level r, the image dimensions are divided by 2^(numLevels - r)
-	if resolutionLevel < p.NumLevels {
-		// Lower resolution levels - reduce precinct size
-		maxPPx := uint8(15) // Max allowed by standard
-		maxPPy := uint8(15)
-
-		// Clamp to reasonable values
-		if ppx > maxPPx {
-			ppx = maxPPx
+	customPrecincts := p.PrecinctWidth > 0 || p.PrecinctHeight > 0
+	if customPrecincts {
+		// OpenJPEG scales precinct sizes down by 2 for each lower resolution.
+		shift := p.NumLevels - resolutionLevel
+		if shift < 0 {
+			shift = 0
 		}
-		if ppy > maxPPy {
-			ppy = maxPPy
+		if shift > 0 {
+			ppxInt := int(ppx) - shift
+			if ppxInt < 0 {
+				ppxInt = 0
+			}
+			ppyInt := int(ppy) - shift
+			if ppyInt < 0 {
+				ppyInt = 0
+			}
+			ppx = uint8(ppxInt)
+			ppy = uint8(ppyInt)
 		}
 	}
 
@@ -1728,14 +1732,7 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 					// Convert from global wavelet space to resolution reference grid
 					resX0, resY0 := e.toResolutionCoordinates(encodedCB.X0, encodedCB.Y0, res, subband.band)
 					precinctIdx := e.calculatePrecinctIndex(resX0, resY0, res)
-					precinctWidth := e.params.PrecinctWidth
-					precinctHeight := e.params.PrecinctHeight
-					if precinctWidth == 0 {
-						precinctWidth = 1 << 15
-					}
-					if precinctHeight == 0 {
-						precinctHeight = 1 << 15
-					}
+					precinctWidth, precinctHeight := e.getPrecinctSize(res)
 					px := resX0 / precinctWidth
 					py := resY0 / precinctHeight
 					localX := resX0 - px*precinctWidth

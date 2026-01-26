@@ -30,9 +30,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Codeblock partitioning rules at image edges
 
 ### Precincts & geometry
-- [ ] Precinct size scaling across resolutions
-- [ ] Subband-to-precinct coordinate mapping
-- [ ] Packet iteration order for precincts
+- [x] Precinct size scaling across resolutions
+- [x] Subband-to-precinct coordinate mapping
+- [x] Packet iteration order for precincts
 
 ### Tier-2 packetization & progression
 - [ ] Progression iterator order (LRCP/RLCP/RPCL/PCRL/CPRL)

@@ -146,6 +146,8 @@ type PacketIterator struct {
 	TileHeight       int
 	PrecinctWidth    int
 	PrecinctHeight   int
+	PrecinctWidths   []int
+	PrecinctHeights  []int
 	ProgressionOrder ProgressionOrder
 
 	// Current position
@@ -177,6 +179,69 @@ func NewPacketIterator(
 		ProgressionOrder: progressionOrder,
 		Done:             false,
 	}
+}
+
+func (pi *PacketIterator) resolutionDims(resolution int) (int, int) {
+	numLevels := pi.NumResolutions - 1
+	if numLevels < 0 {
+		numLevels = 0
+	}
+	shift := numLevels - resolution
+	if shift < 0 {
+		shift = 0
+	}
+	return ceilDivPow2(pi.TileWidth, shift), ceilDivPow2(pi.TileHeight, shift)
+}
+
+func (pi *PacketIterator) precinctSizeForResolution(resolution int) (int, int) {
+	pw := 0
+	ph := 0
+	if resolution >= 0 {
+		if resolution < len(pi.PrecinctWidths) {
+			pw = pi.PrecinctWidths[resolution]
+		}
+		if resolution < len(pi.PrecinctHeights) {
+			ph = pi.PrecinctHeights[resolution]
+		}
+	}
+	if pw == 0 {
+		pw = pi.PrecinctWidth
+	}
+	if ph == 0 {
+		ph = pi.PrecinctHeight
+	}
+	if pw == 0 {
+		pw = 1 << 15
+	}
+	if ph == 0 {
+		ph = 1 << 15
+	}
+	if len(pi.PrecinctWidths) == 0 && len(pi.PrecinctHeights) == 0 &&
+		(pi.PrecinctWidth > 0 || pi.PrecinctHeight > 0) && pi.NumResolutions > 1 {
+		shift := (pi.NumResolutions - 1) - resolution
+		if shift < 0 {
+			shift = 0
+		}
+		if shift > 0 {
+			pw = max(1, pw>>shift)
+			ph = max(1, ph>>shift)
+		}
+	}
+	return pw, ph
+}
+
+func (pi *PacketIterator) precinctGridForResolution(resolution int) (int, int) {
+	resW, resH := pi.resolutionDims(resolution)
+	pw, ph := pi.precinctSizeForResolution(resolution)
+	numPrecinctX := ceilDiv(resW, pw)
+	numPrecinctY := ceilDiv(resH, ph)
+	if numPrecinctX < 1 {
+		numPrecinctX = 1
+	}
+	if numPrecinctY < 1 {
+		numPrecinctY = 1
+	}
+	return numPrecinctX, numPrecinctY
 }
 
 // Next advances to the next packet and returns its coordinates
@@ -211,8 +276,7 @@ func (pi *PacketIterator) Next() (layer, resolution, component, precinctX, preci
 
 // advanceLRCP advances in Layer-Resolution-Component-Position order
 func (pi *PacketIterator) advanceLRCP() {
-	numPrecinctX := (pi.TileWidth + pi.PrecinctWidth - 1) / pi.PrecinctWidth
-	numPrecinctY := (pi.TileHeight + pi.PrecinctHeight - 1) / pi.PrecinctHeight
+	numPrecinctX, numPrecinctY := pi.precinctGridForResolution(pi.Resolution)
 
 	pi.PrecinctX++
 	if pi.PrecinctX >= numPrecinctX {
@@ -238,8 +302,7 @@ func (pi *PacketIterator) advanceLRCP() {
 
 // advanceRLCP advances in Resolution-Layer-Component-Position order
 func (pi *PacketIterator) advanceRLCP() {
-	numPrecinctX := (pi.TileWidth + pi.PrecinctWidth - 1) / pi.PrecinctWidth
-	numPrecinctY := (pi.TileHeight + pi.PrecinctHeight - 1) / pi.PrecinctHeight
+	numPrecinctX, numPrecinctY := pi.precinctGridForResolution(pi.Resolution)
 
 	pi.PrecinctX++
 	if pi.PrecinctX >= numPrecinctX {
@@ -271,8 +334,7 @@ func (pi *PacketIterator) advanceRPCL() {
 		pi.Component++
 		if pi.Component >= pi.NumComponents {
 			pi.Component = 0
-			numPrecinctX := (pi.TileWidth + pi.PrecinctWidth - 1) / pi.PrecinctWidth
-			numPrecinctY := (pi.TileHeight + pi.PrecinctHeight - 1) / pi.PrecinctHeight
+			numPrecinctX, numPrecinctY := pi.precinctGridForResolution(pi.Resolution)
 			pi.PrecinctX++
 			if pi.PrecinctX >= numPrecinctX {
 				pi.PrecinctX = 0
@@ -300,8 +362,7 @@ func (pi *PacketIterator) advancePCRL() {
 			pi.Component++
 			if pi.Component >= pi.NumComponents {
 				pi.Component = 0
-				numPrecinctX := (pi.TileWidth + pi.PrecinctWidth - 1) / pi.PrecinctWidth
-				numPrecinctY := (pi.TileHeight + pi.PrecinctHeight - 1) / pi.PrecinctHeight
+				numPrecinctX, numPrecinctY := pi.precinctGridForResolution(pi.Resolution)
 				pi.PrecinctX++
 				if pi.PrecinctX >= numPrecinctX {
 					pi.PrecinctX = 0
@@ -323,8 +384,7 @@ func (pi *PacketIterator) advanceCPRL() {
 		pi.Resolution++
 		if pi.Resolution >= pi.NumResolutions {
 			pi.Resolution = 0
-			numPrecinctX := (pi.TileWidth + pi.PrecinctWidth - 1) / pi.PrecinctWidth
-			numPrecinctY := (pi.TileHeight + pi.PrecinctHeight - 1) / pi.PrecinctHeight
+			numPrecinctX, numPrecinctY := pi.precinctGridForResolution(pi.Resolution)
 			pi.PrecinctX++
 			if pi.PrecinctX >= numPrecinctX {
 				pi.PrecinctX = 0
@@ -339,4 +399,11 @@ func (pi *PacketIterator) advanceCPRL() {
 			}
 		}
 	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

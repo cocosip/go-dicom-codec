@@ -112,6 +112,56 @@ func TestPrecinctCODMarker(t *testing.T) {
 	}
 }
 
+func TestPrecinctScalingAcrossResolutions(t *testing.T) {
+	params := DefaultEncodeParams(128, 128, 1, 8, false)
+	params.NumLevels = 2 // numResolutions = 3
+	params.PrecinctWidth = 64
+	params.PrecinctHeight = 32
+
+	pixelData := make([]byte, 128*128)
+	for i := range pixelData {
+		pixelData[i] = byte(i % 256)
+	}
+
+	encoder := NewEncoder(params)
+	encoded, err := encoder.Encode(pixelData)
+	if err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+
+	parser := codestream.NewParser(encoded)
+	cs, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if cs.COD == nil {
+		t.Fatal("COD segment not found")
+	}
+
+	if len(cs.COD.PrecinctSizes) != params.NumLevels+1 {
+		t.Fatalf("Expected %d precinct sizes, got %d", params.NumLevels+1, len(cs.COD.PrecinctSizes))
+	}
+
+	basePPx := floorLog2(params.PrecinctWidth)
+	basePPy := floorLog2(params.PrecinctHeight)
+	for res := 0; res <= params.NumLevels; res++ {
+		shift := params.NumLevels - res
+		expX := basePPx - shift
+		expY := basePPy - shift
+		if expX < 0 {
+			expX = 0
+		}
+		if expY < 0 {
+			expY = 0
+		}
+		got := cs.COD.PrecinctSizes[res]
+		if int(got.PPx) != expX || int(got.PPy) != expY {
+			t.Fatalf("Resolution %d: PPx/PPy = %d/%d, want %d/%d",
+				res, got.PPx, got.PPy, expX, expY)
+		}
+	}
+}
+
 // TestPrecinctRoundtrip tests basic encode/decode roundtrip with precincts
 func TestPrecinctRoundtrip(t *testing.T) {
 	tests := []struct {
@@ -213,4 +263,13 @@ func TestPrecinctRoundtrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func floorLog2(value int) int {
+	result := 0
+	for value > 1 {
+		value >>= 1
+		result++
+	}
+	return result
 }

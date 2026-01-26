@@ -29,8 +29,10 @@ type PacketDecoder struct {
 	compBounds []componentBounds
 
 	// Precinct parameters
-	precinctWidth  int // Precinct width (0 = default size of 2^15)
-	precinctHeight int // Precinct height (0 = default size of 2^15)
+	precinctWidth   int // Precinct width (0 = default size of 2^15)
+	precinctHeight  int // Precinct height (0 = default size of 2^15)
+	precinctWidths  []int
+	precinctHeights []int
 
 	// Parsed packets
 	packets []Packet
@@ -131,6 +133,40 @@ func (pd *PacketDecoder) componentBoundsFor(component int) componentBounds {
 func (pd *PacketDecoder) SetPrecinctSize(width, height int) {
 	pd.precinctWidth = width
 	pd.precinctHeight = height
+	pd.precinctWidths = nil
+	pd.precinctHeights = nil
+}
+
+// SetPrecinctSizes sets per-resolution precinct sizes (in pixels).
+func (pd *PacketDecoder) SetPrecinctSizes(widths, heights []int) {
+	pd.precinctWidths = append([]int(nil), widths...)
+	pd.precinctHeights = append([]int(nil), heights...)
+}
+
+func (pd *PacketDecoder) precinctSizeForResolution(resolution int) (int, int) {
+	pw := 0
+	ph := 0
+	if resolution >= 0 {
+		if resolution < len(pd.precinctWidths) {
+			pw = pd.precinctWidths[resolution]
+		}
+		if resolution < len(pd.precinctHeights) {
+			ph = pd.precinctHeights[resolution]
+		}
+	}
+	if pw == 0 {
+		pw = pd.precinctWidth
+	}
+	if ph == 0 {
+		ph = pd.precinctHeight
+	}
+	if pw == 0 {
+		pw = 1 << 15
+	}
+	if ph == 0 {
+		ph = 1 << 15
+	}
+	return pw, ph
 }
 
 // calculatePrecinctCBDimensions calculates code-block grid dimensions for a precinct
@@ -193,15 +229,7 @@ func (pd *PacketDecoder) calculateNumPrecincts(component, resolution int) int {
 	}
 	resWidth, resHeight, resX0, resY0 := resolutionDimsWithOrigin(width, height, b.x0, b.y0, pd.numLevels, resolution)
 
-	// Default precinct size is entire resolution (single precinct)
-	precinctWidth := pd.precinctWidth
-	precinctHeight := pd.precinctHeight
-	if precinctWidth == 0 {
-		precinctWidth = 1 << 15 // Default 32768
-	}
-	if precinctHeight == 0 {
-		precinctHeight = 1 << 15 // Default 32768
-	}
+	precinctWidth, precinctHeight := pd.precinctSizeForResolution(resolution)
 
 	// Calculate number of precincts based on resolution dimensions and origin alignment
 	startX := floorDiv(resX0, precinctWidth) * precinctWidth
@@ -741,14 +769,6 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 		pd.cbPrecinctDims = make(map[int]map[int]map[int]map[int]cbGridDim)
 	}
 
-	pw, ph := pd.precinctWidth, pd.precinctHeight
-	if pw == 0 {
-		pw = 1 << 15
-	}
-	if ph == 0 {
-		ph = 1 << 15
-	}
-
 	cbw, cbh := pd.cbWidth, pd.cbHeight
 	for comp := 0; comp < pd.numComponents; comp++ {
 		if pd.cbPrecinctOrder[comp] == nil {
@@ -770,6 +790,7 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 
 		globalCBIdx := 0
 		for res := 0; res < pd.numResolutions; res++ {
+			pw, ph := pd.precinctSizeForResolution(res)
 			if pd.cbPrecinctOrder[comp][res] == nil {
 				pd.cbPrecinctOrder[comp][res] = make(map[int][]int)
 			}

@@ -354,15 +354,15 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		packetDec.SetComponentBounds(i, comp.x0, comp.y0, comp.x0+comp.width, comp.y0+comp.height)
 	}
 
-	// Set precinct size if defined in COD segment
+	// Set precinct sizes if defined in COD segment
 	if len(td.cod.PrecinctSizes) > 0 {
-		// Use precinct size from first resolution level (simplified)
-		// In full implementation, should handle per-resolution precinct sizes
-		ppx := td.cod.PrecinctSizes[0].PPx
-		ppy := td.cod.PrecinctSizes[0].PPy
-		precinctWidth := 1 << ppx
-		precinctHeight := 1 << ppy
-		packetDec.SetPrecinctSize(precinctWidth, precinctHeight)
+		widths := make([]int, len(td.cod.PrecinctSizes))
+		heights := make([]int, len(td.cod.PrecinctSizes))
+		for i, ps := range td.cod.PrecinctSizes {
+			widths[i] = 1 << ps.PPx
+			heights[i] = 1 << ps.PPy
+		}
+		packetDec.SetPrecinctSizes(widths, heights)
 	}
 
 	packets, err := packetDec.DecodePackets()
@@ -746,10 +746,10 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 // buildPrecinctOrder returns the mapping of precinct index -> ordered list of global code-block indices for each resolution.
 func (td *TileDecoder) buildPrecinctOrder(comp *ComponentDecoder, cbWidth, cbHeight int) map[int]map[int][]int {
 	order := make(map[int]map[int][]int)
-	pw, ph := td.precinctSize()
 	globalCBIdx := 0
 
 	for res := 0; res <= comp.numLevels; res++ {
+		pw, ph := td.precinctSizeForResolution(res)
 		order[res] = make(map[int][]int)
 		type cbEntry struct {
 			cbx    int
@@ -827,11 +827,11 @@ func (td *TileDecoder) buildPrecinctOrder(comp *ComponentDecoder, cbWidth, cbHei
 	return order
 }
 
-// precinctSize returns the precinct size in pixels (default 2^15 when not set).
-func (td *TileDecoder) precinctSize() (int, int) {
-	if len(td.cod.PrecinctSizes) > 0 {
-		ppx := td.cod.PrecinctSizes[0].PPx
-		ppy := td.cod.PrecinctSizes[0].PPy
+// precinctSizeForResolution returns the precinct size in pixels for a resolution (default 2^15).
+func (td *TileDecoder) precinctSizeForResolution(resolution int) (int, int) {
+	if td.cod != nil && resolution >= 0 && resolution < len(td.cod.PrecinctSizes) {
+		ppx := td.cod.PrecinctSizes[resolution].PPx
+		ppy := td.cod.PrecinctSizes[resolution].PPy
 		return 1 << ppx, 1 << ppy
 	}
 	return 1 << 15, 1 << 15
