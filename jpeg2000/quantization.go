@@ -2,9 +2,119 @@ package jpeg2000
 
 import (
 	"math"
+	"math/bits"
 )
 
-// QuantizationParams holds quantization parameters for all subbands
+// OpenJPEG 9-7 wavelet norms (opj_dwt_norms_real).
+// These values are used to derive per-subband quantization step sizes.
+var dwtNorms97 = [4][10]float64{
+	{1.000, 1.965, 4.177, 8.403, 16.90, 33.84, 67.69, 135.3, 270.6, 540.9},
+	{2.022, 3.989, 8.355, 17.04, 34.27, 68.63, 137.3, 274.6, 549.0, 0.0},
+	{2.022, 3.989, 8.355, 17.04, 34.27, 68.63, 137.3, 274.6, 549.0, 0.0},
+	{2.080, 3.865, 8.307, 17.18, 34.71, 69.59, 139.3, 278.6, 557.2, 0.0},
+}
+
+func dwtNorm97(level, orient int) float64 {
+	if level < 0 {
+		level = 0
+	}
+	if orient == 0 && level >= 10 {
+		level = 9
+	} else if orient > 0 && level >= 9 {
+		level = 8
+	}
+	if orient < 0 || orient > 3 {
+		return 1.0
+	}
+	return dwtNorms97[orient][level]
+}
+
+func qualityScale(quality int) float64 {
+	if quality < 1 {
+		quality = 1
+	}
+	if quality > 100 {
+		quality = 100
+	}
+	if quality >= 100 {
+		return 0
+	}
+	scale := math.Pow(2.0, (100.0-float64(quality))/12.5)
+	if scale < 0.01 {
+		scale = 0.01
+	}
+	return scale * 0.9 * 0.2
+}
+
+func subbandParams(idx, numLevels int) (resno, orient, level int) {
+	if idx == 0 {
+		resno = 0
+		orient = 0
+	} else {
+		resno = (idx-1)/3 + 1
+		orient = (idx-1)%3 + 1
+	}
+	level = numLevels - resno
+	if level < 0 {
+		level = 0
+	}
+	return resno, orient, level
+}
+
+func calcOpenJPEGStepSizes97(numLevels int, scale float64) []float64 {
+	if numLevels <= 0 {
+		return []float64{scale}
+	}
+	numSubbands := 3*numLevels + 1
+	steps := make([]float64, numSubbands)
+	for idx := 0; idx < numSubbands; idx++ {
+		_, orient, level := subbandParams(idx, numLevels)
+		norm := dwtNorm97(level, orient)
+		if norm <= 0 {
+			steps[idx] = scale
+		} else {
+			steps[idx] = scale / norm
+		}
+	}
+	return steps
+}
+
+func encodeQuantizationStep(stepSize float64, numbps int) uint16 {
+	if stepSize <= 0 {
+		return 0
+	}
+	fixed := int32(math.Floor(stepSize * 8192.0))
+	if fixed <= 0 {
+		fixed = 1
+	}
+	log2 := bits.Len32(uint32(fixed)) - 1
+	p := int(log2) - 13
+	n := 11 - int(log2)
+	mant := int32(0)
+	if n < 0 {
+		mant = fixed >> -n
+	} else {
+		mant = fixed << n
+	}
+	mant &= 0x7ff
+	expn := numbps - p
+	if expn < 0 {
+		expn = 0
+	}
+	if expn > 0x1f {
+		expn = 0x1f
+	}
+	return uint16((expn << 11) | int(mant))
+}
+
+func decodeQuantizationStepWithGain(encoded uint16, bitDepth, log2Gain int) float64 {
+	expn := int((encoded >> 11) & 0x1f)
+	mant := float64(encoded & 0x7ff)
+	rb := bitDepth + log2Gain
+	return math.Ldexp(1.0+mant/2048.0, rb-expn)
+}
+
+// QuantizationParams holds quantization parameters for all subbands.
 type QuantizationParams struct {
 	// Quantization style
 	// 0 = no quantization (lossless)
@@ -15,17 +125,16 @@ type QuantizationParams struct {
 	// Guard bits (0-7)
 	GuardBits int
 
-	// Step sizes for each subband
-	// For scalar expounded: one entry per subband
+	// Step sizes for each subband.
 	// Index order: LL, HL1, LH1, HH1, HL2, LH2, HH2, ..., HLn, LHn, HHn
 	StepSizes []float64
 
-	// Encoded step sizes (exponent + mantissa for each subband)
+	// Encoded step sizes (exponent + mantissa for each subband).
 	// Format: bits 0-10 = mantissa (11 bits), bits 11-15 = exponent (5 bits)
 	EncodedSteps []uint16
 }
 
-// CalculateQuantizationParams calculates quantization parameters based on quality
+// CalculateQuantizationParams calculates quantization parameters based on quality.
 // quality: 1-100 (1 = maximum compression, 100 = minimal quantization/near-lossless)
 // numLevels: number of wavelet decomposition levels
 // bitDepth: original bit depth of the image
@@ -37,7 +146,7 @@ func CalculateQuantizationParams(quality, numLevels, bitDepth int) *Quantization
 		quality = 100
 	}
 
-	// For lossless (quality >= 100), return no quantization
+	// For lossless (quality >= 100), return no quantization.
 	if quality >= 100 {
 		return &QuantizationParams{
 			Style:     0, // No quantization
@@ -45,7 +154,7 @@ func CalculateQuantizationParams(quality, numLevels, bitDepth int) *Quantization
 		}
 	}
 
-	// Calculate number of subbands: LL + 3 * numLevels (HL, LH, HH per level)
+	// Calculate number of subbands: LL + 3 * numLevels (HL, LH, HH per level).
 	numSubbands := 3*numLevels + 1
 
 	params := &QuantizationParams{
@@ -55,142 +164,26 @@ func CalculateQuantizationParams(quality, numLevels, bitDepth int) *Quantization
 		EncodedSteps: make([]uint16, numSubbands),
 	}
 
-	// Convert quality (1-100) to base quantization step size
-	// Formula based on JPEG 2000 practices and empirical testing:
-	//
-	// Quality 100 → no quantization (lossless, handled above)
-	// Quality 99  → baseStep ≈ 0.86 (very high quality)
-	// Quality 90  → baseStep ≈ 1.41 (high quality)
-	// Quality 80  → baseStep ≈ 2.45 (good quality, default)
-	// Quality 50  → baseStep ≈ 10.6 (moderate compression)
-	// Quality 20  → baseStep ≈ 76.0 (high compression)
-	// Quality 1   → baseStep ≈ 680.0 (maximum compression)
-	//
-	// Formula: baseStep = 2^((100 - quality) / 12.5) * 0.9
-	// This exponential formula provides:
-	// - Smooth monotonic decrease as quality increases
-	// - Better perceptual distribution across quality range
-	// - Consistency with common JPEG 2000 encoder behavior
-	baseStep := math.Pow(2.0, (100.0-float64(quality))/12.5)
-	if baseStep < 0.01 {
-		baseStep = 0.01
-	}
-	baseStep *= 0.9
+	// Convert quality to a global scale and apply OpenJPEG norms for 9/7.
+	scale := qualityScale(quality)
+	params.StepSizes = calcOpenJPEGStepSizes97(numLevels, scale)
 
-	// Calculate subband gains for 9/7 irreversible wavelet
-	// Based on ISO/IEC 15444-1 Annex E and OpenJPEG implementation
-	//
-	// For 9/7 wavelet, theoretical analysis shows that:
-	// - LL subband: energy concentration ~85%
-	// - HL, LH subbands: energy ~5% each
-	// - HH subband: energy ~5%
-	//
-	// Quantization step sizes should be inversely proportional to subband energy
-	// to achieve perceptually uniform quantization.
-	//
-	// We use empirically-derived gains based on:
-	// 1. Wavelet filter properties (9/7 analysis/synthesis gains)
-	// 2. Subband energy distribution
-	// 3. Visual importance (lower frequencies = more important)
-
-	idx := 0
-
-	// LL subband (lowest frequency, highest perceptual importance)
-	// Use the smallest step size (highest quality)
-	params.StepSizes[idx] = baseStep * 0.5 // LL gets 50% of base step
-	idx++
-
-	// For each decomposition level (from finest to coarsest)
-	// Level 1 = finest detail (highest frequency)
-	// Level N = coarsest detail (lower frequency, but still higher than LL)
-	for level := 1; level <= numLevels; level++ {
-		// Calculate gain based on:
-		// 1. Decomposition level (coarser levels = lower gain)
-		// 2. Subband type (HL/LH vs HH)
-		//
-		// Formula: gain = 2^((numLevels - level + 1) * 0.5)
-		// This gives:
-		// - Finest level (level 1): highest gain
-		// - Coarsest level (level N): lowest gain
-		//
-		// But we cap it to prevent excessive quantization
-		levelGain := math.Pow(2.0, float64(numLevels-level+1)*0.5)
-
-		// Clamp gain to reasonable range [1.0, 8.0]
-		if levelGain < 1.0 {
-			levelGain = 1.0
-		}
-		if levelGain > 8.0 {
-			levelGain = 8.0
-		}
-
-		// HL subband (horizontal detail)
-		params.StepSizes[idx] = baseStep * levelGain
-		idx++
-
-		// LH subband (vertical detail)
-		params.StepSizes[idx] = baseStep * levelGain
-		idx++
-
-		// HH subband (diagonal detail)
-		// Diagonal has less perceptual importance, can use slightly higher step
-		params.StepSizes[idx] = baseStep * levelGain * 1.4
-		idx++
-	}
-
-	// Encode step sizes to JPEG 2000 format
-	// Format: 16-bit value with 5-bit exponent and 11-bit mantissa
-	// stepSize = 2^(exponent - bias) * (1 + mantissa / 2048)
-	// where bias = bitDepth - 1
-	bias := bitDepth - 1
-
+	// Encode step sizes using OpenJPEG's stepsize encoding.
 	for i, stepSize := range params.StepSizes {
-		// Calculate exponent and mantissa
-		// stepSize = 2^exp * mantissa
-		exp := int(math.Floor(math.Log2(stepSize))) + bias
-		mantissa := stepSize / math.Pow(2.0, float64(exp-bias))
-
-		// Clamp exponent to 5 bits (0-31)
-		if exp < 0 {
-			exp = 0
-		}
-		if exp > 31 {
-			exp = 31
-		}
-
-		// Convert mantissa to 11-bit integer (0-2047)
-		// mantissa range is [1, 2), we encode (mantissa - 1) * 2048
-		mantissaInt := int((mantissa - 1.0) * 2048.0)
-		if mantissaInt < 0 {
-			mantissaInt = 0
-		}
-		if mantissaInt > 2047 {
-			mantissaInt = 2047
-		}
-
-		// Combine: bits 0-10 = mantissa, bits 11-15 = exponent
-		params.EncodedSteps[i] = uint16((exp << 11) | mantissaInt)
+		params.EncodedSteps[i] = encodeQuantizationStep(stepSize, bitDepth)
 	}
 
 	return params
 }
 
-// DecodeQuantizationStep decodes a JPEG 2000 quantization step from 16-bit encoded format
+// DecodeQuantizationStep decodes a JPEG 2000 quantization step from 16-bit encoded format.
 // encoded: 16-bit value with bits 11-15 = exponent, bits 0-10 = mantissa
 // bitDepth: original bit depth of the image
 func DecodeQuantizationStep(encoded uint16, bitDepth int) float64 {
-	exponent := int((encoded >> 11) & 0x1F)
-	mantissa := float64(encoded & 0x7FF)
-
-	bias := bitDepth - 1
-
-	// stepSize = 2^(exponent - bias) * (1 + mantissa / 2048)
-	stepSize := math.Pow(2.0, float64(exponent-bias)) * (1.0 + mantissa/2048.0)
-
-	return stepSize
+	return decodeQuantizationStepWithGain(encoded, bitDepth, 0)
 }
 
-// QuantizeCoefficients applies quantization to wavelet coefficients
+// QuantizeCoefficients applies quantization to wavelet coefficients.
 // coefficients: input wavelet coefficients
 // stepSize: quantization step size
 // Returns: quantized coefficients
@@ -202,13 +195,13 @@ func QuantizeCoefficients(coefficients []int32, stepSize float64) []int32 {
 
 	quantized := make([]int32, len(coefficients))
 	for i, coeff := range coefficients {
-		// Quantize: round(coeff / stepSize)
-		quantized[i] = int32(math.Round(float64(coeff) / stepSize))
+		// Quantize: round-to-even(coeff / stepSize) to match OpenJPEG's lrintf.
+		quantized[i] = int32(math.RoundToEven(float64(coeff) / stepSize))
 	}
 	return quantized
 }
 
-// DequantizeCoefficients applies dequantization to coefficients
+// DequantizeCoefficients applies dequantization to coefficients.
 // coefficients: quantized coefficients
 // stepSize: quantization step size
 // Returns: dequantized coefficients
@@ -220,8 +213,8 @@ func DequantizeCoefficients(coefficients []int32, stepSize float64) []int32 {
 
 	dequantized := make([]int32, len(coefficients))
 	for i, coeff := range coefficients {
-		// Dequantize: coeff * stepSize
-		dequantized[i] = int32(math.Round(float64(coeff) * stepSize))
+		// Dequantize: coeff * stepSize (matches quantization scaling after T1 inverse).
+		dequantized[i] = int32(math.RoundToEven(float64(coeff) * stepSize))
 	}
 	return dequantized
 }

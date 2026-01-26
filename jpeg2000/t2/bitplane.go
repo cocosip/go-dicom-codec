@@ -41,6 +41,12 @@ func bandNumbpsFromQCD(qcd *codestream.QCDSegment, numLevels, res, band int) (in
 		}
 		encoded := uint16(qcd.SPqcd[0])<<8 | uint16(qcd.SPqcd[1])
 		expn := int((encoded >> 11) & 0x1F)
+		if idx > 0 {
+			expn -= (idx - 1) / 3
+			if expn < 0 {
+				expn = 0
+			}
+		}
 		return expn + guardBits - 1, true
 	case 2:
 		offset := idx * 2

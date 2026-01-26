@@ -20,9 +20,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Multi-level decomposition alignment and precision growth
 
 ### Quantization & dequantization
-- [ ] QCD/QCC step size derivation per subband
-- [ ] Reversible vs irreversible quantization paths
-- [ ] Dequantization precision and rounding rules
+- [x] QCD/QCC step size derivation per subband
+- [x] Reversible vs irreversible quantization paths
+- [x] Dequantization precision and rounding rules
 
 ### Tile/component/subband layout
 - [ ] Tile grid boundary rules and component sampling alignment

@@ -1584,13 +1584,6 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 
 		// Calculate quantization parameters based on quality
 		quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
-		if e.params.Components >= 3 && len(quantParams.StepSizes) > 0 {
-			if e.params.Quality >= 95 {
-				quantParams.StepSizes[0] = quantParams.StepSizes[0] * 0.6
-			} else if e.params.Quality >= 85 {
-				quantParams.StepSizes[0] = quantParams.StepSizes[0] * 0.8
-			}
-		}
 
 		for c := 0; c < len(tileData); c++ {
 			// Convert to float64 for 9/7 transform
@@ -1599,28 +1592,28 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 			// Apply forward multilevel 9/7 DWT
 			wavelet.ForwardMultilevel97WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
 
-			// Convert to int32 first
-			coeffs := wavelet.ConvertFloat64ToInt32(floatData)
-
-			// Apply quantization per subband
-			transformed[c] = e.applyQuantizationBySubband(coeffs, width, height, quantParams.StepSizes)
+			// Apply quantization per subband using float coefficients
+			transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, quantParams.StepSizes)
 		}
 		return transformed, nil
 	}
 }
 
-// applyQuantizationBySubband applies quantization to each subband separately
-// coeffs: wavelet coefficients in subband layout
+// applyQuantizationBySubbandFloat applies quantization to each subband separately.
+// coeffs: wavelet coefficients in subband layout (float domain)
 // width, height: dimensions of the full image
 // stepSizes: quantization step sizes for each subband (LL, HL1, LH1, HH1, HL2, ...)
-func (e *Encoder) applyQuantizationBySubband(coeffs []int32, width, height int, stepSizes []float64) []int32 {
+func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, height int, stepSizes []float64) []int32 {
 	if len(stepSizes) == 0 || e.params.NumLevels == 0 {
 		// No quantization
-		return coeffs
+		out := make([]int32, len(coeffs))
+		for i, v := range coeffs {
+			out[i] = int32(math.RoundToEven(v))
+		}
+		return out
 	}
 
 	quantized := make([]int32, len(coeffs))
-	copy(quantized, coeffs)
 
 	// Calculate subband dimensions for each level
 	// After multilevel DWT, subbands are arranged as:
@@ -1644,46 +1637,46 @@ func (e *Encoder) applyQuantizationBySubband(coeffs []int32, width, height int, 
 		if level == numLevels {
 			// LL subband (low-pass both directions)
 			stepSize := stepSizes[subbandIdx]
-			e.quantizeSubband(quantized, 0, 0, levelWidth, levelHeight, currentWidth, stepSize)
+			e.quantizeSubbandFloat(coeffs, quantized, 0, 0, levelWidth, levelHeight, currentWidth, stepSize)
 			subbandIdx++
 		}
 
 		// HL subband (high-pass horizontal, low-pass vertical)
 		stepSize := stepSizes[subbandIdx]
-		e.quantizeSubband(quantized, levelWidth, 0, levelWidth, levelHeight, currentWidth, stepSize)
+		e.quantizeSubbandFloat(coeffs, quantized, levelWidth, 0, levelWidth, levelHeight, currentWidth, stepSize)
 		subbandIdx++
 
 		// LH subband (low-pass horizontal, high-pass vertical)
 		stepSize = stepSizes[subbandIdx]
-		e.quantizeSubband(quantized, 0, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
+		e.quantizeSubbandFloat(coeffs, quantized, 0, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
 		subbandIdx++
 
 		// HH subband (high-pass both directions)
 		stepSize = stepSizes[subbandIdx]
-		e.quantizeSubband(quantized, levelWidth, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
+		e.quantizeSubbandFloat(coeffs, quantized, levelWidth, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
 		subbandIdx++
 	}
 
 	return quantized
 }
 
-// quantizeSubband quantizes a single subband
-// data: full coefficient array
+// quantizeSubbandFloat quantizes a single subband.
+// coeffs: full coefficient array (float domain)
+// out: quantized output
 // x0, y0: top-left corner of subband
 // w, h: dimensions of subband
 // stride: row stride (width of full image)
 // stepSize: quantization step size
-func (e *Encoder) quantizeSubband(data []int32, x0, y0, w, h, stride int, stepSize float64) {
-	if stepSize <= 0 {
-		return
-	}
-
+func (e *Encoder) quantizeSubbandFloat(coeffs []float64, out []int32, x0, y0, w, h, stride int, stepSize float64) {
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			idx := (y0+y)*stride + (x0 + x)
-			if idx < len(data) {
-				// Quantize: round(coeff / stepSize)
-				data[idx] = int32(math.Round(float64(data[idx]) / stepSize))
+			if idx < len(out) {
+				if stepSize <= 0 {
+					out[idx] = int32(math.RoundToEven(coeffs[idx]))
+				} else {
+					out[idx] = int32(math.RoundToEven(coeffs[idx] / stepSize))
+				}
 			}
 		}
 	}
@@ -2675,33 +2668,14 @@ func max(a, b int) int {
 	return b
 }
 
-// encodeQuantStepsFromFloats converts floating quantization steps to encoded form (5-bit exponent, 11-bit mantissa).
+// encodeQuantStepsFromFloats converts floating quantization steps to OpenJPEG-encoded form.
 func encodeQuantStepsFromFloats(steps []float64, bitDepth int) []uint16 {
 	if len(steps) == 0 {
 		return nil
 	}
 	encoded := make([]uint16, len(steps))
-	bias := bitDepth - 1
 	for i, stepSize := range steps {
-		if stepSize <= 0 {
-			stepSize = 0.0001
-		}
-		exp := int(math.Floor(math.Log2(stepSize))) + bias
-		mantissa := stepSize / math.Pow(2.0, float64(exp-bias))
-		if exp < 0 {
-			exp = 0
-		}
-		if exp > 31 {
-			exp = 31
-		}
-		mantissaInt := int((mantissa - 1.0) * 2048.0)
-		if mantissaInt < 0 {
-			mantissaInt = 0
-		}
-		if mantissaInt > 2047 {
-			mantissaInt = 2047
-		}
-		encoded[i] = uint16((exp << 11) | mantissaInt)
+		encoded[i] = encodeQuantizationStep(stepSize, bitDepth)
 	}
 	return encoded
 }

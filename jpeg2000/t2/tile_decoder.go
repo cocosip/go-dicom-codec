@@ -692,6 +692,16 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								for i := range cbd.coeffs {
 									cbd.coeffs[i] >>= T1_NMSEDEC_FRACBITS
 								}
+								if td.cod.Transformation == 1 {
+									// Reversible 5/3 path: normalize by 2 with rounding.
+									for i, v := range cbd.coeffs {
+										if v >= 0 {
+											cbd.coeffs[i] = (v + 1) / 2
+										} else {
+											cbd.coeffs[i] = (v - 1) / 2
+										}
+									}
+								}
 
 								// Inverse General Scaling for ROI blocks (Srgn=1)
 								if td.roi != nil && style == 1 && shiftVal > 0 && inside {
@@ -1157,14 +1167,19 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 	} else if td.cod.Transformation == 0 {
 		// 9/7 irreversible wavelet (lossy)
 		// First, apply dequantization if needed
-		dequantized := comp.coefficients
-		if td.qcd != nil && td.qcd.QuantizationType() == 2 {
-			// Scalar expounded quantization - apply dequantization
-			dequantized = td.applyDequantizationBySubband(comp.coefficients, comp.width, comp.height, comp.numLevels)
+		var floatCoeffs []float64
+		qType := 0
+		if td.qcd != nil {
+			qType = td.qcd.QuantizationType()
 		}
-
-		// Convert coefficients to float64 for 9/7 transform
-		floatCoeffs := wavelet.ConvertInt32ToFloat64(dequantized)
+		if qType == 1 || qType == 2 {
+			// Scalar derived/expounded quantization - apply dequantization
+			bitDepth := int(td.siz.Components[comp.componentIdx].BitDepth())
+			floatCoeffs = td.applyDequantizationBySubbandFloat(comp.coefficients, comp.width, comp.height, comp.numLevels, bitDepth)
+		} else {
+			// No quantization or missing QCD, use raw coefficients
+			floatCoeffs = wavelet.ConvertInt32ToFloat64(comp.coefficients)
+		}
 
 		// Apply inverse multilevel 9/7 wavelet transform
 		wavelet.InverseMultilevel97WithParity(floatCoeffs, comp.width, comp.height, comp.numLevels, td.tileX0, td.tileY0)
@@ -1178,36 +1193,22 @@ func (td *TileDecoder) applyIDWT(comp *ComponentDecoder) error {
 	return nil
 }
 
-// applyDequantizationBySubband applies dequantization to each subband separately
+// applyDequantizationBySubbandFloat applies dequantization to each subband separately.
 // coeffs: quantized wavelet coefficients in subband layout
 // width, height: dimensions of the full image
 // numLevels: number of wavelet decomposition levels
-func (td *TileDecoder) applyDequantizationBySubband(coeffs []int32, width, height, numLevels int) []int32 {
+func (td *TileDecoder) applyDequantizationBySubbandFloat(coeffs []int32, width, height, numLevels, bitDepth int) []float64 {
 	if td.qcd == nil || len(td.qcd.SPqcd) == 0 {
 		// No dequantization
-		return coeffs
+		return wavelet.ConvertInt32ToFloat64(coeffs)
 	}
 
-	// Get bit depth
-	bitDepth := int(td.siz.Components[0].BitDepth())
-
-	// Decode step sizes from QCD
-	stepSizes := make([]float64, len(td.qcd.SPqcd)/2)
-	for i := 0; i < len(stepSizes); i++ {
-		// Each step size is 16-bit
-		encoded := uint16(td.qcd.SPqcd[i*2])<<8 | uint16(td.qcd.SPqcd[i*2+1])
-
-		// Decode: bits 11-15 = exponent, bits 0-10 = mantissa
-		exponent := int((encoded >> 11) & 0x1F)
-		mantissa := float64(encoded & 0x7FF)
-
-		bias := bitDepth - 1
-		// stepSize = 2^(exponent - bias) * (1 + mantissa / 2048)
-		stepSizes[i] = math.Pow(2.0, float64(exponent-bias)) * (1.0 + mantissa/2048.0)
+	stepSizes := td.decodeQuantizationSteps(numLevels, bitDepth)
+	if len(stepSizes) == 0 {
+		return wavelet.ConvertInt32ToFloat64(coeffs)
 	}
 
-	dequantized := make([]int32, len(coeffs))
-	copy(dequantized, coeffs)
+	floatCoeffs := wavelet.ConvertInt32ToFloat64(coeffs)
 
 	// Calculate subband dimensions for each level
 	subbandIdx := 0
@@ -1222,40 +1223,40 @@ func (td *TileDecoder) applyDequantizationBySubband(coeffs []int32, width, heigh
 		if level == numLevels {
 			// LL subband
 			if subbandIdx < len(stepSizes) {
-				td.dequantizeSubband(dequantized, 0, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+				td.dequantizeSubbandFloat(floatCoeffs, 0, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
 			}
 			subbandIdx++
 		}
 
 		// HL subband
 		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubband(dequantized, levelWidth, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+			td.dequantizeSubbandFloat(floatCoeffs, levelWidth, 0, levelWidth, levelHeight, width, stepSizes[subbandIdx])
 		}
 		subbandIdx++
 
 		// LH subband
 		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubband(dequantized, 0, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+			td.dequantizeSubbandFloat(floatCoeffs, 0, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
 		}
 		subbandIdx++
 
 		// HH subband
 		if subbandIdx < len(stepSizes) {
-			td.dequantizeSubband(dequantized, levelWidth, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
+			td.dequantizeSubbandFloat(floatCoeffs, levelWidth, levelHeight, levelWidth, levelHeight, width, stepSizes[subbandIdx])
 		}
 		subbandIdx++
 	}
 
-	return dequantized
+	return floatCoeffs
 }
 
-// dequantizeSubband dequantizes a single subband
-// data: full coefficient array
+// dequantizeSubbandFloat dequantizes a single subband.
+// data: full coefficient array (float domain)
 // x0, y0: top-left corner of subband
 // w, h: dimensions of subband
 // stride: row stride (width of full image)
 // stepSize: quantization step size
-func (td *TileDecoder) dequantizeSubband(data []int32, x0, y0, w, h, stride int, stepSize float64) {
+func (td *TileDecoder) dequantizeSubbandFloat(data []float64, x0, y0, w, h, stride int, stepSize float64) {
 	if stepSize <= 0 {
 		return
 	}
@@ -1264,11 +1265,83 @@ func (td *TileDecoder) dequantizeSubband(data []int32, x0, y0, w, h, stride int,
 		for x := 0; x < w; x++ {
 			idx := (y0+y)*stride + (x0 + x)
 			if idx < len(data) {
-				// Dequantize: coeff * stepSize
-				data[idx] = int32(math.Round(float64(data[idx]) * stepSize))
+				// Dequantize: coeff * stepSize.
+				data[idx] *= stepSize
 			}
 		}
 	}
+}
+
+func (td *TileDecoder) decodeQuantizationSteps(numLevels, bitDepth int) []float64 {
+	if td.qcd == nil || len(td.qcd.SPqcd) == 0 {
+		return nil
+	}
+	qType := td.qcd.QuantizationType()
+	if qType != 1 && qType != 2 {
+		return nil
+	}
+
+	numSubbands := 3*numLevels + 1
+	steps := make([]float64, numSubbands)
+
+	switch qType {
+	case 1:
+		if len(td.qcd.SPqcd) < 2 {
+			return nil
+		}
+		encoded := uint16(td.qcd.SPqcd[0])<<8 | uint16(td.qcd.SPqcd[1])
+		baseExpn := int((encoded >> 11) & 0x1f)
+		baseMant := int(encoded & 0x7ff)
+		for idx := 0; idx < numSubbands; idx++ {
+			expn := baseExpn
+			if idx > 0 {
+				expn -= (idx - 1) / 3
+				if expn < 0 {
+					expn = 0
+				}
+			}
+			log2Gain := td.log2GainForSubband(idx)
+			steps[idx] = decodeQuantStep(expn, baseMant, bitDepth, log2Gain)
+		}
+	case 2:
+		maxBands := len(td.qcd.SPqcd) / 2
+		if maxBands == 0 {
+			return nil
+		}
+		if maxBands < numSubbands {
+			numSubbands = maxBands
+			steps = steps[:numSubbands]
+		}
+		for idx := 0; idx < numSubbands; idx++ {
+			offset := idx * 2
+			encoded := uint16(td.qcd.SPqcd[offset])<<8 | uint16(td.qcd.SPqcd[offset+1])
+			expn := int((encoded >> 11) & 0x1f)
+			mant := int(encoded & 0x7ff)
+			log2Gain := td.log2GainForSubband(idx)
+			steps[idx] = decodeQuantStep(expn, mant, bitDepth, log2Gain)
+		}
+	}
+
+	return steps
+}
+
+func (td *TileDecoder) log2GainForSubband(idx int) int {
+	if td.cod.Transformation == 0 {
+		return 0
+	}
+	if idx == 0 {
+		return 0
+	}
+	orient := (idx-1)%3 + 1
+	if orient == 3 {
+		return 2
+	}
+	return 1
+}
+
+func decodeQuantStep(expn, mant, bitDepth, log2Gain int) float64 {
+	rb := bitDepth + log2Gain
+	return math.Ldexp(1.0+float64(mant)/2048.0, rb-expn)
 }
 
 // levelShift applies DC level shift to convert coefficients to samples
