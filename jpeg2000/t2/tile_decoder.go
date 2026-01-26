@@ -174,25 +174,6 @@ func (r *ROIInfo) intersects(compIdx, x0, y0, x1, y1 int) bool {
 	return false
 }
 
-func (r *ROIInfo) roiShift(compIdx, x0, y0, x1, y1 int) int {
-	if r == nil {
-		return 0
-	}
-	shift, style, inside := r.context(compIdx, x0, y0, x1, y1)
-	if shift <= 0 {
-		return 0
-	}
-	if style == 1 {
-		// General Scaling handled by explicit scaling; roishift only for MaxShift
-		return 0
-	}
-	// MaxShift: shift background
-	if inside {
-		return 0
-	}
-	return shift
-}
-
 func (r *ROIInfo) context(compIdx, x0, y0, x1, y1 int) (int, byte, bool) {
 	if r == nil || compIdx < 0 || compIdx >= len(r.Shifts) {
 		return 0, 0, false
@@ -463,26 +444,6 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 						existing.zeroBitplanesSet = true
 					}
 
-					// Calculate max bitplane from zero bitplanes
-					// Note: After wavelet transform, coefficients may need extra bits
-					// 5/3 reversible wavelet adds 1 bit per decomposition level
-					// T1_NMSEDEC_FRACBITS also adds extra bits (internal representation)
-					const T1_NMSEDEC_FRACBITS = 6
-					componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
-					effectiveBitDepth := componentBitDepth + comp.numLevels + T1_NMSEDEC_FRACBITS
-
-					// Use saved zeroBitplanes for consistent maxBitplane across all layers
-					zbp := existing.zeroBitplanes
-					if !existing.zeroBitplanesSet {
-						zbp = cbIncl.ZeroBitplanes // Fallback if not set yet
-					}
-					maxBP := effectiveBitDepth - 1 - zbp
-
-					if !existing.maxBitplaneSet {
-						existing.maxBitplane = maxBP
-						existing.maxBitplaneSet = true
-					}
-
 					cbDataMap[key] = existing
 				}
 			}
@@ -568,6 +529,33 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								zeroBitplanesSet: false,
 							}
 						}
+						if !cbInfoData.maxBitplaneSet {
+							zbp := cbInfoData.zeroBitplanes
+							if !cbInfoData.zeroBitplanesSet {
+								zbp = 0
+							}
+							bandNumbps, ok := bandNumbpsFromQCD(td.qcd, comp.numLevels, res, band)
+							var maxBP int
+							if ok && bandNumbps > 0 {
+								const T1_NMSEDEC_FRACBITS = 6
+								cblkNumbps := bandNumbps + 1 - zbp
+								if cblkNumbps <= 0 {
+									maxBP = -1
+								} else {
+									maxBP = (cblkNumbps - 1) + T1_NMSEDEC_FRACBITS
+								}
+							} else {
+								const T1_NMSEDEC_FRACBITS = 6
+								componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+								effectiveBitDepth := componentBitDepth + comp.numLevels + T1_NMSEDEC_FRACBITS
+								maxBP = effectiveBitDepth - 1 - zbp
+							}
+							if maxBP < -1 {
+								maxBP = -1
+							}
+							cbInfoData.maxBitplane = maxBP
+							cbInfoData.maxBitplaneSet = true
+						}
 
 						// Calculate code-block bounds within the subband
 						localX0 := cbx * cbWidth
@@ -600,8 +588,14 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 						// Use accumulated totalPasses from all layers, or calculate from maxBitplane if not available
 						numPasses := cbInfoData.totalPasses
 						if numPasses == 0 {
-							// Fallback: calculate from maxBitplane (3 passes per bitplane)
-							numPasses = (cbInfoData.maxBitplane + 1) * 3
+							// Fallback: calculate from maxBitplane (3 passes per bitplane, top bitplane cleanup only)
+							const T1_NMSEDEC_FRACBITS = 6
+							cblkNumbps := (cbInfoData.maxBitplane + 1) - T1_NMSEDEC_FRACBITS
+							if cblkNumbps > 0 {
+								numPasses = (cblkNumbps * 3) - 2
+							} else if cbInfoData.maxBitplane >= 0 {
+								numPasses = 1
+							}
 						}
 
 						cbd := &CodeBlockDecoder{
@@ -669,6 +663,15 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								cbd.coeffs = make([]int32, actualWidth*actualHeight)
 							} else {
 								cbd.coeffs = cbd.t1Decoder.GetData()
+								var shiftVal int
+								var style byte
+								var inside bool
+								if td.roi != nil {
+									shiftVal, style, inside = td.roi.context(comp.componentIdx, x0, y0, x1, y1)
+									if style == 0 && shiftVal > 0 {
+										applyInverseMaxShift(cbd.coeffs, shiftVal)
+									}
+								}
 
 								// Apply inverse T1_NMSEDEC_FRACBITS scaling (right shift by 6)
 								// Encoder applies <<6 before T1 encoding, decoder must reverse it
@@ -678,15 +681,12 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								}
 
 								// Inverse General Scaling for ROI blocks (Srgn=1)
-								if td.roi != nil {
-									shiftVal, style, inside := td.roi.context(comp.componentIdx, x0, y0, x1, y1)
-									if style == 1 && shiftVal > 0 && inside {
-										blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
-										if len(blockMask) > 0 && len(blockMask[0]) > 0 {
-											applyInverseGeneralScalingMasked(cbd.coeffs, blockMask, shiftVal)
-										} else {
-											applyInverseGeneralScaling(cbd.coeffs, shiftVal)
-										}
+								if td.roi != nil && style == 1 && shiftVal > 0 && inside {
+									blockMask := td.roi.blockMask(comp.componentIdx, x0, y0, x1, y1)
+									if len(blockMask) > 0 && len(blockMask[0]) > 0 {
+										applyInverseGeneralScalingMasked(cbd.coeffs, blockMask, shiftVal)
+									} else {
+										applyInverseGeneralScaling(cbd.coeffs, shiftVal)
 									}
 								}
 							}
@@ -937,14 +937,27 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 					}
 					dataOffset += cbIncl.DataLength
 
-					// Calculate max bitplane from zero bitplanes
-					// maxBitplane = effectiveBitDepth - 1 - zeroBitplanes
-					// effectiveBitDepth = bitDepth + numLevels + T1_NMSEDEC_FRACBITS
-					const T1_NMSEDEC_FRACBITS = 6
-					baseBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
-					numLevels := int(td.cod.NumberOfDecompositionLevels)
-					effectiveBitDepth := baseBitDepth + numLevels + T1_NMSEDEC_FRACBITS
-					maxBP := effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
+					// Calculate max bitplane from zero bitplanes and QCD band range
+					bandNumbps, ok := bandNumbpsFromQCD(td.qcd, int(td.cod.NumberOfDecompositionLevels), 0, 0)
+					maxBP := 0
+					if ok && bandNumbps > 0 {
+						const T1_NMSEDEC_FRACBITS = 6
+						cblkNumbps := bandNumbps + 1 - cbIncl.ZeroBitplanes
+						if cblkNumbps <= 0 {
+							maxBP = -1
+						} else {
+							maxBP = (cblkNumbps - 1) + T1_NMSEDEC_FRACBITS
+						}
+					} else {
+						const T1_NMSEDEC_FRACBITS = 6
+						baseBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1
+						numLevels := int(td.cod.NumberOfDecompositionLevels)
+						effectiveBitDepth := baseBitDepth + numLevels + T1_NMSEDEC_FRACBITS
+						maxBP = effectiveBitDepth - 1 - cbIncl.ZeroBitplanes
+					}
+					if maxBP < -1 {
+						maxBP = -1
+					}
 					if maxBP > maxBitplaneMap[cbIdx] {
 						maxBitplaneMap[cbIdx] = maxBP
 					}
@@ -977,6 +990,14 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 			// Get code-block data from packets
 			cbData, hasData := cbDataMap[cbIdx]
 			maxBitplane := maxBitplaneMap[cbIdx]
+			numPasses := 1
+			if maxBitplane >= 0 {
+				const T1_NMSEDEC_FRACBITS = 6
+				cblkNumbps := (maxBitplane + 1) - T1_NMSEDEC_FRACBITS
+				if cblkNumbps > 0 {
+					numPasses = (cblkNumbps * 3) - 2
+				}
+			}
 
 			// Create code-block decoder - use HTJ2K if enabled, otherwise EBCOT T1
 			var blockDecoder BlockDecoder
@@ -993,7 +1014,7 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 				y1:        y1,
 				band:      0,
 				data:      cbData,
-				numPasses: (maxBitplane * 3) + 1,
+				numPasses: numPasses,
 				t1Decoder: blockDecoder,
 			}
 			if orientSetter, ok := cbd.t1Decoder.(interface{ SetOrientation(int) }); ok {
@@ -1002,20 +1023,24 @@ func (td *TileDecoder) decodeCodeBlocks(comp *ComponentDecoder) error {
 
 			// Decode the code-block
 			if hasData && len(cbData) > 0 {
-				shiftVal, style, inside := td.roi.context(comp.componentIdx, x0, y0, x1, y1)
-				roishift := 0
+				shiftVal := 0
+				style := byte(0)
+				inside := false
 				if td.roi != nil {
-					roishift = td.roi.roiShift(comp.componentIdx, x0, y0, x1, y1)
+					shiftVal, style, inside = td.roi.context(comp.componentIdx, x0, y0, x1, y1)
 				}
 
 				// Use DecodeWithBitplane for accurate reconstruction
-				err := blockDecoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, roishift)
+				err := blockDecoder.DecodeWithBitplane(cbData, cbd.numPasses, maxBitplane, 0)
 				if err != nil {
 					// If decode fails, use zeros
 					cbd.coeffs = make([]int32, actualWidth*actualHeight)
 				} else {
 					// Get decoded coefficients
 					cbd.coeffs = blockDecoder.GetData()
+					if style == 0 && shiftVal > 0 {
+						applyInverseMaxShift(cbd.coeffs, shiftVal)
+					}
 
 					// Apply inverse T1_NMSEDEC_FRACBITS scaling (right shift by 6)
 					// Encoder applies <<6 before T1 encoding, decoder must reverse it
@@ -1291,6 +1316,34 @@ func applyInverseGeneralScalingMasked(data []int32, mask [][]bool, shift int) {
 				if idx >= 0 && idx < len(data) {
 					data[idx] /= factor
 				}
+			}
+		}
+	}
+}
+
+// applyInverseMaxShift reverses MaxShift ROI scaling using the standard threshold rule.
+func applyInverseMaxShift(data []int32, shift int) {
+	if shift <= 0 {
+		return
+	}
+	if shift >= 31 {
+		for i := range data {
+			data[i] = 0
+		}
+		return
+	}
+	thresh := int32(1 << shift)
+	for i, val := range data {
+		mag := val
+		if mag < 0 {
+			mag = -mag
+		}
+		if mag >= thresh {
+			mag >>= shift
+			if val < 0 {
+				data[i] = -mag
+			} else {
+				data[i] = mag
 			}
 		}
 	}

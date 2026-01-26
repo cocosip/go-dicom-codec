@@ -6,7 +6,7 @@ import "fmt"
 type ROIStyle int
 
 const (
-	// ROIStyleMaxShift uses MaxShift (background bit-plane shift).
+	// ROIStyleMaxShift uses MaxShift (ROI upshift).
 	ROIStyleMaxShift ROIStyle = iota
 	// ROIStyleGeneralScaling follows General Scaling (not yet implemented).
 	ROIStyleGeneralScaling

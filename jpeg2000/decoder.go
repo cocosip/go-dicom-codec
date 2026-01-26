@@ -633,32 +633,36 @@ func (d *Decoder) decodeTiles() error {
 
 	// Build ROI info for tile decoders
 	var roiInfo *t2.ROIInfo
-	if len(d.roiRects) > 0 && len(d.roiShifts) == d.components {
-		rectsByComp := make([][]t2.ROIRect, len(d.roiRects))
-		for comp := range d.roiRects {
-			rects := d.roiRects[comp]
-			rectsByComp[comp] = make([]t2.ROIRect, len(rects))
-			for i, r := range rects {
-				rectsByComp[comp][i] = t2.ROIRect{
-					X0: r.x0,
-					Y0: r.y0,
-					X1: r.x1,
-					Y1: r.y1,
+	if len(d.roiShifts) == d.components && d.components > 0 {
+		roiInfo = &t2.ROIInfo{
+			Shifts: d.roiShifts,
+			Styles: d.roiSrgn,
+		}
+		if len(d.roiRects) > 0 {
+			rectsByComp := make([][]t2.ROIRect, len(d.roiRects))
+			for comp := range d.roiRects {
+				rects := d.roiRects[comp]
+				rectsByComp[comp] = make([]t2.ROIRect, len(rects))
+				for i, r := range rects {
+					rectsByComp[comp][i] = t2.ROIRect{
+						X0: r.x0,
+						Y0: r.y0,
+						X1: r.x1,
+						Y1: r.y1,
+					}
 				}
 			}
+			roiInfo.RectsByComponent = rectsByComp
 		}
-		roiInfo = &t2.ROIInfo{
-			RectsByComponent: rectsByComp,
-			Shifts:           d.roiShifts,
-			Styles:           d.roiSrgn,
-		}
-		roiInfo.Masks = make([]*t2.ROIMask, len(d.roiMasks))
-		for i := range d.roiMasks {
-			if d.roiMasks[i] != nil {
-				roiInfo.Masks[i] = &t2.ROIMask{
-					Width:  d.roiMasks[i].width,
-					Height: d.roiMasks[i].height,
-					Data:   d.roiMasks[i].data,
+		if len(d.roiMasks) > 0 {
+			roiInfo.Masks = make([]*t2.ROIMask, len(d.roiMasks))
+			for i := range d.roiMasks {
+				if d.roiMasks[i] != nil {
+					roiInfo.Masks[i] = &t2.ROIMask{
+						Width:  d.roiMasks[i].width,
+						Height: d.roiMasks[i].height,
+						Data:   d.roiMasks[i].data,
+					}
 				}
 			}
 		}

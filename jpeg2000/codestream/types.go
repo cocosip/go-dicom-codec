@@ -99,20 +99,20 @@ func (c *CODSegment) CodeBlockSize() (width, height int) {
 type QCDSegment struct {
 	Sqcd uint8 // Quantization style
 	// Sqcd interpretation:
-	//   bits 0-4: Number of guard bits
-	//   bits 5-7: Quantization type (0=none, 1=scalar derived, 2=scalar expounded)
+	//   bits 0-4: Quantization type (0=none, 1=scalar derived, 2=scalar expounded)
+	//   bits 5-7: Number of guard bits
 
 	SPqcd []byte // Quantization step size values
 }
 
 // QuantizationType returns the quantization type
 func (q *QCDSegment) QuantizationType() int {
-	return int(q.Sqcd >> 5)
+	return int(q.Sqcd & 0x1F)
 }
 
 // GuardBits returns the number of guard bits
 func (q *QCDSegment) GuardBits() int {
-	return int(q.Sqcd & 0x1F)
+	return int(q.Sqcd >> 5)
 }
 
 // COMSegment - Comment marker segment
@@ -145,35 +145,35 @@ type MCTSegment struct {
 }
 
 type MCCSegment struct {
-    Index         uint8
-    AssocType     uint8
-    NumComponents uint16
-    ComponentIDs  []uint16
-    MCTIndices    []uint8
+	Index         uint8
+	AssocType     uint8
+	NumComponents uint16
+	ComponentIDs  []uint16
+	MCTIndices    []uint8
 }
 
 // MCC association semantics (experimental)
 const (
-    MCCAssocSimpleSequence     = 1 // Apply records in the given order
-    MCCAssocMatrixThenOffset   = 2 // Apply decorrelation matrix first, then offsets
-    MCCAssocOffsetThenMatrix   = 3 // Apply offsets first, then decorrelation matrix
+	MCCAssocSimpleSequence   = 1 // Apply records in the given order
+	MCCAssocMatrixThenOffset = 2 // Apply decorrelation matrix first, then offsets
+	MCCAssocOffsetThenMatrix = 3 // Apply offsets first, then decorrelation matrix
 )
 
 // MCO option types (experimental)
 const (
-    MCOOptNormScale   = 1 // float32 normalization scale
-    MCOOptPrecision   = 2 // uint8 precision flags
-    MCOOptRecordOrder = 3 // explicit record order: [count][indices...]
+	MCOOptNormScale   = 1 // float32 normalization scale
+	MCOOptPrecision   = 2 // uint8 precision flags
+	MCOOptRecordOrder = 3 // explicit record order: [count][indices...]
 )
 
 const (
-    MCOPrecisionReversibleFlag = 0x1
-    MCOPrecisionPreferInt      = 0x2
-    MCOPrecisionRoundingMask   = 0xC
-    MCOPrecisionRoundNearest   = 0x0
-    MCOPrecisionRoundFloor     = 0x4
-    MCOPrecisionRoundCeil      = 0x8
-    MCOPrecisionRoundTrunc     = 0xC
+	MCOPrecisionReversibleFlag = 0x1
+	MCOPrecisionPreferInt      = 0x2
+	MCOPrecisionRoundingMask   = 0xC
+	MCOPrecisionRoundNearest   = 0x0
+	MCOPrecisionRoundFloor     = 0x4
+	MCOPrecisionRoundCeil      = 0x8
+	MCOPrecisionRoundTrunc     = 0xC
 )
 
 type MCOSegment struct {

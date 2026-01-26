@@ -7,7 +7,7 @@ type ROIParams struct {
 	Y0     int
 	Width  int
 	Height int
-	Shift  int // MaxShift bit-plane shift for background (non-ROI) code-blocks
+	Shift  int // MaxShift bit-plane shift for ROI upscaling
 }
 
 // IsValid returns true if ROI rectangle and shift are valid.

@@ -12,7 +12,7 @@ Legend: [ ] = pending, [x] = done
 ### Tier-1 (EBCOT) coding
 - [x] Context modeling (19 contexts) and neighbor significance rules
 - [x] Pass sequencing (SPP/MRP/CP) and termination conditions
-- [ ] Bitplane range (zero-bitplane/max-bitplane) and ROI shift handling
+- [x] Bitplane range (zero-bitplane/max-bitplane) and ROI shift handling
 
 ### Wavelet transforms (DWT)
 - [ ] 5/3 reversible lifting steps and boundary extension

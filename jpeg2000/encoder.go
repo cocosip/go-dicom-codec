@@ -89,7 +89,6 @@ type EncodeParams struct {
 	// Block encoder factory (for HTJ2K support)
 	// If nil, defaults to EBCOT T1 encoder
 	BlockEncoderFactory func(width, height int) BlockEncoder
-
 }
 
 // BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
@@ -146,6 +145,11 @@ type Encoder struct {
 	roiRects  [][]roiRect // per-component rectangles
 	roiStyles []byte      // per-component Srgn value: 0=MaxShift, 1=GeneralScaling
 	roiMasks  []*roiMask  // per-component ROI mask (full-res)
+	qcdReady  bool
+	qcdStyle  int
+	qcdGuard  int
+	qcdExpn   []int
+	qcdSteps  []uint16
 }
 
 // NewEncoder creates a new JPEG 2000 encoder
@@ -1140,67 +1144,132 @@ func (e *Encoder) getPrecinctSizeExponents(resolutionLevel int) (ppx, ppy uint8)
 	return ppx, ppy
 }
 
+type quantizationInfo struct {
+	style     int
+	guardBits int
+	expn      []int
+	steps     []uint16
+}
+
+func (e *Encoder) quantizationInfo() quantizationInfo {
+	if e.qcdReady {
+		return quantizationInfo{
+			style:     e.qcdStyle,
+			guardBits: e.qcdGuard,
+			expn:      e.qcdExpn,
+			steps:     e.qcdSteps,
+		}
+	}
+
+	p := e.params
+	info := quantizationInfo{}
+
+	if p.Lossless {
+		info.style = 0
+		info.guardBits = 2
+		expn := make([]int, 0, 3*p.NumLevels+1)
+		for res := 0; res <= p.NumLevels; res++ {
+			if res == 0 {
+				expn = append(expn, p.BitDepth+losslessLog2Gain(res, 0))
+			} else {
+				expn = append(expn, p.BitDepth+losslessLog2Gain(res, 1))
+				expn = append(expn, p.BitDepth+losslessLog2Gain(res, 2))
+				expn = append(expn, p.BitDepth+losslessLog2Gain(res, 3))
+			}
+		}
+		info.expn = expn
+	} else {
+		info.style = 2
+		guardBits := 2
+		var steps []uint16
+		if len(p.CustomQuantSteps) > 0 {
+			steps = encodeQuantStepsFromFloats(p.CustomQuantSteps, p.BitDepth)
+		} else {
+			quantParams := CalculateQuantizationParams(p.Quality, p.NumLevels, p.BitDepth)
+			guardBits = quantParams.GuardBits
+			steps = quantParams.EncodedSteps
+		}
+		expn := make([]int, len(steps))
+		for i, step := range steps {
+			expn[i] = int((step >> 11) & 0x1F)
+		}
+		info.guardBits = guardBits
+		info.expn = expn
+		info.steps = steps
+	}
+
+	e.qcdReady = true
+	e.qcdStyle = info.style
+	e.qcdGuard = info.guardBits
+	e.qcdExpn = info.expn
+	e.qcdSteps = info.steps
+
+	return info
+}
+
+func losslessLog2Gain(res, band int) int {
+	if res == 0 {
+		return 0
+	}
+	if band == 3 {
+		return 2
+	}
+	return 1
+}
+
+func subbandIndex(numLevels, res, band int) int {
+	if res < 0 || res > numLevels {
+		return -1
+	}
+	if res == 0 {
+		if band != 0 {
+			return -1
+		}
+		return 0
+	}
+	if band < 1 || band > 3 {
+		return -1
+	}
+	return 1 + (res-1)*3 + (band - 1)
+}
+
+func (e *Encoder) bandNumbps(res, band int) int {
+	info := e.quantizationInfo()
+	idx := subbandIndex(e.params.NumLevels, res, band)
+	if idx < 0 || idx >= len(info.expn) {
+		return 0
+	}
+	return info.expn[idx] + info.guardBits - 1
+}
+
 // writeQCD writes the QCD (Quantization Default) segment
 func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
-	p := e.params
+	info := e.quantizationInfo()
 
 	qcdData := &bytes.Buffer{}
 
-	if p.Lossless {
+	if e.params.Lossless {
 		// Lossless mode: no quantization (style 0)
-		// Sqcd - bits 0-4: quantization type (0 = no quantization), bits 5-7: guard bits (2)
-		// Match OpenJPEG: qntsty + (numgbits << 5) = 0 + (2 << 5) = 0x40
-		sqcd := uint8(2<<5 | 0) // 2 guard bits in upper 3 bits, no quantization in lower 5 bits = 0x40
+		// Sqcd - bits 0-4: quantization type, bits 5-7: guard bits
+		// Match OpenJPEG: qntsty + (numgbits << 5)
+		sqcd := uint8((info.guardBits << 5) | 0)
 		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
 		// SPqcd - Quantization step size for each subband
 		// For lossless: exponent only (8 bits), no mantissa
-		// Exponent varies by subband due to DWT filter gains (5/3 reversible):
-		//   LL band: bitDepth + 0
-		//   HL, LH bands: bitDepth + 1
-		//   HH band: bitDepth + 2
 		// Values are shifted left by 3 bits when encoded
-		for res := 0; res <= p.NumLevels; res++ {
-			numBands := 1
-			if res == 0 {
-				numBands = 1 // LL band only for lowest resolution
-			} else {
-				numBands = 3 // HL, LH, HH for each resolution
-			}
-			for band := 0; band < numBands; band++ {
-				var log2Gain int
-				if res == 0 {
-					log2Gain = 0 // LL band
-				} else if band == 2 {
-					log2Gain = 2 // HH band
-				} else {
-					log2Gain = 1 // HL, LH bands
-				}
-				expn := uint8((p.BitDepth + log2Gain) << 3)
-				_ = binary.Write(qcdData, binary.BigEndian, expn)
-			}
+		for _, expn := range info.expn {
+			_ = binary.Write(qcdData, binary.BigEndian, uint8(expn<<3))
 		}
 	} else {
 		// Lossy mode: scalar expounded quantization (style 2)
-		encodedSteps := make([]uint16, 0)
-		guardBits := uint8(2)
-
-		if len(p.CustomQuantSteps) > 0 {
-			encodedSteps = encodeQuantStepsFromFloats(p.CustomQuantSteps, p.BitDepth)
-		} else {
-			// Calculate quantization parameters based on quality
-			quantParams := CalculateQuantizationParams(p.Quality, p.NumLevels, p.BitDepth)
-			guardBits = uint8(quantParams.GuardBits)
-			encodedSteps = quantParams.EncodedSteps
-		}
-
-		// Sqcd - bits 0-4: guard bits, bits 5-7: quantization type (2 = scalar expounded)
-		sqcd := uint8(2<<5 | (guardBits & 0x1F))
+		// Sqcd - bits 0-4: quantization type (2 = scalar expounded), bits 5-7: guard bits
+		sqcd := uint8((info.guardBits << 5) | (info.style & 0x1F))
 		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
 		// SPqcd - Quantization step sizes for each subband
 		// For scalar expounded: 16-bit value per subband (5-bit exponent, 11-bit mantissa)
-		for _, encodedStep := range encodedSteps {
+		for _, encodedStep := range info.steps {
 			_ = binary.Write(qcdData, binary.BigEndian, encodedStep)
 		}
 	}
@@ -1692,7 +1761,6 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 			}
 		}
 	}
-
 
 	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
 	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
@@ -2311,38 +2379,31 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	// Adjust maxBitplane by adding 1 then subtracting T1_NMSEDEC_FRACBITS
 	// OpenJPEG does: numbps = (floorlog2(max) + 1) - T1_NMSEDEC_FRACBITS
 	// The +1 is critical - it converts from bit position to number of bits
-	numbps := rawMaxBitplane
-	if numbps >= 0 {
-		numbps = (numbps + 1) - T1_NMSEDEC_FRACBITS
+	cblkNumbps := 0
+	if rawMaxBitplane >= 0 {
+		cblkNumbps = (rawMaxBitplane + 1) - T1_NMSEDEC_FRACBITS
+		if cblkNumbps < 0 {
+			cblkNumbps = 0
+		}
 	}
 
 	// Calculate number of coding passes
 	// OpenJPEG sequencing: first pass is cleanup on the top bit-plane,
 	// then 3 passes per remaining bit-plane.
 	numPasses := 1
-	if numbps > 0 {
-		numPasses = (numbps * 3) - 2
-	}
-	if numbps < 0 {
-		// All zeros - still need at least 1 pass for valid packet header
-		numPasses = 1
+	if cblkNumbps > 0 {
+		numPasses = (cblkNumbps * 3) - 2
 	}
 
-	// Calculate zero bit-planes
-	// ZeroBitPlanes = number of MSB bit-planes that are all zero
-	// Formula: effectiveBitDepth - 1 - rawMaxBitplane
-	// IMPORTANT: Use rawMaxBitplane (before T1_NMSEDEC_FRACBITS adjustment) because
-	// effectiveBitDepth already includes T1_NMSEDEC_FRACBITS
-	// Note: After wavelet transform, coefficients may need extra bits
-	// 5/3 reversible wavelet adds 1 bit per decomposition level
-	effectiveBitDepth := e.params.BitDepth + e.params.NumLevels + T1_NMSEDEC_FRACBITS
-
-	zeroBitPlanes := 0
-	if rawMaxBitplane < 0 {
-		// All data is zero, all bit-planes are zero
-		zeroBitPlanes = effectiveBitDepth
-	} else {
-		zeroBitPlanes = effectiveBitDepth - 1 - rawMaxBitplane
+	// Calculate zero bit-planes using OpenJPEG formula:
+	// zeroBitPlanes = bandNumbps - cblkNumbps
+	bandNumbps := e.bandNumbps(cb.resLevel, cb.band)
+	if bandNumbps <= 0 {
+		bandNumbps = cblkNumbps
+	}
+	zeroBitPlanes := bandNumbps - cblkNumbps
+	if zeroBitPlanes < 0 {
+		zeroBitPlanes = 0
 	}
 
 	// Create block encoder (EBCOT T1 or HTJ2K)
@@ -2356,23 +2417,14 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	}
 
 	// ROI handling: determine style/shift/inside and apply scaling/roishift
-	style, roiShift, inside := e.roiContext(cb)
+	_, roiShift, inside := e.roiContext(cb)
 	roishift := 0
-	if roiShift > 0 {
-		if style == 1 {
-			// General Scaling: scale ROI blocks before coding, background unchanged
-			if inside {
-				if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
-					applyGeneralScalingMasked(cbData, cb.mask, roiShift)
-				} else {
-					applyGeneralScaling(cbData, roiShift)
-				}
-			}
+	if roiShift > 0 && inside {
+		// MaxShift/General Scaling: scale ROI coefficients before coding.
+		if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
+			applyGeneralScalingMasked(cbData, cb.mask, roiShift)
 		} else {
-			// MaxShift: shift background blocks
-			if !inside {
-				roishift = roiShift
-			}
+			applyGeneralScaling(cbData, roiShift)
 		}
 	}
 
@@ -2455,7 +2507,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 			// Return minimal code-block on error
 			encodedData = []byte{0x00}
 			numPasses = 1
-			zeroBitPlanes = effectiveBitDepth
+			zeroBitPlanes = bandNumbps
 			pcb.NumPassesTotal = numPasses
 			pcb.ZeroBitPlanes = zeroBitPlanes
 		}
@@ -2465,20 +2517,16 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	return pcb
 }
 
-// roiShiftForCodeBlock returns the MaxShift value for the given code-block.
-// For MaxShift: shift is applied to background blocks (non-ROI).
-// For General Scaling: shift is reported for ROI blocks (background 0) but caller may apply scaling separately.
+// roiShiftForCodeBlock returns the MaxShift value for ROI blocks.
 func (e *Encoder) roiShiftForCodeBlock(cb codeBlockInfo) int {
-	_, shift, inside := e.roiContext(cb)
-	style := byte(0)
-	if cb.compIdx >= 0 && cb.compIdx < len(e.roiStyles) {
-		style = e.roiStyles[cb.compIdx]
-	}
-	if style == 1 && cb.mask != nil {
-		// General Scaling uses explicit coefficient scaling; no roishift when mask is present.
+	style, shift, inside := e.roiContext(cb)
+	if shift <= 0 {
 		return 0
 	}
-	return shiftIfApplicable(e.roiStyles, cb.compIdx, shift, inside)
+	if style != 0 || !inside {
+		return 0
+	}
+	return shift
 }
 
 // roiContext returns ROI style, shift, and whether the block intersects ROI.
@@ -2513,24 +2561,6 @@ func (e *Encoder) roiContext(cb codeBlockInfo) (byte, int, bool) {
 		}
 	}
 	return style, shift, inside
-}
-
-func shiftIfApplicable(styles []byte, compIdx, shift int, inside bool) int {
-	style := byte(0)
-	if compIdx >= 0 && compIdx < len(styles) {
-		style = styles[compIdx]
-	}
-	if shift <= 0 {
-		return 0
-	}
-	if style == 1 {
-		// General Scaling uses explicit coefficient scaling; roishift not used.
-		return 0
-	}
-	if inside {
-		return 0
-	}
-	return shift
 }
 
 // applyGeneralScaling multiplies coefficients in-place by 2^shift.
