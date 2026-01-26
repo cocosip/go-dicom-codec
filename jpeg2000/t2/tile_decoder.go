@@ -352,6 +352,7 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 	for i := 0; i < numComponents; i++ {
 		comp := td.components[i]
 		packetDec.SetComponentBounds(i, comp.x0, comp.y0, comp.x0+comp.width, comp.y0+comp.height)
+		packetDec.SetComponentSampling(i, int(td.siz.Components[i].XRsiz), int(td.siz.Components[i].YRsiz))
 	}
 
 	// Set precinct sizes if defined in COD segment

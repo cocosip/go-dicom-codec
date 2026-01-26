@@ -18,6 +18,15 @@ type PacketEncoder struct {
 	// Precinct information
 	precincts map[int]map[int]map[int][]*Precinct // [component][resolution][precinct]
 
+	// Geometry parameters (for position-based progression)
+	tileX0, tileY0  int
+	tileX1, tileY1  int
+	compDx          []int
+	compDy          []int
+	compBounds      []componentBounds
+	precinctWidths  []int
+	precinctHeights []int
+
 	// Output buffer
 	packets []Packet
 }
@@ -31,6 +40,54 @@ func NewPacketEncoder(numComponents, numLayers, numResolutions int, progression 
 		progression:    progression,
 		precincts:      make(map[int]map[int]map[int][]*Precinct),
 	}
+}
+
+// SetImageDimensions sets the tile bounds for progression ordering.
+func (pe *PacketEncoder) SetImageDimensions(width, height int) {
+	pe.tileX0 = 0
+	pe.tileY0 = 0
+	pe.tileX1 = width
+	pe.tileY1 = height
+}
+
+// SetTileBounds sets the tile bounds in reference grid coordinates.
+func (pe *PacketEncoder) SetTileBounds(x0, y0, x1, y1 int) {
+	pe.tileX0 = x0
+	pe.tileY0 = y0
+	pe.tileX1 = x1
+	pe.tileY1 = y1
+}
+
+// SetComponentSampling sets the sampling factors for a component.
+func (pe *PacketEncoder) SetComponentSampling(component, dx, dy int) {
+	if component < 0 || component >= pe.numComponents {
+		return
+	}
+	if pe.compDx == nil {
+		pe.compDx = make([]int, pe.numComponents)
+	}
+	if pe.compDy == nil {
+		pe.compDy = make([]int, pe.numComponents)
+	}
+	pe.compDx[component] = dx
+	pe.compDy[component] = dy
+}
+
+// SetComponentBounds sets the tile-component bounds for a component.
+func (pe *PacketEncoder) SetComponentBounds(component, x0, y0, x1, y1 int) {
+	if component < 0 || component >= pe.numComponents {
+		return
+	}
+	if pe.compBounds == nil {
+		pe.compBounds = make([]componentBounds, pe.numComponents)
+	}
+	pe.compBounds[component] = componentBounds{x0: x0, y0: y0, x1: x1, y1: y1}
+}
+
+// SetPrecinctSizes sets per-resolution precinct sizes (in pixels).
+func (pe *PacketEncoder) SetPrecinctSizes(widths, heights []int) {
+	pe.precinctWidths = append([]int(nil), widths...)
+	pe.precinctHeights = append([]int(nil), heights...)
 }
 
 // AddCodeBlock adds a code-block to a precinct
@@ -158,9 +215,19 @@ func (pe *PacketEncoder) encodeRLCP() ([]Packet, error) {
 
 // encodeRPCL encodes packets in Resolution-Position-Component-Layer order
 func (pe *PacketEncoder) encodeRPCL() ([]Packet, error) {
+	posMaps := pe.buildPositionMaps()
 	for res := 0; res < pe.numResolutions; res++ {
-		for _, precinctIdx := range pe.sortedPrecinctsAllComponents(res) {
+		positions := posMaps.byRes[res]
+		for _, pos := range positions {
 			for comp := 0; comp < pe.numComponents; comp++ {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
+					continue
+				}
 				for layer := 0; layer < pe.numLayers; layer++ {
 					precincts := pe.getPrecincts(comp, res, precinctIdx)
 					if len(precincts) == 0 {
@@ -181,9 +248,18 @@ func (pe *PacketEncoder) encodeRPCL() ([]Packet, error) {
 
 // encodePCRL encodes packets in Position-Component-Resolution-Layer order
 func (pe *PacketEncoder) encodePCRL() ([]Packet, error) {
-	for _, precinctIdx := range pe.sortedPrecinctsAll() {
+	posMaps := pe.buildPositionMaps()
+	for _, pos := range posMaps.all {
 		for comp := 0; comp < pe.numComponents; comp++ {
 			for res := 0; res < pe.numResolutions; res++ {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
+					continue
+				}
 				for layer := 0; layer < pe.numLayers; layer++ {
 					precincts := pe.getPrecincts(comp, res, precinctIdx)
 					if len(precincts) == 0 {
@@ -204,9 +280,19 @@ func (pe *PacketEncoder) encodePCRL() ([]Packet, error) {
 
 // encodeCPRL encodes packets in Component-Position-Resolution-Layer order
 func (pe *PacketEncoder) encodeCPRL() ([]Packet, error) {
+	posMaps := pe.buildPositionMaps()
 	for comp := 0; comp < pe.numComponents; comp++ {
-		for _, precinctIdx := range pe.sortedPrecinctsAll() {
+		positions := posMaps.byComp[comp]
+		for _, pos := range positions {
 			for res := 0; res < pe.numResolutions; res++ {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
+					continue
+				}
 				for layer := 0; layer < pe.numLayers; layer++ {
 					precincts := pe.getPrecincts(comp, res, precinctIdx)
 					if len(precincts) == 0 {
@@ -280,6 +366,65 @@ func sortKeys(m map[int]struct{}) []int {
 	}
 	sort.Ints(keys)
 	return keys
+}
+
+func (pe *PacketEncoder) componentSamplingFor(component int) (int, int) {
+	dx := 1
+	dy := 1
+	if component >= 0 && component < len(pe.compDx) && pe.compDx[component] > 0 {
+		dx = pe.compDx[component]
+	}
+	if component >= 0 && component < len(pe.compDy) && pe.compDy[component] > 0 {
+		dy = pe.compDy[component]
+	}
+	return dx, dy
+}
+
+func (pe *PacketEncoder) componentBoundsFor(component int) componentBounds {
+	if component >= 0 && component < len(pe.compBounds) {
+		b := pe.compBounds[component]
+		if b.x1 != 0 || b.y1 != 0 {
+			return b
+		}
+	}
+
+	dx, dy := pe.componentSamplingFor(component)
+	x0 := ceilDiv(pe.tileX0, dx)
+	y0 := ceilDiv(pe.tileY0, dy)
+	x1 := ceilDiv(pe.tileX1, dx)
+	y1 := ceilDiv(pe.tileY1, dy)
+	return componentBounds{x0: x0, y0: y0, x1: x1, y1: y1}
+}
+
+func (pe *PacketEncoder) precinctSizeForResolution(resolution int) (int, int) {
+	pw := 0
+	ph := 0
+	if resolution >= 0 {
+		if resolution < len(pe.precinctWidths) {
+			pw = pe.precinctWidths[resolution]
+		}
+		if resolution < len(pe.precinctHeights) {
+			ph = pe.precinctHeights[resolution]
+		}
+	}
+	if pw == 0 {
+		pw = 1 << 15
+	}
+	if ph == 0 {
+		ph = 1 << 15
+	}
+	return pw, ph
+}
+
+func (pe *PacketEncoder) buildPositionMaps() *positionMaps {
+	return buildPositionMaps(positionInputs{
+		numComponents:     pe.numComponents,
+		numResolutions:    pe.numResolutions,
+		precinctIndices:   pe.sortedPrecincts,
+		componentBounds:   pe.componentBoundsFor,
+		componentSampling: pe.componentSamplingFor,
+		precinctSize:      pe.precinctSizeForResolution,
+	})
 }
 
 // encodePacket encodes a single packet

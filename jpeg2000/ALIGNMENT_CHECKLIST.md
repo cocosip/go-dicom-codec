@@ -35,9 +35,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Packet iteration order for precincts
 
 ### Tier-2 packetization & progression
-- [ ] Progression iterator order (LRCP/RLCP/RPCL/PCRL/CPRL)
-- [ ] Packet header tag-tree coding rules
-- [ ] Empty packet handling and layer allocation
+- [x] Progression iterator order (LRCP/RLCP/RPCL/PCRL/CPRL)
+- [x] Packet header tag-tree coding rules
+- [x] Empty packet handling and layer allocation
 
 ### Rate-distortion / PCRD
 - [ ] Distortion metric computation and pass weighting

@@ -1700,6 +1700,19 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		e.params.NumLevels+1,                           // numResolutions = numLevels + 1
 		t2.ProgressionOrder(e.params.ProgressionOrder), // Cast uint8 to ProgressionOrder
 	)
+	packetEnc.SetImageDimensions(width, height)
+	precinctWidths := make([]int, e.params.NumLevels+1)
+	precinctHeights := make([]int, e.params.NumLevels+1)
+	for res := 0; res <= e.params.NumLevels; res++ {
+		pw, ph := e.getPrecinctSize(res)
+		precinctWidths[res] = pw
+		precinctHeights[res] = ph
+	}
+	packetEnc.SetPrecinctSizes(precinctWidths, precinctHeights)
+	for comp := 0; comp < e.params.Components; comp++ {
+		packetEnc.SetComponentSampling(comp, 1, 1)
+		packetEnc.SetComponentBounds(comp, 0, 0, width, height)
+	}
 	allBlocks := make([]*t2.PrecinctCodeBlock, 0)
 
 	// Debug counters

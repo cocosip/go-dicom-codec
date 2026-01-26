@@ -242,7 +242,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 		return bitBuf.flush(), cbIncls, nil
 	}
 
-	hasData := false
+	hasBlocks := false
 	layerContribution := func(cb *PrecinctCodeBlock) (bool, int) {
 		included := false
 		newPasses := 0
@@ -264,19 +264,13 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 	}
 
 	for _, precinct := range precincts {
-		for _, cb := range precinct.CodeBlocks {
-			included, newPasses := layerContribution(cb)
-			if included && newPasses > 0 {
-				hasData = true
-				break
-			}
-		}
-		if hasData {
+		if precinct != nil && len(precinct.CodeBlocks) > 0 {
+			hasBlocks = true
 			break
 		}
 	}
 
-	if !hasData {
+	if !hasBlocks {
 		bitBuf.writeBit(0)
 		return bitBuf.flush(), cbIncls, nil
 	}

@@ -27,6 +27,8 @@ type PacketDecoder struct {
 
 	// Per-component geometry (tile-component bounds)
 	compBounds []componentBounds
+	compDx     []int
+	compDy     []int
 
 	// Precinct parameters
 	precinctWidth   int // Precinct width (0 = default size of 2^15)
@@ -55,11 +57,6 @@ type PacketDecoder struct {
 type cbGridDim struct {
 	numCBX int
 	numCBY int
-}
-
-type componentBounds struct {
-	x0, y0 int
-	x1, y1 int
 }
 
 type packetHeaderContext struct {
@@ -119,6 +116,21 @@ func (pd *PacketDecoder) SetComponentBounds(component, x0, y0, x1, y1 int) {
 	pd.compBounds[component] = componentBounds{x0: x0, y0: y0, x1: x1, y1: y1}
 }
 
+// SetComponentSampling sets the sampling factors for a component.
+func (pd *PacketDecoder) SetComponentSampling(component, dx, dy int) {
+	if component < 0 || component >= pd.numComponents {
+		return
+	}
+	if pd.compDx == nil {
+		pd.compDx = make([]int, pd.numComponents)
+	}
+	if pd.compDy == nil {
+		pd.compDy = make([]int, pd.numComponents)
+	}
+	pd.compDx[component] = dx
+	pd.compDy[component] = dy
+}
+
 func (pd *PacketDecoder) componentBoundsFor(component int) componentBounds {
 	if component >= 0 && component < len(pd.compBounds) {
 		b := pd.compBounds[component]
@@ -127,6 +139,18 @@ func (pd *PacketDecoder) componentBoundsFor(component int) componentBounds {
 		}
 	}
 	return componentBounds{x0: 0, y0: 0, x1: pd.imageWidth, y1: pd.imageHeight}
+}
+
+func (pd *PacketDecoder) componentSamplingFor(component int) (int, int) {
+	dx := 1
+	dy := 1
+	if component >= 0 && component < len(pd.compDx) && pd.compDx[component] > 0 {
+		dx = pd.compDx[component]
+	}
+	if component >= 0 && component < len(pd.compDy) && pd.compDy[component] > 0 {
+		dy = pd.compDy[component]
+	}
+	return dx, dy
 }
 
 // SetPrecinctSize sets the precinct dimensions
@@ -343,10 +367,19 @@ func (pd *PacketDecoder) decodeRLCP() ([]Packet, error) {
 
 // decodeRPCL decodes packets in Resolution-Position-Component-Layer order
 func (pd *PacketDecoder) decodeRPCL() ([]Packet, error) {
+	posMaps := pd.buildPositionMaps()
 	for res := 0; res < pd.numResolutions; res++ {
-		precincts := pd.precinctIndicesForResolutionAll(res)
-		for _, precinctIdx := range precincts {
+		positions := posMaps.byRes[res]
+		for _, pos := range positions {
 			for comp := 0; comp < pd.numComponents; comp++ {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
+					continue
+				}
 				for layer := 0; layer < pd.numLayers; layer++ {
 					packet, err := pd.decodePacket(layer, res, comp, precinctIdx)
 					if err != nil {
@@ -363,16 +396,16 @@ func (pd *PacketDecoder) decodeRPCL() ([]Packet, error) {
 
 // decodePCRL decodes packets in Position-Component-Resolution-Layer order
 func (pd *PacketDecoder) decodePCRL() ([]Packet, error) {
-	setsByComp := make([][]map[int]struct{}, pd.numComponents)
-	for comp := 0; comp < pd.numComponents; comp++ {
-		setsByComp[comp] = pd.precinctIndexSets(comp)
-	}
-	globalPrecincts := pd.globalPrecinctIndicesAll()
-
-	for _, precinctIdx := range globalPrecincts {
+	posMaps := pd.buildPositionMaps()
+	for _, pos := range posMaps.all {
 		for comp := 0; comp < pd.numComponents; comp++ {
 			for res := 0; res < pd.numResolutions; res++ {
-				if _, ok := setsByComp[comp][res][precinctIdx]; !ok {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
 					continue
 				}
 				for layer := 0; layer < pd.numLayers; layer++ {
@@ -391,16 +424,17 @@ func (pd *PacketDecoder) decodePCRL() ([]Packet, error) {
 
 // decodeCPRL decodes packets in Component-Position-Resolution-Layer order
 func (pd *PacketDecoder) decodeCPRL() ([]Packet, error) {
-	setsByComp := make([][]map[int]struct{}, pd.numComponents)
+	posMaps := pd.buildPositionMaps()
 	for comp := 0; comp < pd.numComponents; comp++ {
-		setsByComp[comp] = pd.precinctIndexSets(comp)
-	}
-	globalPrecincts := pd.globalPrecinctIndicesAll()
-
-	for comp := 0; comp < pd.numComponents; comp++ {
-		for _, precinctIdx := range globalPrecincts {
+		positions := posMaps.byComp[comp]
+		for _, pos := range positions {
 			for res := 0; res < pd.numResolutions; res++ {
-				if _, ok := setsByComp[comp][res][precinctIdx]; !ok {
+				resMap := posMaps.byCompRes[comp][res]
+				if resMap == nil {
+					continue
+				}
+				precinctIdx, ok := resMap[pos]
+				if !ok {
 					continue
 				}
 				for layer := 0; layer < pd.numLayers; layer++ {
@@ -934,6 +968,17 @@ func (pd *PacketDecoder) precinctIndicesForResolution(component, resolution int)
 	}
 	sort.Ints(indices)
 	return indices
+}
+
+func (pd *PacketDecoder) buildPositionMaps() *positionMaps {
+	return buildPositionMaps(positionInputs{
+		numComponents:     pd.numComponents,
+		numResolutions:    pd.numResolutions,
+		precinctIndices:   pd.precinctIndicesForResolution,
+		componentBounds:   pd.componentBoundsFor,
+		componentSampling: pd.componentSamplingFor,
+		precinctSize:      pd.precinctSizeForResolution,
+	})
 }
 
 func (pd *PacketDecoder) precinctIndicesForResolutionAll(resolution int) []int {
