@@ -59,7 +59,7 @@ func TestROIConfigScaleOverridesShift(t *testing.T) {
 	}
 }
 
-func TestROIConfigMixedShiftError(t *testing.T) {
+func TestROIConfigMixedShiftMaxPriority(t *testing.T) {
 	cfg := &ROIConfig{
 		ROIs: []ROIRegion{
 			{Rect: &ROIParams{X0: 0, Y0: 0, Width: 4, Height: 4}, Shift: 2},
@@ -67,8 +67,15 @@ func TestROIConfigMixedShiftError(t *testing.T) {
 		},
 	}
 
-	if _, _, _, err := cfg.ResolveRectangles(8, 8, 1); err == nil {
-		t.Fatalf("expected mixed shift error, got nil")
+	_, shifts, rects, err := cfg.ResolveRectangles(8, 8, 1)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if len(shifts) != 1 || shifts[0] != 3 {
+		t.Fatalf("expected max shift 3, got %+v", shifts)
+	}
+	if len(rects) != 1 || len(rects[0]) != 2 {
+		t.Fatalf("expected two rects, got %+v", rects)
 	}
 }
 

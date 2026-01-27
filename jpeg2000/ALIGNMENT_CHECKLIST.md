@@ -40,14 +40,14 @@ Legend: [ ] = pending, [x] = done
 - [x] Empty packet handling and layer allocation
 
 ### Rate-distortion / PCRD
-- [ ] Distortion metric computation and pass weighting
-- [ ] Layer target rate allocation and truncation policy
-- [ ] Multi-tile rate budget aggregation
+- [x] Distortion metric computation and pass weighting
+- [x] Layer target rate allocation and truncation policy
+- [x] Multi-tile rate budget aggregation
 
 ### ROI (Region of Interest)
-- [ ] MaxShift behavior and bitplane scaling rules
-- [ ] General scaling ROI semantics and marker handling
-- [ ] ROI priority when multiple regions exist
+- [x] MaxShift behavior and bitplane scaling rules
+- [x] General scaling ROI semantics and marker handling
+- [x] ROI priority when multiple regions exist
 
 ### Colorspace
 - [ ] RCT/ICT coefficients and rounding behavior

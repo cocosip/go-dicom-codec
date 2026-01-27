@@ -42,6 +42,29 @@ func NewPacketEncoder(numComponents, numLayers, numResolutions int, progression 
 	}
 }
 
+// ResetState clears per-encode state (included flags, length counters, tag trees).
+// This is needed when EncodePackets is called multiple times for rate-control refinement.
+func (pe *PacketEncoder) ResetState() {
+	pe.packets = nil
+	for _, resMap := range pe.precincts {
+		for _, precMap := range resMap {
+			for _, precincts := range precMap {
+				for _, precinct := range precincts {
+					if precinct == nil {
+						continue
+					}
+					precinct.InclTree = nil
+					precinct.ZBPTree = nil
+					for _, cb := range precinct.CodeBlocks {
+						cb.Included = false
+						cb.NumLenBits = 0
+					}
+				}
+			}
+		}
+	}
+}
+
 // SetImageDimensions sets the tile bounds for progression ordering.
 func (pe *PacketEncoder) SetImageDimensions(width, height int) {
 	pe.tileX0 = 0

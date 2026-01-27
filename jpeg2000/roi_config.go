@@ -248,10 +248,10 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 			if comp < 0 || comp >= components {
 				return 0, nil, nil, fmt.Errorf("ROI[%d]: component index %d out of range", i, comp)
 			}
-			if shifts[comp] != 0 && shifts[comp] != roiShift {
-				return 0, nil, nil, fmt.Errorf("ROI[%d]: mixed shifts for component %d (%d vs %d)", i, comp, shifts[comp], roiShift)
+			// Use the maximum shift per component when multiple ROI regions exist.
+			if roiShift > shifts[comp] {
+				shifts[comp] = roiShift
 			}
-			shifts[comp] = roiShift
 			rectsByComp[comp] = append(rectsByComp[comp], roiRect{
 				x0: roi.Rect.X0,
 				y0: roi.Rect.Y0,

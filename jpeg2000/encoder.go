@@ -1464,6 +1464,33 @@ func (e *Encoder) writeTileRGN(buf *bytes.Buffer) error {
 	return nil
 }
 
+type tileEncoding struct {
+	idx       int
+	width     int
+	height    int
+	packetEnc *t2.PacketEncoder
+	blocks    []*t2.PrecinctCodeBlock
+}
+
+func (e *Encoder) tileBounds(tileIdx, tileWidth, tileHeight, numTilesX int) (int, int, int, int) {
+	tileX := tileIdx % numTilesX
+	tileY := tileIdx / numTilesX
+
+	x0 := tileX * tileWidth
+	y0 := tileY * tileHeight
+	x1 := x0 + tileWidth
+	y1 := y0 + tileHeight
+
+	if x1 > e.params.Width {
+		x1 = e.params.Width
+	}
+	if y1 > e.params.Height {
+		y1 = e.params.Height
+	}
+
+	return x0, y0, x1, y1
+}
+
 // writeTiles writes all tile data
 func (e *Encoder) writeTiles(buf *bytes.Buffer) error {
 	p := e.params
@@ -1482,6 +1509,11 @@ func (e *Encoder) writeTiles(buf *bytes.Buffer) error {
 	numTilesY := (p.Height + tileHeight - 1) / tileHeight
 	numTiles := numTilesX * numTilesY
 
+	useGlobalPCRD := numTiles > 1 && (e.params.NumLayers > 1 || e.params.TargetRatio > 0)
+	if useGlobalPCRD {
+		return e.writeTilesWithGlobalRateDistortion(buf, tileWidth, tileHeight, numTilesX, numTiles)
+	}
+
 	// Write each tile
 	for tileIdx := 0; tileIdx < numTiles; tileIdx++ {
 		if err := e.writeTile(buf, tileIdx, tileWidth, tileHeight, numTilesX); err != nil {
@@ -1492,23 +1524,91 @@ func (e *Encoder) writeTiles(buf *bytes.Buffer) error {
 	return nil
 }
 
+// writeTilesWithGlobalRateDistortion performs global PCRD allocation across tiles.
+func (e *Encoder) writeTilesWithGlobalRateDistortion(buf *bytes.Buffer, tileWidth, tileHeight, numTilesX, numTiles int) error {
+	tileEncodings := make([]tileEncoding, 0, numTiles)
+	allBlocks := make([]*t2.PrecinctCodeBlock, 0)
+	packetEncs := make([]*t2.PacketEncoder, 0, numTiles)
+
+	for tileIdx := 0; tileIdx < numTiles; tileIdx++ {
+		x0, y0, x1, y1 := e.tileBounds(tileIdx, tileWidth, tileHeight, numTilesX)
+		actualWidth := x1 - x0
+		actualHeight := y1 - y0
+
+		// Extract tile data
+		tileData := make([][]int32, e.params.Components)
+		for c := 0; c < e.params.Components; c++ {
+			tileData[c] = make([]int32, actualWidth*actualHeight)
+			for ty := 0; ty < actualHeight; ty++ {
+				srcIdx := (y0+ty)*e.params.Width + x0
+				dstIdx := ty * actualWidth
+				copy(tileData[c][dstIdx:dstIdx+actualWidth], e.data[c][srcIdx:srcIdx+actualWidth])
+			}
+		}
+
+		// Apply wavelet transform
+		transformedData, err := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
+		if err != nil {
+			return fmt.Errorf("wavelet transform failed for tile %d: %w", tileIdx, err)
+		}
+
+		packetEnc, blocks := e.buildTilePacketEncoder(transformedData, actualWidth, actualHeight)
+		tileEncodings = append(tileEncodings, tileEncoding{
+			idx:       tileIdx,
+			width:     actualWidth,
+			height:    actualHeight,
+			packetEnc: packetEnc,
+			blocks:    blocks,
+		})
+		allBlocks = append(allBlocks, blocks...)
+		packetEncs = append(packetEncs, packetEnc)
+	}
+
+	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
+		origBytes := e.params.Width * e.params.Height * e.params.Components * ((e.params.BitDepth + 7) / 8)
+		e.applyRateDistortionGlobal(allBlocks, packetEncs, origBytes, numTiles)
+	}
+
+	for _, tile := range tileEncodings {
+		tileBytes := []byte{0x00}
+		if tile.packetEnc != nil {
+			tile.packetEnc.ResetState()
+			packets, err := tile.packetEnc.EncodePackets()
+			if err == nil {
+				tileBytes = e.packetsToBytes(packets)
+			}
+		}
+
+		tileHeader := &bytes.Buffer{}
+		if err := e.writeTileRGN(tileHeader); err != nil {
+			return fmt.Errorf("failed to write tile-part RGN: %w", err)
+		}
+
+		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
+		_ = binary.Write(buf, binary.BigEndian, uint16(10)) // Lsot
+
+		_ = binary.Write(buf, binary.BigEndian, uint16(tile.idx)) // Isot
+		tilePartLength := len(tileBytes) + tileHeader.Len() + 14 // SOT(12) + header + SOD(2) + data
+		_ = binary.Write(buf, binary.BigEndian, uint32(tilePartLength))
+		_ = binary.Write(buf, binary.BigEndian, uint8(0)) // TPsot
+		_ = binary.Write(buf, binary.BigEndian, uint8(1)) // TNsot
+
+		if _, err := buf.Write(tileHeader.Bytes()); err != nil {
+			return err
+		}
+
+		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
+
+		buf.Write(tileBytes)
+	}
+
+	return nil
+}
+
 // writeTile writes a single tile
 func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, numTilesX int) error {
 	// Calculate tile bounds
-	tileX := tileIdx % numTilesX
-	tileY := tileIdx / numTilesX
-
-	x0 := tileX * tileWidth
-	y0 := tileY * tileHeight
-	x1 := x0 + tileWidth
-	y1 := y0 + tileHeight
-
-	if x1 > e.params.Width {
-		x1 = e.params.Width
-	}
-	if y1 > e.params.Height {
-		y1 = e.params.Height
-	}
+	x0, y0, x1, y1 := e.tileBounds(tileIdx, tileWidth, tileHeight, numTilesX)
 
 	actualWidth := x1 - x0
 	actualHeight := y1 - y0
@@ -1686,14 +1786,7 @@ func (e *Encoder) quantizeSubbandFloat(coeffs []float64, out []int32, x0, y0, w,
 	}
 }
 
-// encodeTileData encodes tile data using T1 and T2 encoding
-func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
-	// Step 1: Partition into subbands and code-blocks
-	// Step 2: Apply T1 EBCOT encoding to each code-block
-	// Step 3: Collect code-blocks into T2 packet encoder
-	// Step 4: Generate packets and write to bitstream
-
-	// Initialize T2 packet encoder
+func (e *Encoder) buildTilePacketEncoder(tileData [][]int32, width, height int) (*t2.PacketEncoder, []*t2.PrecinctCodeBlock) {
 	packetEnc := t2.NewPacketEncoder(
 		e.params.Components,
 		e.params.NumLayers,
@@ -1714,9 +1807,6 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		packetEnc.SetComponentBounds(comp, 0, 0, width, height)
 	}
 	allBlocks := make([]*t2.PrecinctCodeBlock, 0)
-
-	// Debug counters
-	cbCountByRes := make([]int, e.params.NumLevels+1)
 
 	// Process each component
 	for comp := 0; comp < e.params.Components; comp++ {
@@ -1757,80 +1847,36 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 					packetEnc.AddCodeBlock(comp, res, precinctIdx, encodedCB)
 					allBlocks = append(allBlocks, encodedCB)
 					globalCBIdx++
-
-					// Count codeblocks per resolution
-					cbCountByRes[res]++
 				}
 			}
 		}
 	}
+
+	return packetEnc, allBlocks
+}
+
+// encodeTileData encodes tile data using T1 and T2 encoding.
+func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
+	packetEnc, allBlocks := e.buildTilePacketEncoder(tileData, width, height)
 
 	// Apply rate-distortion optimized allocation (PCRD) if layered or TargetRatio is requested.
 	if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {
 		origBytes := e.params.Width * e.params.Height * e.params.Components * ((e.params.BitDepth + 7) / 8)
-		if e.params.UsePCRDOpt && e.params.TargetRatio > 0 {
-			midRefine := e.params.TargetRatio >= 7.5 && e.params.TargetRatio <= 8.5
-			if !midRefine && e.params.TargetRatio <= 8.0 {
-				e.applyRateDistortion(allBlocks, origBytes)
-			} else {
-				targetTotal := float64(origBytes) / e.params.TargetRatio
-				// Estimate fixed codestream overhead (main header + per tile markers)
-				fixed := float64(e.estimateFixedOverhead())
-				if targetTotal > fixed {
-					targetData := targetTotal - fixed
-					// Iteratively refine allocation based on actual packet bytes
-					budget := targetData
-					maxIter := 6
-					minScale := 0.5
-					maxScale := 1.5
-					if midRefine {
-						maxIter = 12
-						minScale = 0.8
-						maxScale = 1.2
-					}
-					for iter := 0; iter < maxIter; iter++ {
-						e.applyRateDistortionWithBudget(allBlocks, budget)
-						packets, err := packetEnc.EncodePackets()
-						if err != nil {
-							break
-						}
-						pktBytes := 0
-						for _, p := range packets {
-							pktBytes += stuffedLen(p.Header) + stuffedLen(p.Body)
-						}
-						if pktBytes == 0 {
-							break
-						}
-						errPct := math.Abs(float64(pktBytes)-targetData) / targetData
-						if errPct <= 0.05 {
-							break
-						}
-						scale := targetData / float64(pktBytes)
-						if scale < minScale {
-							scale = minScale
-						}
-						if scale > maxScale {
-							scale = maxScale
-						}
-						budget = budget * scale
-					}
-				} else {
-					e.applyRateDistortion(allBlocks, origBytes)
-				}
-			}
-		} else {
-			e.applyRateDistortion(allBlocks, origBytes)
-		}
+		e.applyRateDistortionGlobal(allBlocks, []*t2.PacketEncoder{packetEnc}, origBytes, 1)
 	}
 
 	// Generate packets
+	packetEnc.ResetState()
 	packets, err := packetEnc.EncodePackets()
 	if err != nil {
 		// Fallback to empty packet on error
 		return []byte{0x00}
 	}
 
-	// Write packets to bitstream
+	return e.packetsToBytes(packets)
+}
+
+func (e *Encoder) packetsToBytes(packets []t2.Packet) []byte {
 	// OpenJPEG applies bit-stuffing only to packet headers (handled during header encoding).
 	buf := &bytes.Buffer{}
 	for _, packet := range packets {
@@ -1839,7 +1885,6 @@ func (e *Encoder) encodeTileData(tileData [][]int32, width, height int) []byte {
 		// Body is raw code-block data (no byte stuffing).
 		buf.Write(packet.Body)
 	}
-
 	return buf.Bytes()
 }
 
@@ -1871,6 +1916,102 @@ func (e *Encoder) estimateFixedOverhead() int {
 	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC))
 	// Byte-stuffing applies to packet data; headers here are marker-coded, do not stuff
 	return buf.Len()
+}
+
+func (e *Encoder) estimateFixedOverheadForTiles(numTiles int) int {
+	if numTiles <= 1 {
+		return e.estimateFixedOverhead()
+	}
+	buf := &bytes.Buffer{}
+	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOC))
+	_ = e.writeSIZ(buf)
+	_ = e.writeCOD(buf)
+	_ = e.writeQCD(buf)
+	_ = e.writeRGN(buf)
+	_ = e.writeCOM(buf)
+	for tile := 0; tile < numTiles; tile++ {
+		tileHeader := &bytes.Buffer{}
+		_ = e.writeTileRGN(tileHeader)
+		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
+		_ = binary.Write(buf, binary.BigEndian, uint16(10))
+		_ = binary.Write(buf, binary.BigEndian, uint16(tile))
+		_ = binary.Write(buf, binary.BigEndian, uint32(14+tileHeader.Len()))
+		_ = binary.Write(buf, binary.BigEndian, uint8(0))
+		_ = binary.Write(buf, binary.BigEndian, uint8(1))
+		buf.Write(tileHeader.Bytes())
+		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
+	}
+	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC))
+	return buf.Len()
+}
+
+func (e *Encoder) applyRateDistortionGlobal(blocks []*t2.PrecinctCodeBlock, packetEncs []*t2.PacketEncoder, origBytes int, numTiles int) {
+	if len(blocks) == 0 {
+		return
+	}
+	if e.params.NumLayers <= 0 {
+		e.params.NumLayers = 1
+	}
+
+	if e.params.UsePCRDOpt && e.params.TargetRatio > 0 {
+		midRefine := e.params.TargetRatio >= 7.5 && e.params.TargetRatio <= 8.5
+		if !midRefine && e.params.TargetRatio <= 8.0 {
+			e.applyRateDistortion(blocks, origBytes)
+			return
+		}
+		targetTotal := float64(origBytes) / e.params.TargetRatio
+		fixed := float64(e.estimateFixedOverheadForTiles(numTiles))
+		if targetTotal <= fixed {
+			e.applyRateDistortion(blocks, origBytes)
+			return
+		}
+		targetData := targetTotal - fixed
+		budget := targetData
+		maxIter := 6
+		minScale := 0.5
+		maxScale := 1.5
+		if midRefine {
+			maxIter = 12
+			minScale = 0.8
+			maxScale = 1.2
+		}
+		for iter := 0; iter < maxIter; iter++ {
+			e.applyRateDistortionWithBudget(blocks, budget)
+			pktBytes := 0
+			for _, pe := range packetEncs {
+				if pe == nil {
+					continue
+				}
+				pe.ResetState()
+				packets, err := pe.EncodePackets()
+				if err != nil {
+					pktBytes = 0
+					break
+				}
+				for _, p := range packets {
+					pktBytes += stuffedLen(p.Header) + stuffedLen(p.Body)
+				}
+			}
+			if pktBytes == 0 {
+				break
+			}
+			errPct := math.Abs(float64(pktBytes)-targetData) / targetData
+			if errPct <= 0.05 {
+				break
+			}
+			scale := targetData / float64(pktBytes)
+			if scale < minScale {
+				scale = minScale
+			}
+			if scale > maxScale {
+				scale = maxScale
+			}
+			budget = budget * scale
+		}
+		return
+	}
+
+	e.applyRateDistortion(blocks, origBytes)
 }
 
 // applyRateDistortionWithBudget performs allocation using a target total packet-data budget in bytes.
