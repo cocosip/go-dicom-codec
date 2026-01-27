@@ -67,9 +67,9 @@ Legend: [ ] = pending, [x] = done
 ## HTJ2K (align with OpenJPH)
 
 ### VLC / UVLC tables
-- [ ] Annex C table completeness and indexing
-- [ ] Context selection (neighbor significance)
-- [ ] UVLC residual decoding rules
+- [x] Annex C table completeness and indexing
+- [x] Context selection (neighbor significance)
+- [x] UVLC residual decoding rules
 
 ### MEL (run-length coder)
 - [ ] 13-state machine and exponent mapping

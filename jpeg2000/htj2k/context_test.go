@@ -19,11 +19,11 @@ func TestContextComputer(t *testing.T) {
 		// Mark first quad as significant
 		cc.UpdateQuadSignificance(0, 0, 0x0F) // All 4 samples significant
 
-		// Test second quad in first row (should see left neighbors)
+		// Test second quad in first row (context from left quad rho)
 		ctx = cc.ComputeContext(1, 0, true)
 		t.Logf("Second quad (1,0) context with left neighbors: %d", ctx)
-		if ctx == 0 {
-			t.Errorf("Expected non-zero context for second quad with left neighbors")
+		if ctx != 7 {
+			t.Errorf("Expected context 7 for left rho=0x0F, got %d", ctx)
 		}
 	})
 
@@ -31,20 +31,23 @@ func TestContextComputer(t *testing.T) {
 		cc := NewContextComputer(8, 8)
 
 		// Set up some significant samples in first row
-		cc.UpdateQuadSignificance(0, 0, 0x0F) // (0,0): all significant
-		cc.UpdateQuadSignificance(1, 0, 0x05) // (1,0): partial
+		cc.UpdateQuadSignificance(0, 0, 0x0A) // rho bits 1 and 3
+		cc.UpdateQuadSignificance(1, 0, 0x02) // rho bit 1
 
 		// Test context for second row
 		ctx := cc.ComputeContext(0, 1, false)
 		t.Logf("Second row first quad (0,1) context: %d", ctx)
-		if ctx == 0 {
-			t.Errorf("Expected non-zero context with top neighbors")
+		if ctx != 5 {
+			t.Errorf("Expected context 5 from top neighbors, got %d", ctx)
 		}
 
 		// Test context with both top and left neighbors
-		cc.UpdateQuadSignificance(0, 1, 0x0C) // Mark (0,1) significant
+		cc.UpdateQuadSignificance(0, 1, 0x0C) // rho bits 2 and 3
 		ctx = cc.ComputeContext(1, 1, false)
 		t.Logf("Quad (1,1) with top and left neighbors context: %d", ctx)
+		if ctx != 3 {
+			t.Errorf("Expected context 3 with top+left neighbors, got %d", ctx)
+		}
 	})
 
 	t.Run("SignificanceMap", func(t *testing.T) {

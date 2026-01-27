@@ -23,14 +23,13 @@ This package implements the HTJ2K block coder based on **ISO/IEC 15444-15:2019 /
 ### ⚠️ Partial Implementation
 
 1. **VLC (Variable Length Coding)** - `vlc_tables.go`
-   - Table structure defined
-   - **TODO**: Complete CxtVLC_table_0 and CxtVLC_table_1 (300+ entries from Annex C)
-   - Currently uses simplified encoding (not spec-compliant for production)
+   - CxtVLC_table_0 and CxtVLC_table_1 are loaded from OpenJPH (Annex C)
+   - Encoding/decoding integration is still partial (not production-ready)
 
 2. **HT Cleanup Pass**
    - Core algorithm structure implemented
    - **TODO**: Full integration with complete VLC tables
-   - **TODO**: Context computation and quad-pair interleaving (Clause 7.3.4)
+   - **TODO**: Quad-pair interleaving and HT cleanup wiring (Clause 7.3.4)
 
 ## Technical Details
 
@@ -84,14 +83,13 @@ decoded, err := decoder.Decode(encoded, numPasses)
 
 To achieve full HTJ2K compliance:
 
-1. **Complete VLC Tables** (High Priority)
-   - Extract all 300+ entries from Annex C
-   - Implement efficient lookup mechanism
-   - Add encoding table generation
+1. **VLC Table Validation** (High Priority)
+   - Keep CxtVLC tables synced with OpenJPH source
+   - Expand lookup-generation coverage
 
-2. **Context Computation** (High Priority)
-   - Implement neighbor significance pattern computation
-   - Add context selection logic (Clause 7.3.5)
+2. **Context Integration** (High Priority)
+   - Validate context selection against OpenJPH edge cases
+   - Wire context usage through the full HT cleanup pass
 
 3. **Quad-Pair Interleaving** (Medium Priority)
    - Implement VLC bit-stream interleaving (Clause 7.3.4)

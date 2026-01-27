@@ -1,7 +1,8 @@
 package htj2k
 
-// VLC tables extracted from OpenJPEG
-// Source: https://github.com/uclouvain/openjpeg/blob/master/src/lib/openjp2/t1_ht_generate_luts.c
+// VLC tables extracted from OpenJPH (table0.h/table1.h).
+// Source: fo-dicom-codec-code/Native/Common/OpenJPH/coding/table0.h
+// and fo-dicom-codec-code/Native/Common/OpenJPH/coding/table1.h.
 
 // VLCEntry represents one entry in the VLC table
 // Structure: {c_q, rho, u_off, e_k, e_1, cwd, cwd_len}

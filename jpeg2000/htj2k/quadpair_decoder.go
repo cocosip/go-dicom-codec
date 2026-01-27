@@ -41,48 +41,44 @@ type QuadPairDecoder struct {
 	vlcDecoder  *VLCDecoder
 	uvlcDecoder *UVLCDecoder
 	context     *ContextComputer
+	mel         *MELDecoderSpec
 	QW          int // Width in quads
 }
 
 // NewQuadPairDecoder creates a new quad-pair decoder
 func NewQuadPairDecoder(vlcData []byte, widthInQuads, heightInQuads int) *QuadPairDecoder {
-	// Create a bit reader from VLC data for U-VLC decoding
-	bitReader := &VLCBitReader{
-		decoder: NewVLCDecoder(vlcData),
-	}
+	vlc := NewVLCDecoder(vlcData)
 
 	return &QuadPairDecoder{
-		vlcDecoder:  NewVLCDecoder(vlcData),
-		uvlcDecoder: NewUVLCDecoder(bitReader),
+		vlcDecoder:  vlc,
+		uvlcDecoder: NewUVLCDecoder(vlc),
 		context:     NewContextComputer(widthInQuads*2, heightInQuads*2), // Convert to samples
 		QW:          widthInQuads,
 	}
 }
 
-// VLCBitReader adapts VLCDecoder to the BitReader interface for U-VLC
-type VLCBitReader struct {
-	decoder *VLCDecoder
+// SetMELDecoder attaches a MEL decoder for context-zero events.
+func (d *QuadPairDecoder) SetMELDecoder(mel *MELDecoderSpec) {
+	d.mel = mel
 }
 
-func (v *VLCBitReader) ReadBit() (uint8, error) {
-	bit, ok := v.decoder.readBits(1)
-	if !ok {
-		return 0, ErrInsufficientData
-	}
-	return uint8(bit), nil
-}
-
-func (v *VLCBitReader) ReadBitsLE(n int) (uint32, error) {
-	// Read n bits in little-endian order (LSB first)
-	var result uint32
-	for i := 0; i < n; i++ {
-		bit, err := v.ReadBit()
-		if err != nil {
-			return 0, err
+func (d *QuadPairDecoder) decodeQuadWithContext(context uint8, isInitialLinePair bool) (uint8, uint8, uint8, uint8, error) {
+	if context == 0 && d.mel != nil {
+		melBit, ok := d.mel.DecodeMELSym()
+		if !ok {
+			return 0, 0, 0, 0, ErrInsufficientData
 		}
-		result |= uint32(bit) << i
+		if melBit == 0 {
+			return 0, 0, 0, 0, nil
+		}
 	}
-	return result, nil
+
+	rho, uOff, eK, e1, found := d.vlcDecoder.DecodeQuadWithContext(context, isInitialLinePair)
+	if !found {
+		return 0, 0, 0, 0, ErrInsufficientData
+	}
+
+	return rho, uOff, eK, e1, nil
 }
 
 // DecodeQuadPair decodes a single quad-pair according to Clause 7.3.4
@@ -100,16 +96,16 @@ func (d *QuadPairDecoder) DecodeQuadPair(g int, qy int) (*QuadPairResult, error)
 		HasSecondQuad:     (2*g + 1) < d.QW,
 	}
 
-	q1 := 2 * g       // First quad index
-	q2 := 2*g + 1     // Second quad index
-	qx1 := q1 % d.QW  // First quad x position
-	qx2 := q2 % d.QW  // Second quad x position
+	q1 := 2 * g      // First quad index
+	q2 := 2*g + 1    // Second quad index
+	qx1 := q1 % d.QW // First quad x position
+	qx2 := q2 % d.QW // Second quad x position
 
 	// Step 1: Decode first quad's CxtVLC codeword
 	ctx1 := d.context.ComputeContext(qx1, qy, result.IsInitialLinePair)
-	rho1, u_off1, e_k1, e_1_1, found := d.vlcDecoder.DecodeQuadWithContext(ctx1, result.IsInitialLinePair)
-	if !found {
-		return nil, ErrInsufficientData
+	rho1, u_off1, e_k1, e_1_1, err := d.decodeQuadWithContext(ctx1, result.IsInitialLinePair)
+	if err != nil {
+		return nil, err
 	}
 
 	result.Rho1 = rho1
@@ -120,27 +116,21 @@ func (d *QuadPairDecoder) DecodeQuadPair(g int, qy int) (*QuadPairResult, error)
 	// Update significance map for first quad
 	d.context.UpdateQuadSignificance(qx1, qy, rho1)
 
-	// Step 2: Decode first quad's U-VLC if ulf1=1
-	if result.ULF1 == 1 {
-		uq1, err := d.uvlcDecoder.DecodeUnsignedResidual()
+	// Step 2: If no second quad (odd width), decode U-VLC for the first quad only.
+	if !result.HasSecondQuad {
+		uq1, _, err := d.uvlcDecoder.DecodePair(result.ULF1, 0, result.IsInitialLinePair, 0)
 		if err != nil {
 			return nil, err
 		}
 		result.Uq1 = uq1
-	} else {
-		result.Uq1 = 0
-	}
-
-	// Step 3: If no second quad (odd width), return early
-	if !result.HasSecondQuad {
 		return result, nil
 	}
 
-	// Step 4: Decode second quad's CxtVLC codeword
+	// Step 3: Decode second quad's CxtVLC codeword
 	ctx2 := d.context.ComputeContext(qx2, qy, result.IsInitialLinePair)
-	rho2, u_off2, e_k2, e_1_2, found := d.vlcDecoder.DecodeQuadWithContext(ctx2, result.IsInitialLinePair)
-	if !found {
-		return nil, ErrInsufficientData
+	rho2, u_off2, e_k2, e_1_2, err := d.decodeQuadWithContext(ctx2, result.IsInitialLinePair)
+	if err != nil {
+		return nil, err
 	}
 
 	result.Rho2 = rho2
@@ -151,38 +141,22 @@ func (d *QuadPairDecoder) DecodeQuadPair(g int, qy int) (*QuadPairResult, error)
 	// Update significance map for second quad
 	d.context.UpdateQuadSignificance(qx2, qy, rho2)
 
-	// Step 5: Decode second quad's U-VLC (conditional logic)
-	if result.ULF2 == 1 {
-		// Check special cases for initial line-pair
-		if result.IsInitialLinePair && result.ULF1 == 1 && result.ULF2 == 1 {
-			// Both quads in initial line-pair have ulf=1
-			// Use Formula (4): u = 2 + u_pfx + u_sfx + 4*u_ext
-			uq2, err := d.uvlcDecoder.DecodeUnsignedResidualInitialPair()
-			if err != nil {
-				return nil, err
-			}
-			result.Uq2 = uq2
-		} else if result.ULF1 == 1 && result.Uq1 > 2 {
-			// First quad has uq1>2, use simplified decoding
-			// NOTE: uq1>2 means u_pfx>2, which means u_pfx=3 or u_pfx=5
-			// (since u_pfx can only be {1,2,3,5})
-			// This happens when the prefix has length ≥3
-			uq2, err := d.uvlcDecoder.DecodeUnsignedResidualSecondQuad()
-			if err != nil {
-				return nil, err
-			}
-			result.Uq2 = uq2
-		} else {
-			// Normal U-VLC decoding using Formula (3)
-			uq2, err := d.uvlcDecoder.DecodeUnsignedResidual()
-			if err != nil {
-				return nil, err
-			}
-			result.Uq2 = uq2
+	// Step 4: Decode U-VLC for the quad pair using OpenJPH table rules.
+	melEvent := 0
+	if result.IsInitialLinePair && result.ULF1 == 1 && result.ULF2 == 1 && d.mel != nil {
+		bit, ok := d.mel.DecodeMELSym()
+		if !ok {
+			return nil, ErrInsufficientData
 		}
-	} else {
-		result.Uq2 = 0
+		melEvent = bit
 	}
+
+	uq1, uq2, err := d.uvlcDecoder.DecodePair(result.ULF1, result.ULF2, result.IsInitialLinePair, melEvent)
+	if err != nil {
+		return nil, err
+	}
+	result.Uq1 = uq1
+	result.Uq2 = uq2
 
 	return result, nil
 }
@@ -225,8 +199,7 @@ func GetQuadInfo(pair *QuadPairResult, quadIndex int) (rho uint8, ulf uint8, uq 
 	if quadIndex == 0 {
 		// First quad (q1)
 		return pair.Rho1, pair.ULF1, pair.Uq1, pair.E1_1, pair.EMax1
-	} else {
-		// Second quad (q2)
-		return pair.Rho2, pair.ULF2, pair.Uq2, pair.E1_2, pair.EMax2
 	}
+	// Second quad (q2)
+	return pair.Rho2, pair.ULF2, pair.Uq2, pair.E1_2, pair.EMax2
 }
