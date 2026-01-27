@@ -563,7 +563,7 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 							var maxBP int
 							if ok && bandNumbps > 0 {
 								const T1_NMSEDEC_FRACBITS = 6
-								cblkNumbps := bandNumbps + 1 - zbp
+								cblkNumbps := bandNumbps - zbp
 								if cblkNumbps <= 0 {
 									maxBP = -1
 								} else {
@@ -704,16 +704,8 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 								for i := range cbd.coeffs {
 									cbd.coeffs[i] >>= T1_NMSEDEC_FRACBITS
 								}
-								if td.cod.Transformation == 1 {
-									// Reversible 5/3 path: normalize by 2 with rounding.
-									for i, v := range cbd.coeffs {
-										if v >= 0 {
-											cbd.coeffs[i] = (v + 1) / 2
-										} else {
-											cbd.coeffs[i] = (v - 1) / 2
-										}
-									}
-								}
+								// Reversible 5/3 path does not require extra normalization beyond the
+								// T1_NMSEDEC_FRACBITS shift (align with OpenJPEG).
 
 								// Inverse General Scaling for ROI blocks (Srgn=1)
 								if td.roi != nil && style == 1 && shiftVal > 0 && inside {
