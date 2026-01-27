@@ -14,7 +14,7 @@ func ICTForward(r, g, b int32) (y, cb, cr int32) {
 // ICTInverse applies the inverse irreversible color transform (JPEG 2000 ICT).
 func ICTInverse(y, cb, cr int32) (r, g, b int32) {
 	r = int32(math.Round(float64(y) + 1.402*float64(cr)))
-	g = int32(math.Round(float64(y) - 0.34413*float64(cb) - 0.714136*float64(cr)))
+	g = int32(math.Round(float64(y) - 0.34413*float64(cb) - 0.71414*float64(cr)))
 	b = int32(math.Round(float64(y) + 1.772*float64(cb)))
 	return
 }

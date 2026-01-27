@@ -21,8 +21,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         0,
 			b:         0,
 			wantY:     0,
-			wantCb:    128,
-			wantCr:    128,
+			wantCb:    0,
+			wantCr:    0,
 			tolerance: 1,
 		},
 		{
@@ -31,8 +31,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         255,
 			b:         255,
 			wantY:     255,
-			wantCb:    128,
-			wantCr:    128,
+			wantCb:    0,
+			wantCr:    0,
 			tolerance: 1,
 		},
 		{
@@ -41,8 +41,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         0,
 			b:         0,
 			wantY:     76,
-			wantCb:    85,
-			wantCr:    255,
+			wantCb:    -43,
+			wantCr:    128,
 			tolerance: 2,
 		},
 		{
@@ -51,8 +51,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         255,
 			b:         0,
 			wantY:     150,
-			wantCb:    44,
-			wantCr:    21,
+			wantCb:    -84,
+			wantCr:    -107,
 			tolerance: 2,
 		},
 		{
@@ -61,8 +61,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         0,
 			b:         255,
 			wantY:     29,
-			wantCb:    255,
-			wantCr:    107,
+			wantCb:    128,
+			wantCr:    -21,
 			tolerance: 2,
 		},
 		{
@@ -71,8 +71,8 @@ func TestRGBToYCbCr(t *testing.T) {
 			g:         128,
 			b:         128,
 			wantY:     128,
-			wantCb:    128,
-			wantCr:    128,
+			wantCb:    0,
+			wantCr:    0,
 			tolerance: 1,
 		},
 	}
@@ -107,8 +107,8 @@ func TestYCbCrToRGB(t *testing.T) {
 		{
 			name:      "Black YCbCr",
 			y:         0,
-			cb:        128,
-			cr:        128,
+			cb:        0,
+			cr:        0,
 			wantR:     0,
 			wantG:     0,
 			wantB:     0,
@@ -117,8 +117,8 @@ func TestYCbCrToRGB(t *testing.T) {
 		{
 			name:      "White YCbCr",
 			y:         255,
-			cb:        128,
-			cr:        128,
+			cb:        0,
+			cr:        0,
 			wantR:     255,
 			wantG:     255,
 			wantB:     255,
@@ -127,8 +127,8 @@ func TestYCbCrToRGB(t *testing.T) {
 		{
 			name:      "Mid Gray",
 			y:         128,
-			cb:        128,
-			cr:        128,
+			cb:        0,
+			cr:        0,
 			wantR:     128,
 			wantG:     128,
 			wantB:     128,
@@ -221,11 +221,11 @@ func TestConvertRGBToYCbCr(t *testing.T) {
 	if abs(y[3]-255) > 1 {
 		t.Errorf("White Y: got %d, want 255", y[3])
 	}
-	if abs(cb[3]-128) > 1 {
-		t.Errorf("White Cb: got %d, want 128", cb[3])
+	if abs(cb[3]-0) > 1 {
+		t.Errorf("White Cb: got %d, want 0", cb[3])
 	}
-	if abs(cr[3]-128) > 1 {
-		t.Errorf("White Cr: got %d, want 128", cr[3])
+	if abs(cr[3]-0) > 1 {
+		t.Errorf("White Cr: got %d, want 0", cr[3])
 	}
 }
 
@@ -233,8 +233,8 @@ func TestConvertRGBToYCbCr(t *testing.T) {
 func TestConvertYCbCrToRGB(t *testing.T) {
 	// Create a 2x2 YCbCr image
 	y := []int32{0, 128, 255, 64}
-	cb := []int32{128, 128, 128, 128}
-	cr := []int32{128, 128, 128, 128}
+	cb := []int32{0, 0, 0, 0}
+	cr := []int32{0, 0, 0, 0}
 
 	rgb := ConvertYCbCrToRGB(y, cb, cr, 2, 2)
 

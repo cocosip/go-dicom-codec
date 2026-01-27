@@ -1,78 +1,14 @@
 package colorspace
 
-// RGBToYCbCr converts RGB to YCbCr color space
-// This is used for RGB images in JPEG 2000
-// Reference: ISO/IEC 15444-1:2019 Annex G.2
+// RGBToYCbCr converts RGB to JPEG 2000 ICT components (no 128 offset).
+// Input is expected to be level-shifted/signed, matching OpenJPEG's MCT.
 func RGBToYCbCr(r, g, b int32) (y, cb, cr int32) {
-	// ITU-R BT.601 conversion (for JPEG 2000)
-	// Y  = 0.299*R + 0.587*G + 0.114*B
-	// Cb = -0.168736*R - 0.331264*G + 0.5*B + 128
-	// Cr = 0.5*R - 0.418688*G - 0.081312*B + 128
-
-	// Using fixed-point arithmetic (16-bit fractional part)
-	// Multiply by 65536 for fixed point
-	const (
-		yR  = 19595  // 0.299 * 65536
-		yG  = 38470  // 0.587 * 65536
-		yB  = 7471   // 0.114 * 65536
-		cbR = -11059 // -0.168736 * 65536
-		cbG = -21709 // -0.331264 * 65536
-		cbB = 32768  // 0.5 * 65536
-		crR = 32768  // 0.5 * 65536
-		crG = -27439 // -0.418688 * 65536
-		crB = -5329  // -0.081312 * 65536
-	)
-
-	y = (yR*r + yG*g + yB*b + 32768) >> 16
-	cb = ((cbR*r + cbG*g + cbB*b + 32768) >> 16) + 128
-	cr = ((crR*r + crG*g + crB*b + 32768) >> 16) + 128
-
-	return
+	return ICTForward(r, g, b)
 }
 
-// YCbCrToRGB converts YCbCr to RGB color space
-// Reference: ISO/IEC 15444-1:2019 Annex G.2
+// YCbCrToRGB converts JPEG 2000 ICT components back to RGB (no 128 offset).
 func YCbCrToRGB(y, cb, cr int32) (r, g, b int32) {
-	// Inverse ITU-R BT.601 conversion
-	// R = Y + 1.402 * (Cr - 128)
-	// G = Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128)
-	// B = Y + 1.772 * (Cb - 128)
-
-	// Using fixed-point arithmetic
-	const (
-		crR = 91881  // 1.402 * 65536
-		cbG = -22553 // -0.344136 * 65536
-		crG = -46802 // -0.714136 * 65536
-		cbB = 116130 // 1.772 * 65536
-	)
-
-	cb -= 128
-	cr -= 128
-
-	r = y + ((crR*cr + 32768) >> 16)
-	g = y + ((cbG*cb + crG*cr + 32768) >> 16)
-	b = y + ((cbB*cb + 32768) >> 16)
-
-	// Clamp to [0, 255]
-	if r < 0 {
-		r = 0
-	} else if r > 255 {
-		r = 255
-	}
-
-	if g < 0 {
-		g = 0
-	} else if g > 255 {
-		g = 255
-	}
-
-	if b < 0 {
-		b = 0
-	} else if b > 255 {
-		b = 255
-	}
-
-	return
+	return ICTInverse(y, cb, cr)
 }
 
 // ConvertRGBToYCbCr converts an RGB image to YCbCr components

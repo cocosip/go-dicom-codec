@@ -50,9 +50,9 @@ Legend: [ ] = pending, [x] = done
 - [x] ROI priority when multiple regions exist
 
 ### Colorspace
-- [ ] RCT/ICT coefficients and rounding behavior
-- [ ] Channel order and signed/unsigned conversions
-- [ ] RGB<->YCbCr transform precision
+- [x] RCT/ICT coefficients and rounding behavior
+- [x] Channel order and signed/unsigned conversions
+- [x] RGB<->YCbCr transform precision
 
 ### Multi-component (Part 2)
 - [ ] MCT/MCC/MCO marker parsing and execution order
