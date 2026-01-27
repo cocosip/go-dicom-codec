@@ -39,9 +39,7 @@ type Decoder struct {
 	mctInverse [][]float64
 	// Optional per-component offsets
 	mctOffsets []int32
-	// MCO precision flags
-	mctReversible bool
-	bindings      []mctBinding
+	bindings   []mctBinding
 }
 
 type mctBinding struct {
@@ -49,9 +47,7 @@ type mctBinding struct {
 	matrixF    [][]float64
 	matrixI    [][]int32
 	offsets    []int32
-	normScale  float64
 	reversible bool
-	rounding   uint8
 }
 
 // NewDecoder creates a new JPEG 2000 decoder
@@ -190,204 +186,33 @@ func (d *Decoder) extractROIFromCOM() {
 	}
 }
 
-// extractMCTFromMarkers parses a custom MCT inverse matrix from MCT marker (experimental)
+// extractMCTFromMarkers parses a fallback inverse matrix from MCT markers (legacy mode).
 func (d *Decoder) extractMCTFromMarkers() {
 	if d.cs == nil {
 		return
 	}
-	var normScale float64
-	if len(d.cs.MCC) > 0 {
-		seg := d.cs.MCC[0]
-		applyOrder := make([]uint8, len(seg.MCTIndices))
-		copy(applyOrder, seg.MCTIndices)
-		// Parse MCO options for overrides
-		if len(d.cs.MCO) > 0 {
-			for _, o := range d.cs.MCO {
-				if o.Index != 0 || len(o.Options) == 0 {
-					continue
+	if len(d.cs.MCC) == 0 && len(d.cs.MCT) > 0 && d.components > 0 {
+		var inv [][]float64
+		var offs []int32
+		for _, seg := range d.cs.MCT {
+			if seg.ArrayType == codestream.MCTArrayDecorrelate && inv == nil {
+				if m := decodeMCTMatrix(seg, d.components); m != nil {
+					inv = m
 				}
-				off := 0
-				for off < len(o.Options) {
-					t := o.Options[off]
-					off++
-					switch t {
-					case codestream.MCOOptNormScale:
-						if off+4 <= len(o.Options) {
-							v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
-							normScale = float64(math.Float32frombits(v))
-							off += 4
-						} else {
-							off = len(o.Options)
-						}
-					case codestream.MCOOptRecordOrder:
-						if off < len(o.Options) {
-							count := int(o.Options[off])
-							off++
-							if off+count <= len(o.Options) {
-								applyOrder = make([]uint8, count)
-								copy(applyOrder, o.Options[off:off+count])
-								off += count
-							} else {
-								off = len(o.Options)
-							}
-						}
-					default:
-						off = len(o.Options)
-					}
+			}
+			if seg.ArrayType == codestream.MCTArrayOffset && offs == nil {
+				if o := decodeMCTOffsets(seg, d.components); o != nil {
+					offs = o
 				}
 			}
 		}
-		// AssocType semantics
-		if seg.AssocType == codestream.MCCAssocMatrixThenOffset || seg.AssocType == codestream.MCCAssocOffsetThenMatrix {
-			var mats, offs []uint8
-			for _, id := range applyOrder {
-				for _, m := range d.cs.MCT {
-					if m.Index == id {
-						if int(m.ArrayType) == 1 {
-							mats = append(mats, id)
-						} else if int(m.ArrayType) == 2 {
-							offs = append(offs, id)
-						}
-						break
-					}
-				}
-			}
-			if seg.AssocType == codestream.MCCAssocMatrixThenOffset {
-				applyOrder = append(mats, offs...)
-			} else {
-				applyOrder = append(offs, mats...)
-			}
+		if inv != nil {
+			d.mctInverse = inv
 		}
-		for _, idx := range applyOrder {
-			for _, m := range d.cs.MCT {
-				if m.Index == idx {
-					if int(m.ArrayType) == 1 && m.Rows > 0 && m.Cols > 0 {
-						rows := int(m.Rows)
-						cols := int(m.Cols)
-						data := m.Data
-						inv := make([][]float64, rows)
-						off := 0
-						need := rows * cols * 4
-						if len(data) >= need {
-							for r := 0; r < rows; r++ {
-								inv[r] = make([]float64, cols)
-								for c := 0; c < cols; c++ {
-									if int(m.ElementType) == 1 {
-										v := uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3])
-										inv[r][c] = float64(math.Float32frombits(v))
-									} else {
-										v := int32(uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3]))
-										inv[r][c] = float64(v)
-									}
-									off += 4
-								}
-							}
-							if normScale != 0 {
-								for r := 0; r < rows; r++ {
-									for c := 0; c < cols; c++ {
-										inv[r][c] /= normScale
-									}
-								}
-							}
-							d.mctInverse = inv
-						}
-					}
-					if int(m.ElementType) == 0 && int(m.ArrayType) == 2 && m.Rows > 0 && m.Cols > 0 {
-						rows := int(m.Rows)
-						cols := int(m.Cols)
-						if cols == 1 && rows == d.components {
-							data := m.Data
-							need := rows * 4
-							if len(data) >= need {
-								offs := make([]int32, rows)
-								off := 0
-								for r := 0; r < rows; r++ {
-									v := int32(uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3]))
-									off += 4
-									offs[r] = v
-								}
-								d.mctOffsets = offs
-							}
-						}
-					}
-				}
-			}
+		if offs != nil {
+			d.mctOffsets = offs
 		}
 		if d.mctInverse != nil || d.mctOffsets != nil {
-			return
-		}
-	}
-	if len(d.cs.MCT) > 0 {
-		for _, seg := range d.cs.MCT {
-			if int(seg.ElementType) == 1 && int(seg.ArrayType) == 1 && seg.Rows > 0 && seg.Cols > 0 {
-				rows := int(seg.Rows)
-				cols := int(seg.Cols)
-				data := seg.Data
-				need := rows * cols * 4
-				if len(data) >= need {
-					inv := make([][]float64, rows)
-					off := 0
-					for r := 0; r < rows; r++ {
-						inv[r] = make([]float64, cols)
-						for c := 0; c < cols; c++ {
-							v := uint32(data[off])<<24 | uint32(data[off+1])<<16 | uint32(data[off+2])<<8 | uint32(data[off+3])
-							off += 4
-							inv[r][c] = float64(math.Float32frombits(v))
-						}
-					}
-					d.mctInverse = inv
-					break
-				}
-			}
-		}
-		if len(d.cs.MCO) > 0 {
-			for _, o := range d.cs.MCO {
-				if o.Index != 0 || len(o.Options) == 0 {
-					continue
-				}
-				off := 0
-				for off < len(o.Options) {
-					t := o.Options[off]
-					off++
-					switch t {
-					case codestream.MCOOptNormScale:
-						if off+4 <= len(o.Options) {
-							v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
-							normScale = float64(math.Float32frombits(v))
-							off += 4
-						} else {
-							off = len(o.Options)
-						}
-					case codestream.MCOOptPrecision:
-						if off < len(o.Options) {
-							d.mctReversible = (o.Options[off] & 0x1) != 0
-							off++
-						} else {
-							off = len(o.Options)
-						}
-					case codestream.MCOOptRecordOrder:
-						// already applied by MCC order and AssocType semantics in this branch
-						if off < len(o.Options) {
-							count := int(o.Options[off])
-							off++
-							off += count
-						}
-					default:
-						off = len(o.Options)
-					}
-				}
-			}
-			if normScale != 0 && d.mctInverse != nil {
-				rows := len(d.mctInverse)
-				cols := len(d.mctInverse[0])
-				for r := 0; r < rows; r++ {
-					for c := 0; c < cols; c++ {
-						d.mctInverse[r][c] /= normScale
-					}
-				}
-			}
-		}
-		if d.mctInverse != nil {
 			return
 		}
 	}
@@ -438,137 +263,200 @@ func (d *Decoder) extractBindings() {
 	if d.cs == nil {
 		return
 	}
+	if len(d.cs.MCC) == 0 {
+		return
+	}
+	mctByIndex := make(map[uint8]codestream.MCTSegment, len(d.cs.MCT))
+	for _, seg := range d.cs.MCT {
+		mctByIndex[seg.Index] = seg
+	}
+	mccByIndex := make(map[uint8]codestream.MCCSegment, len(d.cs.MCC))
 	for _, seg := range d.cs.MCC {
-		compIDs := make([]int, len(seg.ComponentIDs))
-		for i := range seg.ComponentIDs {
-			compIDs[i] = int(seg.ComponentIDs[i])
+		mccByIndex[seg.Index] = seg
+	}
+	var order []uint8
+	if len(d.cs.MCO) > 0 && len(d.cs.MCO[0].StageIndices) > 0 {
+		order = append(order, d.cs.MCO[0].StageIndices...)
+	} else {
+		for _, seg := range d.cs.MCC {
+			order = append(order, seg.Index)
 		}
-		var order []uint8
-		order = append(order, seg.MCTIndices...)
-		var norm float64
-		var prec uint8
-		for _, o := range d.cs.MCO {
-			if o.Index != seg.Index || len(o.Options) == 0 {
-				continue
-			}
-			off := 0
-			for off < len(o.Options) {
-				t := o.Options[off]
-				off++
-				switch t {
-				case codestream.MCOOptNormScale:
-					if off+4 <= len(o.Options) {
-						v := uint32(o.Options[off])<<24 | uint32(o.Options[off+1])<<16 | uint32(o.Options[off+2])<<8 | uint32(o.Options[off+3])
-						norm = float64(math.Float32frombits(v))
-						off += 4
-					} else {
-						off = len(o.Options)
-					}
-				case codestream.MCOOptPrecision:
-					if off < len(o.Options) {
-						prec = o.Options[off]
-						off++
-					} else {
-						off = len(o.Options)
-					}
-				case codestream.MCOOptRecordOrder:
-					if off < len(o.Options) {
-						cnt := int(o.Options[off])
-						off++
-						if off+cnt <= len(o.Options) {
-							order = make([]uint8, cnt)
-							copy(order, o.Options[off:off+cnt])
-							off += cnt
-						} else {
-							off = len(o.Options)
-						}
-					}
-				default:
-					off = len(o.Options)
-				}
+	}
+	for _, idx := range order {
+		seg, ok := mccByIndex[idx]
+		if !ok {
+			continue
+		}
+		if seg.CollectionType != 0 && seg.CollectionType != 1 {
+			continue
+		}
+		compIDs := seg.ComponentIDs
+		if len(compIDs) == 0 && seg.NumComponents > 0 {
+			compIDs = make([]uint16, seg.NumComponents)
+			for i := range compIDs {
+				compIDs[i] = uint16(i)
 			}
 		}
-		if seg.AssocType == codestream.MCCAssocMatrixThenOffset || seg.AssocType == codestream.MCCAssocOffsetThenMatrix {
-			var mats, offs []uint8
-			for _, id := range order {
-				for _, m := range d.cs.MCT {
-					if m.Index == id {
-						if int(m.ArrayType) == 1 {
-							mats = append(mats, id)
-						} else if int(m.ArrayType) == 2 {
-							offs = append(offs, id)
-						}
-						break
-					}
-				}
-			}
-			if seg.AssocType == codestream.MCCAssocMatrixThenOffset {
-				order = append(mats, offs...)
-			} else {
-				order = append(offs, mats...)
-			}
+		if len(seg.OutputComponentIDs) > 0 && !sameUint16Slice(seg.OutputComponentIDs, compIDs) {
+			continue
+		}
+		if len(compIDs) == 0 {
+			continue
+		}
+		compIdx := make([]int, len(compIDs))
+		for i := range compIDs {
+			compIdx[i] = int(compIDs[i])
 		}
 		var matF [][]float64
 		var matI [][]int32
-		var offsVals []int32
-		for _, id := range order {
-			for _, m := range d.cs.MCT {
-				if m.Index != id {
-					continue
-				}
-				if int(m.ArrayType) == 1 && m.Rows > 0 && m.Cols > 0 {
-					r := int(m.Rows)
-					c := int(m.Cols)
-					if int(m.ElementType) == 1 {
-						need := r * c * 4
-						if len(m.Data) >= need {
-							matF = make([][]float64, r)
-							off := 0
-							for i := 0; i < r; i++ {
-								matF[i] = make([]float64, c)
-								for j := 0; j < c; j++ {
-									v := uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3])
-									matF[i][j] = float64(math.Float32frombits(v))
-									off += 4
-								}
-							}
-						}
-					} else {
-						need := r * c * 4
-						if len(m.Data) >= need {
-							matI = make([][]int32, r)
-							off := 0
-							for i := 0; i < r; i++ {
-								matI[i] = make([]int32, c)
-								for j := 0; j < c; j++ {
-									v := int32(uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3]))
-									matI[i][j] = v
-									off += 4
-								}
-							}
-						}
-					}
-				} else if int(m.ElementType) == 0 && int(m.ArrayType) == 2 && m.Rows > 0 && m.Cols > 0 {
-					r := int(m.Rows)
-					c := int(m.Cols)
-					if c == 1 && r == len(compIDs) {
-						need := r * 4
-						if len(m.Data) >= need {
-							offsVals = make([]int32, r)
-							off := 0
-							for i := 0; i < r; i++ {
-								v := int32(uint32(m.Data[off])<<24 | uint32(m.Data[off+1])<<16 | uint32(m.Data[off+2])<<8 | uint32(m.Data[off+3]))
-								offsVals[i] = v
-								off += 4
-							}
-						}
-					}
-				}
+		if seg.DecorrelateIndex != 0 {
+			if m, ok := mctByIndex[seg.DecorrelateIndex]; ok && m.ArrayType == codestream.MCTArrayDecorrelate {
+				matF, matI = decodeMCTMatrixWithInts(m, len(compIDs))
 			}
 		}
-		b := mctBinding{compIDs: compIDs, matrixF: matF, matrixI: matI, offsets: offsVals, normScale: norm, reversible: (prec & codestream.MCOPrecisionReversibleFlag) != 0, rounding: prec & codestream.MCOPrecisionRoundingMask}
+		var offsVals []int32
+		if seg.OffsetIndex != 0 {
+			if m, ok := mctByIndex[seg.OffsetIndex]; ok && m.ArrayType == codestream.MCTArrayOffset {
+				offsVals = decodeMCTOffsets(m, len(compIDs))
+			}
+		}
+		if matF == nil && matI == nil && offsVals == nil {
+			continue
+		}
+		b := mctBinding{
+			compIDs:    compIdx,
+			matrixF:    matF,
+			matrixI:    matI,
+			offsets:    offsVals,
+			reversible: seg.Reversible,
+		}
 		d.bindings = append(d.bindings, b)
 	}
+}
+
+func mctElementSize(et codestream.MCTElementType) int {
+	switch et {
+	case codestream.MCTElementInt16:
+		return 2
+	case codestream.MCTElementInt32, codestream.MCTElementFloat32:
+		return 4
+	case codestream.MCTElementFloat64:
+		return 8
+	default:
+		return 0
+	}
+}
+
+func decodeMCTMatrix(seg codestream.MCTSegment, comps int) [][]float64 {
+	elemSize := mctElementSize(seg.ElementType)
+	if comps <= 0 || elemSize == 0 {
+		return nil
+	}
+	need := comps * comps * elemSize
+	if len(seg.Data) < need {
+		return nil
+	}
+	mat := make([][]float64, comps)
+	off := 0
+	for r := 0; r < comps; r++ {
+		mat[r] = make([]float64, comps)
+		for c := 0; c < comps; c++ {
+			switch seg.ElementType {
+			case codestream.MCTElementInt16:
+				v := int16(uint16(seg.Data[off])<<8 | uint16(seg.Data[off+1]))
+				mat[r][c] = float64(v)
+			case codestream.MCTElementInt32:
+				v := int32(uint32(seg.Data[off])<<24 | uint32(seg.Data[off+1])<<16 | uint32(seg.Data[off+2])<<8 | uint32(seg.Data[off+3]))
+				mat[r][c] = float64(v)
+			case codestream.MCTElementFloat32:
+				v := uint32(seg.Data[off])<<24 | uint32(seg.Data[off+1])<<16 | uint32(seg.Data[off+2])<<8 | uint32(seg.Data[off+3])
+				mat[r][c] = float64(math.Float32frombits(v))
+			case codestream.MCTElementFloat64:
+				v := uint64(seg.Data[off])<<56 | uint64(seg.Data[off+1])<<48 | uint64(seg.Data[off+2])<<40 | uint64(seg.Data[off+3])<<32 | uint64(seg.Data[off+4])<<24 | uint64(seg.Data[off+5])<<16 | uint64(seg.Data[off+6])<<8 | uint64(seg.Data[off+7])
+				mat[r][c] = math.Float64frombits(v)
+			}
+			off += elemSize
+		}
+	}
+	return mat
+}
+
+func decodeMCTMatrixWithInts(seg codestream.MCTSegment, comps int) ([][]float64, [][]int32) {
+	switch seg.ElementType {
+	case codestream.MCTElementInt16, codestream.MCTElementInt32:
+		elemSize := mctElementSize(seg.ElementType)
+		if comps <= 0 || elemSize == 0 {
+			return nil, nil
+		}
+		need := comps * comps * elemSize
+		if len(seg.Data) < need {
+			return nil, nil
+		}
+		matF := make([][]float64, comps)
+		matI := make([][]int32, comps)
+		off := 0
+		for r := 0; r < comps; r++ {
+			matF[r] = make([]float64, comps)
+			matI[r] = make([]int32, comps)
+			for c := 0; c < comps; c++ {
+				var v int32
+				if seg.ElementType == codestream.MCTElementInt16 {
+					v = int32(int16(uint16(seg.Data[off])<<8 | uint16(seg.Data[off+1])))
+				} else {
+					v = int32(uint32(seg.Data[off])<<24 | uint32(seg.Data[off+1])<<16 | uint32(seg.Data[off+2])<<8 | uint32(seg.Data[off+3]))
+				}
+				matI[r][c] = v
+				matF[r][c] = float64(v)
+				off += elemSize
+			}
+		}
+		return matF, matI
+	default:
+		return decodeMCTMatrix(seg, comps), nil
+	}
+}
+
+func decodeMCTOffsets(seg codestream.MCTSegment, comps int) []int32 {
+	elemSize := mctElementSize(seg.ElementType)
+	if comps <= 0 || elemSize == 0 {
+		return nil
+	}
+	need := comps * elemSize
+	if len(seg.Data) < need {
+		return nil
+	}
+	offs := make([]int32, comps)
+	off := 0
+	for i := 0; i < comps; i++ {
+		switch seg.ElementType {
+		case codestream.MCTElementInt16:
+			v := int16(uint16(seg.Data[off])<<8 | uint16(seg.Data[off+1]))
+			offs[i] = int32(v)
+		case codestream.MCTElementInt32:
+			v := int32(uint32(seg.Data[off])<<24 | uint32(seg.Data[off+1])<<16 | uint32(seg.Data[off+2])<<8 | uint32(seg.Data[off+3]))
+			offs[i] = v
+		case codestream.MCTElementFloat32:
+			v := uint32(seg.Data[off])<<24 | uint32(seg.Data[off+1])<<16 | uint32(seg.Data[off+2])<<8 | uint32(seg.Data[off+3])
+			offs[i] = int32(math.Float32frombits(v))
+		case codestream.MCTElementFloat64:
+			v := uint64(seg.Data[off])<<56 | uint64(seg.Data[off+1])<<48 | uint64(seg.Data[off+2])<<40 | uint64(seg.Data[off+3])<<32 | uint64(seg.Data[off+4])<<24 | uint64(seg.Data[off+5])<<16 | uint64(seg.Data[off+6])<<8 | uint64(seg.Data[off+7])
+			offs[i] = int32(math.Float64frombits(v))
+		}
+		off += elemSize
+	}
+	return offs
+}
+
+func sameUint16Slice(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal rectangles.
@@ -702,12 +590,8 @@ func (d *Decoder) decodeTiles() error {
 			if len(b.compIDs) == 0 {
 				continue
 			}
-			m := b.matrixF
 			useInt := false
-			if b.reversible && b.normScale == 0 {
-				b.normScale = 1
-			}
-			if b.reversible && b.normScale == 1 && b.matrixI != nil && len(b.matrixI) == len(b.compIDs) {
+			if b.reversible && b.matrixI != nil && len(b.matrixI) == len(b.compIDs) {
 				useInt = true
 			}
 			if useInt {
@@ -726,7 +610,8 @@ func (d *Decoder) decodeTiles() error {
 						d.data[b.compIDs[rr]][i] = out[rr]
 					}
 				}
-			} else if m != nil && len(m) == len(b.compIDs) {
+			} else if b.matrixF != nil && len(b.matrixF) == len(b.compIDs) {
+				m := b.matrixF
 				r := len(m)
 				c := len(m[0])
 				for i := 0; i < n; i++ {
@@ -736,20 +621,7 @@ func (d *Decoder) decodeTiles() error {
 						for kk := 0; kk < c; kk++ {
 							sum += m[rr][kk] * float64(d.data[b.compIDs[kk]][i])
 						}
-						switch b.rounding {
-						case codestream.MCOPrecisionRoundFloor:
-							out[rr] = int32(math.Floor(sum))
-						case codestream.MCOPrecisionRoundCeil:
-							out[rr] = int32(math.Ceil(sum))
-						case codestream.MCOPrecisionRoundTrunc:
-							if sum >= 0 {
-								out[rr] = int32(math.Floor(sum))
-							} else {
-								out[rr] = int32(math.Ceil(sum))
-							}
-						default:
-							out[rr] = int32(math.Round(sum))
-						}
+						out[rr] = int32(math.Round(sum))
 					}
 					for rr := 0; rr < r; rr++ {
 						d.data[b.compIDs[rr]][i] = out[rr]

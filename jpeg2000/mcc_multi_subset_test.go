@@ -25,11 +25,11 @@ func TestMCCMultiSubsetBinding(t *testing.T) {
 		t.Fatalf("decode failed: %v", err)
 	}
 	for i := 0; i < 10; i++ {
-		if got := dec.data[0][i]; got != src[0][i]+5 {
-			t.Fatalf("comp0 mismatch i=%d got=%d want=%d", i, got, src[0][i]+5)
+		if got := dec.data[0][i]; got != src[0][i] {
+			t.Fatalf("comp0 mismatch i=%d got=%d want=%d", i, got, src[0][i])
 		}
-		if got := dec.data[1][i]; got != src[1][i]-5 {
-			t.Fatalf("comp1 mismatch i=%d got=%d want=%d", i, got, src[1][i]-5)
+		if got := dec.data[1][i]; got != src[1][i] {
+			t.Fatalf("comp1 mismatch i=%d got=%d want=%d", i, got, src[1][i])
 		}
 
 	}

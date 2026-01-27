@@ -170,7 +170,7 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 }
 
 // parseTile parses a single tile
-func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
+func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 	tileStart := p.offset
 	// Read SOT
 	marker, err := p.readMarker()
@@ -231,6 +231,33 @@ func (p *Parser) parseTile(_ *Codestream) (*Tile, error) {
 				return nil, err
 			}
 			tile.RGN = append(tile.RGN, rgn)
+
+		case MarkerMCT:
+			seg, err := p.parseMCT()
+			if err != nil {
+				return nil, err
+			}
+			if cs != nil {
+				cs.MCT = append(cs.MCT, *seg)
+			}
+
+		case MarkerMCC:
+			seg, err := p.parseMCC()
+			if err != nil {
+				return nil, err
+			}
+			if cs != nil {
+				cs.MCC = append(cs.MCC, *seg)
+			}
+
+		case MarkerMCO:
+			seg, err := p.parseMCO()
+			if err != nil {
+				return nil, err
+			}
+			if cs != nil {
+				cs.MCO = append(cs.MCO, *seg)
+			}
 
 		default:
 			// Skip unknown tile-part header segments
@@ -455,21 +482,36 @@ func (p *Parser) parseMCT() (*MCTSegment, error) {
 		return nil, err
 	}
 	payloadLen := int(length) - 2
-	if payloadLen < 8 {
+	if payloadLen < 6 {
 		return nil, fmt.Errorf("invalid MCT length")
 	}
-	idx, _ := p.readUint8()
-	et, _ := p.readUint8()
-	at, _ := p.readUint8()
-	rows, _ := p.readUint16()
-	cols, _ := p.readUint16()
-	rev, _ := p.readUint8()
-	dataLen := payloadLen - 8
+	zmct, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	if zmct != 0 {
+		return nil, fmt.Errorf("unsupported Zmct=%d", zmct)
+	}
+	imct, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	ymct, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	if ymct != 0 {
+		return nil, fmt.Errorf("unsupported Ymct=%d", ymct)
+	}
+	idx := uint8(imct & 0xFF)
+	at := uint8((imct >> 8) & 0x3)
+	et := uint8((imct >> 10) & 0x3)
+	dataLen := payloadLen - 6
 	buf := make([]byte, dataLen)
 	if _, err := p.read(buf); err != nil {
 		return nil, err
 	}
-	return &MCTSegment{Index: idx, ElementType: MCTElementType(et), ArrayType: MCTArrayType(at), Rows: rows, Cols: cols, Reversible: rev != 0, Data: buf}, nil
+	return &MCTSegment{Index: idx, ElementType: MCTElementType(et), ArrayType: MCTArrayType(at), Data: buf}, nil
 }
 
 func (p *Parser) parseMCC() (*MCCSegment, error) {
@@ -478,41 +520,129 @@ func (p *Parser) parseMCC() (*MCCSegment, error) {
 		return nil, err
 	}
 	payloadLen := int(length) - 2
-	if payloadLen < 4 {
+	if payloadLen < 7 {
 		return nil, fmt.Errorf("invalid MCC length")
 	}
-	idx, _ := p.readUint8()
-	assoc, _ := p.readUint8()
-	n, _ := p.readUint16()
-	comps := make([]uint16, int(n))
-	for i := 0; i < int(n); i++ {
-		v, _ := p.readUint16()
-		comps[i] = v
+	zmcc, err := p.readUint16()
+	if err != nil {
+		return nil, err
 	}
-	consumed := 1 + 1 + 2 + 2*int(n)
-	remain := payloadLen - consumed
-	var indices []uint8
-	if remain == 1 {
-		v, _ := p.readUint8()
-		indices = []uint8{v}
-	} else if remain >= 2 {
-		count, _ := p.readUint8()
-		indices = make([]uint8, int(count))
-		for i := 0; i < int(count); i++ {
-			vv, _ := p.readUint8()
-			indices[i] = vv
-		}
-		leftover := remain - (1 + int(count))
-		if leftover > 0 {
-			buf := make([]byte, leftover)
-			if _, err := p.read(buf); err != nil {
+	if zmcc != 0 {
+		return nil, fmt.Errorf("unsupported Zmcc=%d", zmcc)
+	}
+	idx, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	ymcc, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	if ymcc != 0 {
+		return nil, fmt.Errorf("unsupported Ymcc=%d", ymcc)
+	}
+	qmcc, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	if qmcc == 0 {
+		return nil, fmt.Errorf("invalid MCC collections")
+	}
+
+	collectionType, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	nmcci, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	compBytes := 1
+	if (nmcci & 0x8000) != 0 {
+		compBytes = 2
+	}
+	numComps := nmcci & 0x7FFF
+	comps := make([]uint16, numComps)
+	for i := 0; i < int(numComps); i++ {
+		var v uint16
+		if compBytes == 1 {
+			b, err := p.readUint8()
+			if err != nil {
+				return nil, err
+			}
+			v = uint16(b)
+		} else {
+			v, err = p.readUint16()
+			if err != nil {
 				return nil, err
 			}
 		}
-	} else {
-		indices = []uint8{0}
+		comps[i] = v
 	}
-	return &MCCSegment{Index: idx, AssocType: assoc, NumComponents: n, ComponentIDs: comps, MCTIndices: indices}, nil
+
+	mmcci, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	outCompBytes := 1
+	if (mmcci & 0x8000) != 0 {
+		outCompBytes = 2
+	}
+	outCompsCount := mmcci & 0x7FFF
+	outComps := make([]uint16, outCompsCount)
+	for i := 0; i < int(outCompsCount); i++ {
+		var v uint16
+		if outCompBytes == 1 {
+			b, err := p.readUint8()
+			if err != nil {
+				return nil, err
+			}
+			v = uint16(b)
+		} else {
+			v, err = p.readUint16()
+			if err != nil {
+				return nil, err
+			}
+		}
+		outComps[i] = v
+	}
+
+	b0, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	b1, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	b2, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	tmcc := (uint32(b0) << 16) | (uint32(b1) << 8) | uint32(b2)
+	reversible := ((tmcc >> 16) & 0x1) != 0
+	decoIdx := uint8(tmcc & 0xFF)
+	offIdx := uint8((tmcc >> 8) & 0xFF)
+
+	consumed := 2 + 1 + 2 + 2 + 1 + 2 + (compBytes * int(numComps)) + 2 + (outCompBytes * int(outCompsCount)) + 3
+	remain := payloadLen - consumed
+	if remain > 0 {
+		buf := make([]byte, remain)
+		if _, err := p.read(buf); err != nil {
+			return nil, err
+		}
+	}
+
+	return &MCCSegment{
+		Index:              idx,
+		CollectionType:     collectionType,
+		NumComponents:      numComps,
+		ComponentIDs:       comps,
+		OutputComponentIDs: outComps,
+		DecorrelateIndex:   decoIdx,
+		OffsetIndex:        offIdx,
+		Reversible:         reversible,
+	}, nil
 }
 
 func (p *Parser) parseMCO() (*MCOSegment, error) {
@@ -524,14 +654,27 @@ func (p *Parser) parseMCO() (*MCOSegment, error) {
 	if payloadLen < 1 {
 		return nil, fmt.Errorf("invalid MCO length")
 	}
-	idx, _ := p.readUint8()
-	opts := make([]byte, payloadLen-1)
-	if len(opts) > 0 {
-		if _, err := p.read(opts); err != nil {
+	numStages, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	stageCount := int(numStages)
+	stages := make([]uint8, 0, stageCount)
+	for i := 0; i < stageCount; i++ {
+		v, err := p.readUint8()
+		if err != nil {
+			return nil, err
+		}
+		stages = append(stages, v)
+	}
+	remain := payloadLen - (1 + stageCount)
+	if remain > 0 {
+		buf := make([]byte, remain)
+		if _, err := p.read(buf); err != nil {
 			return nil, err
 		}
 	}
-	return &MCOSegment{Index: idx, Options: opts}, nil
+	return &MCOSegment{NumStages: numStages, StageIndices: stages}, nil
 }
 
 // parseSOT parses the SOT marker segment

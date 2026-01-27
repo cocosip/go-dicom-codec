@@ -55,9 +55,9 @@ Legend: [ ] = pending, [x] = done
 - [x] RGB<->YCbCr transform precision
 
 ### Multi-component (Part 2)
-- [ ] MCT/MCC/MCO marker parsing and execution order
-- [ ] AssocType semantics and record order precedence
-- [ ] Precision/rounding rules and reversible conditions
+- [x] MCT/MCC/MCO marker parsing and execution order
+- [x] AssocType semantics and record order precedence
+- [x] Precision/rounding rules and reversible conditions
 
 ### Codestream parsing & generation
 - [ ] Marker set and ordering (SOC/SIZ/COD/COC/QCD/QCC/POC/RGN/SOT/SOD/EOC)

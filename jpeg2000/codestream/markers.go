@@ -74,7 +74,7 @@ const (
     // Part 2 Multi-component transform markers (ISO/IEC 15444-2)
     MarkerMCT uint16 = 0xFF74 // Multi-component Transform
     MarkerMCC uint16 = 0xFF75 // Multiple Component Collection
-    MarkerMCO uint16 = 0xFF77 // MCT options
+    MarkerMCO uint16 = 0xFF77 // MCT ordering
 )
 
 // MarkerName returns the name of a marker code

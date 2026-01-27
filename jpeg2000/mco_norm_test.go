@@ -33,7 +33,7 @@ func TestMCONormScaleRoundTrip(t *testing.T) {
 	params.MCTMatrix = I
 	params.InverseMCTMatrix = inv
 	params.MCTReversible = true
-	params.MCTNormScale = 2.0
+	params.MCTMatrixElementType = 1
 	params.NumLevels = 0
 	enc := NewEncoder(params)
 	data, err := enc.EncodeComponents(src)
@@ -51,8 +51,17 @@ func TestMCONormScaleRoundTrip(t *testing.T) {
 	if len(cs.MCT) == 0 {
 		t.Fatalf("expected MCT present")
 	}
-	m := cs.MCT[0]
-	if int(m.ElementType) != 1 || int(m.ArrayType) != 1 {
+	var m *codestream.MCTSegment
+	for i := range cs.MCT {
+		if cs.MCT[i].ArrayType == codestream.MCTArrayDecorrelate {
+			m = &cs.MCT[i]
+			break
+		}
+	}
+	if m == nil {
+		t.Fatalf("decorrelation MCT not found")
+	}
+	if m.ElementType != codestream.MCTElementFloat32 || m.ArrayType != codestream.MCTArrayDecorrelate {
 		t.Fatalf("unexpected MCT types")
 	}
 	if len(m.Data) < comps*comps*4 {
@@ -74,13 +83,10 @@ func TestMCONormScaleRoundTrip(t *testing.T) {
 			}
 		}
 	}
-	o := cs.MCO[0]
-	if len(o.Options) < 5 || o.Options[0] != 1 {
-		t.Fatalf("unexpected MCO option type")
+	if cs.MCO[0].NumStages != 1 || len(cs.MCO[0].StageIndices) != 1 {
+		t.Fatalf("unexpected MCO stage count")
 	}
-	ov := uint32(o.Options[1])<<24 | uint32(o.Options[2])<<16 | uint32(o.Options[3])<<8 | uint32(o.Options[4])
-	of := math.Float32frombits(ov)
-	if of < 1.99 || of > 2.01 {
-		t.Fatalf("unexpected norm scale: %f", of)
+	if cs.MCO[0].StageIndices[0] != cs.MCC[0].Index {
+		t.Fatalf("MCO stage index mismatch")
 	}
 }

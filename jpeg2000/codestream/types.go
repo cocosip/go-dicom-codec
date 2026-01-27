@@ -125,60 +125,39 @@ type MCTArrayType uint8
 type MCTElementType uint8
 
 const (
+	MCTArrayDependency  MCTArrayType = 0
 	MCTArrayDecorrelate MCTArrayType = 1
 	MCTArrayOffset      MCTArrayType = 2
 )
 
 const (
-	MCTElementInt32   MCTElementType = 0
-	MCTElementFloat32 MCTElementType = 1
+	MCTElementInt16   MCTElementType = 0
+	MCTElementInt32   MCTElementType = 1
+	MCTElementFloat32 MCTElementType = 2
+	MCTElementFloat64 MCTElementType = 3
 )
 
 type MCTSegment struct {
 	Index       uint8
 	ElementType MCTElementType
 	ArrayType   MCTArrayType
-	Rows        uint16
-	Cols        uint16
-	Reversible  bool
 	Data        []byte
 }
 
 type MCCSegment struct {
-	Index         uint8
-	AssocType     uint8
-	NumComponents uint16
-	ComponentIDs  []uint16
-	MCTIndices    []uint8
+	Index              uint8
+	CollectionType     uint8
+	NumComponents      uint16
+	ComponentIDs       []uint16
+	OutputComponentIDs []uint16
+	DecorrelateIndex   uint8
+	OffsetIndex        uint8
+	Reversible         bool
 }
 
-// MCC association semantics (experimental)
-const (
-	MCCAssocSimpleSequence   = 1 // Apply records in the given order
-	MCCAssocMatrixThenOffset = 2 // Apply decorrelation matrix first, then offsets
-	MCCAssocOffsetThenMatrix = 3 // Apply offsets first, then decorrelation matrix
-)
-
-// MCO option types (experimental)
-const (
-	MCOOptNormScale   = 1 // float32 normalization scale
-	MCOOptPrecision   = 2 // uint8 precision flags
-	MCOOptRecordOrder = 3 // explicit record order: [count][indices...]
-)
-
-const (
-	MCOPrecisionReversibleFlag = 0x1
-	MCOPrecisionPreferInt      = 0x2
-	MCOPrecisionRoundingMask   = 0xC
-	MCOPrecisionRoundNearest   = 0x0
-	MCOPrecisionRoundFloor     = 0x4
-	MCOPrecisionRoundCeil      = 0x8
-	MCOPrecisionRoundTrunc     = 0xC
-)
-
 type MCOSegment struct {
-	Index   uint8
-	Options []byte
+	NumStages    uint8
+	StageIndices []uint8
 }
 
 // RGNSegment - Region of Interest marker segment (MaxShift)
