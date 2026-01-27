@@ -3,11 +3,14 @@ package codestream
 // Codestream represents a complete JPEG 2000 codestream
 type Codestream struct {
 	// Main header
-	SIZ *SIZSegment  // Image and tile size
-	COD *CODSegment  // Coding style default
-	QCD *QCDSegment  // Quantization default
-	RGN []RGNSegment // Region of Interest (main header only)
-	COM []COMSegment // Comments (optional)
+	SIZ *SIZSegment            // Image and tile size
+	COD *CODSegment            // Coding style default
+	QCD *QCDSegment            // Quantization default
+	COC map[uint16]*COCSegment // Coding style component overrides
+	QCC map[uint16]*QCCSegment // Quantization component overrides
+	POC []POCSegment           // Progression order changes
+	RGN []RGNSegment           // Region of Interest (main header only)
+	COM []COMSegment           // Comments (optional)
 
 	// Part 2 Multi-component transform (optional)
 	MCT []MCTSegment
@@ -121,6 +124,45 @@ type COMSegment struct {
 	Data []byte // Comment data
 }
 
+// COCSegment - Coding style component marker segment
+// ISO/IEC 15444-1 A.6.2
+type COCSegment struct {
+	Component uint16 // Component index
+	Scoc      uint8  // Coding style for this component
+
+	// SPcoc - Coding style parameters (same fields as COD SPcod)
+	NumberOfDecompositionLevels uint8
+	CodeBlockWidth              uint8
+	CodeBlockHeight             uint8
+	CodeBlockStyle              uint8
+	Transformation              uint8
+	PrecinctSizes               []PrecinctSize
+}
+
+// QCCSegment - Quantization component marker segment
+// ISO/IEC 15444-1 A.6.5
+type QCCSegment struct {
+	Component uint16 // Component index
+	Sqcc      uint8  // Quantization style
+	SPqcc     []byte // Quantization step size values
+}
+
+// POCEntry represents one progression order change entry.
+type POCEntry struct {
+	RSpoc  uint8  // Start resolution
+	CSpoc  uint16 // Start component
+	LYEpoc uint16 // End layer
+	REpoc  uint8  // End resolution
+	CEpoc  uint16 // End component
+	Ppoc   uint8  // Progression order
+}
+
+// POCSegment - Progression order change marker segment
+// ISO/IEC 15444-1 A.6.6
+type POCSegment struct {
+	Entries []POCEntry
+}
+
 type MCTArrayType uint8
 type MCTElementType uint8
 
@@ -170,15 +212,147 @@ type RGNSegment struct {
 
 // Tile represents a single tile in the codestream
 type Tile struct {
-	Index int           // Tile index
-	SOT   *SOTSegment   // Start of tile
-	COD   *CODSegment   // Coding style (optional, overrides default)
-	QCD   *QCDSegment   // Quantization (optional, overrides default)
-	RGN   []*RGNSegment // ROI (optional, tile-specific ROI)
-	Data  []byte        // Compressed tile data (after SOD marker)
+	Index int                    // Tile index
+	SOT   *SOTSegment            // Start of tile
+	COD   *CODSegment            // Coding style (optional, overrides default)
+	QCD   *QCDSegment            // Quantization (optional, overrides default)
+	COC   map[uint16]*COCSegment // Coding style component overrides
+	QCC   map[uint16]*QCCSegment // Quantization component overrides
+	POC   []POCSegment           // Progression order changes
+	RGN   []*RGNSegment          // ROI (optional, tile-specific ROI)
+	Data  []byte                 // Compressed tile data (after SOD marker)
 
 	// Decoded components (filled during decode)
 	Components []*TileComponent
+}
+
+// TileCOD returns the tile-level COD, falling back to main header defaults.
+func (cs *Codestream) TileCOD(tile *Tile) *CODSegment {
+	if tile != nil && tile.COD != nil {
+		return tile.COD
+	}
+	if cs == nil {
+		return nil
+	}
+	return cs.COD
+}
+
+// TileQCD returns the tile-level QCD, falling back to main header defaults.
+func (cs *Codestream) TileQCD(tile *Tile) *QCDSegment {
+	if tile != nil && tile.QCD != nil {
+		return tile.QCD
+	}
+	if cs == nil {
+		return nil
+	}
+	return cs.QCD
+}
+
+// ComponentCOD resolves COD/COC inheritance for a component.
+func (cs *Codestream) ComponentCOD(tile *Tile, component int) *CODSegment {
+	if cs == nil || component < 0 {
+		return nil
+	}
+	base := cs.TileCOD(tile)
+	if base == nil {
+		return nil
+	}
+	out := cloneCOD(base)
+	if cs.COC != nil {
+		if coc := cs.COC[uint16(component)]; coc != nil {
+			out = applyCOC(out, coc)
+		}
+	}
+	if tile != nil && tile.COC != nil {
+		if coc := tile.COC[uint16(component)]; coc != nil {
+			out = applyCOC(out, coc)
+		}
+	}
+	return out
+}
+
+// ComponentQCD resolves QCD/QCC inheritance for a component.
+func (cs *Codestream) ComponentQCD(tile *Tile, component int) *QCDSegment {
+	if cs == nil || component < 0 {
+		return nil
+	}
+	base := cs.TileQCD(tile)
+	if base == nil {
+		return nil
+	}
+	out := cloneQCD(base)
+	if cs.QCC != nil {
+		if qcc := cs.QCC[uint16(component)]; qcc != nil {
+			out = applyQCC(out, qcc)
+		}
+	}
+	if tile != nil && tile.QCC != nil {
+		if qcc := tile.QCC[uint16(component)]; qcc != nil {
+			out = applyQCC(out, qcc)
+		}
+	}
+	return out
+}
+
+func cloneCOD(src *CODSegment) *CODSegment {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if src.PrecinctSizes != nil {
+		dst.PrecinctSizes = append([]PrecinctSize(nil), src.PrecinctSizes...)
+	}
+	return &dst
+}
+
+func cloneQCD(src *QCDSegment) *QCDSegment {
+	if src == nil {
+		return nil
+	}
+	dst := *src
+	if src.SPqcd != nil {
+		dst.SPqcd = append([]byte(nil), src.SPqcd...)
+	}
+	return &dst
+}
+
+func applyCOC(base *CODSegment, coc *COCSegment) *CODSegment {
+	if base == nil {
+		return nil
+	}
+	out := cloneCOD(base)
+	if coc == nil {
+		return out
+	}
+	out.Scod = coc.Scoc
+	out.NumberOfDecompositionLevels = coc.NumberOfDecompositionLevels
+	out.CodeBlockWidth = coc.CodeBlockWidth
+	out.CodeBlockHeight = coc.CodeBlockHeight
+	out.CodeBlockStyle = coc.CodeBlockStyle
+	out.Transformation = coc.Transformation
+	if len(coc.PrecinctSizes) > 0 {
+		out.PrecinctSizes = append([]PrecinctSize(nil), coc.PrecinctSizes...)
+	} else {
+		out.PrecinctSizes = nil
+	}
+	return out
+}
+
+func applyQCC(base *QCDSegment, qcc *QCCSegment) *QCDSegment {
+	if base == nil {
+		return nil
+	}
+	out := cloneQCD(base)
+	if qcc == nil {
+		return out
+	}
+	out.Sqcd = qcc.Sqcc
+	if qcc.SPqcc != nil {
+		out.SPqcd = append([]byte(nil), qcc.SPqcc...)
+	} else {
+		out.SPqcd = nil
+	}
+	return out
 }
 
 // SOTSegment - Start of tile-part marker segment

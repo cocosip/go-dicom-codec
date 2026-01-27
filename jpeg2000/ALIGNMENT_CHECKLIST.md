@@ -60,9 +60,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Precision/rounding rules and reversible conditions
 
 ### Codestream parsing & generation
-- [ ] Marker set and ordering (SOC/SIZ/COD/COC/QCD/QCC/POC/RGN/SOT/SOD/EOC)
-- [ ] Default segment inheritance rules (COD->COC, QCD->QCC)
-- [ ] Tile-part length/count fields and concatenation rules
+- [x] Marker set and ordering (SOC/SIZ/COD/COC/QCD/QCC/POC/RGN/SOT/SOD/EOC)
+- [x] Default segment inheritance rules (COD->COC, QCD->QCC)
+- [x] Tile-part length/count fields and concatenation rules
 
 ## HTJ2K (align with OpenJPH)
 

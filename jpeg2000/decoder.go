@@ -560,13 +560,26 @@ func (d *Decoder) decodeTiles() error {
 	for tileIdx, tile := range d.cs.Tiles {
 		// Create tile decoder
 		// Check if HTJ2K mode is enabled (bit 6 of Scod, 0x40)
-		isHTJ2K := (d.cs.COD.Scod & 0x40) != 0
+		cod := d.cs.TileCOD(tile)
+		qcd := d.cs.TileQCD(tile)
+		if d.components == 1 {
+			if resolved := d.cs.ComponentCOD(tile, 0); resolved != nil {
+				cod = resolved
+			}
+			if resolved := d.cs.ComponentQCD(tile, 0); resolved != nil {
+				qcd = resolved
+			}
+		}
+		isHTJ2K := false
+		if cod != nil {
+			isHTJ2K = (cod.Scod & 0x40) != 0
+		}
 		// Use injected blockDecoderFactory if HTJ2K is enabled
 		var blockDecoderFactory t2.BlockDecoderFactory
 		if isHTJ2K && d.blockDecoderFactory != nil {
 			blockDecoderFactory = d.blockDecoderFactory
 		}
-		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, d.cs.COD, d.cs.QCD, roiInfo, isHTJ2K, blockDecoderFactory)
+		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, cod, qcd, roiInfo, isHTJ2K, blockDecoderFactory)
 
 		// Decode tile
 		tileData, err := tileDecoder.Decode()

@@ -40,7 +40,9 @@ func (p *Parser) Parse() (*Codestream, error) {
 		return nil, fmt.Errorf("failed to parse main header: %w", err)
 	}
 
-	// Parse tiles
+	// Parse tiles (including multi-tile-part concatenation)
+	tileByIndex := make(map[int]*Tile)
+	tileStates := make(map[int]*tilePartState)
 	for {
 		marker, err := p.peekMarker()
 		if err == io.EOF {
@@ -61,7 +63,9 @@ func (p *Parser) Parse() (*Codestream, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse tile: %w", err)
 			}
-			cs.Tiles = append(cs.Tiles, tile)
+			if err := mergeTilePart(cs, tileByIndex, tileStates, tile); err != nil {
+				return nil, fmt.Errorf("failed to merge tile-part: %w", err)
+			}
 		} else {
 			return nil, fmt.Errorf("unexpected marker in tile sequence: 0x%04X (%s)", marker, MarkerName(marker))
 		}
@@ -72,6 +76,10 @@ func (p *Parser) Parse() (*Codestream, error) {
 
 // parseMainHeader parses the main header segments
 func (p *Parser) parseMainHeader(cs *Codestream) error {
+	seenSIZ := false
+	seenCOD := false
+	seenQCD := false
+
 	for {
 		marker, err := p.peekMarker()
 		if err != nil {
@@ -92,34 +100,109 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 		// Parse segment based on marker type
 		switch marker {
 		case MarkerSIZ:
+			if seenSIZ {
+				return fmt.Errorf("duplicate SIZ segment")
+			}
 			siz, err := p.parseSIZ()
 			if err != nil {
 				return fmt.Errorf("failed to parse SIZ: %w", err)
 			}
 			cs.SIZ = siz
+			seenSIZ = true
 
 		case MarkerCOD:
+			if !seenSIZ {
+				return fmt.Errorf("COD encountered before SIZ")
+			}
+			if seenCOD {
+				return fmt.Errorf("duplicate COD segment")
+			}
 			cod, err := p.parseCOD()
 			if err != nil {
 				return fmt.Errorf("failed to parse COD: %w", err)
 			}
 			cs.COD = cod
+			seenCOD = true
+
+		case MarkerCOC:
+			if !seenSIZ {
+				return fmt.Errorf("COC encountered before SIZ")
+			}
+			if !seenCOD {
+				return fmt.Errorf("COC encountered before COD")
+			}
+			coc, err := p.parseCOC(cs.SIZ)
+			if err != nil {
+				return fmt.Errorf("failed to parse COC: %w", err)
+			}
+			if cs.COC == nil {
+				cs.COC = make(map[uint16]*COCSegment)
+			}
+			if existing, ok := cs.COC[coc.Component]; ok && !cocEqual(existing, coc) {
+				return fmt.Errorf("duplicate COC for component %d", coc.Component)
+			}
+			cs.COC[coc.Component] = coc
 
 		case MarkerQCD:
+			if !seenSIZ {
+				return fmt.Errorf("QCD encountered before SIZ")
+			}
+			if seenQCD {
+				return fmt.Errorf("duplicate QCD segment")
+			}
 			qcd, err := p.parseQCD()
 			if err != nil {
 				return fmt.Errorf("failed to parse QCD: %w", err)
 			}
 			cs.QCD = qcd
+			seenQCD = true
+
+		case MarkerQCC:
+			if !seenSIZ {
+				return fmt.Errorf("QCC encountered before SIZ")
+			}
+			if !seenQCD {
+				return fmt.Errorf("QCC encountered before QCD")
+			}
+			qcc, err := p.parseQCC(cs.SIZ)
+			if err != nil {
+				return fmt.Errorf("failed to parse QCC: %w", err)
+			}
+			if cs.QCC == nil {
+				cs.QCC = make(map[uint16]*QCCSegment)
+			}
+			if existing, ok := cs.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
+				return fmt.Errorf("duplicate QCC for component %d", qcc.Component)
+			}
+			cs.QCC[qcc.Component] = qcc
+
+		case MarkerPOC:
+			if !seenSIZ {
+				return fmt.Errorf("POC encountered before SIZ")
+			}
+			if !seenCOD {
+				return fmt.Errorf("POC encountered before COD")
+			}
+			poc, err := p.parsePOC(cs.SIZ)
+			if err != nil {
+				return fmt.Errorf("failed to parse POC: %w", err)
+			}
+			cs.POC = append(cs.POC, *poc)
 
 		case MarkerRGN:
-			rgn, err := p.parseRGN()
+			if !seenSIZ {
+				return fmt.Errorf("RGN encountered before SIZ")
+			}
+			rgn, err := p.parseRGN(cs.SIZ)
 			if err != nil {
 				return fmt.Errorf("failed to parse RGN: %w", err)
 			}
 			cs.RGN = append(cs.RGN, *rgn)
 
 		case MarkerCOM:
+			if !seenSIZ {
+				return fmt.Errorf("COM encountered before SIZ")
+			}
 			com, err := p.parseCOM()
 			if err != nil {
 				return fmt.Errorf("failed to parse COM: %w", err)
@@ -127,6 +210,9 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			cs.COM = append(cs.COM, *com)
 
 		case MarkerMCT:
+			if !seenSIZ {
+				return fmt.Errorf("MCT encountered before SIZ")
+			}
 			seg, err := p.parseMCT()
 			if err != nil {
 				return fmt.Errorf("failed to parse MCT: %w", err)
@@ -134,6 +220,9 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			cs.MCT = append(cs.MCT, *seg)
 
 		case MarkerMCC:
+			if !seenSIZ {
+				return fmt.Errorf("MCC encountered before SIZ")
+			}
 			seg, err := p.parseMCC()
 			if err != nil {
 				return fmt.Errorf("failed to parse MCC: %w", err)
@@ -141,6 +230,9 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			cs.MCC = append(cs.MCC, *seg)
 
 		case MarkerMCO:
+			if !seenSIZ {
+				return fmt.Errorf("MCO encountered before SIZ")
+			}
 			seg, err := p.parseMCO()
 			if err != nil {
 				return fmt.Errorf("failed to parse MCO: %w", err)
@@ -148,6 +240,9 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 			cs.MCO = append(cs.MCO, *seg)
 
 		default:
+			if !seenSIZ {
+				return fmt.Errorf("unexpected marker before SIZ: 0x%04X (%s)", marker, MarkerName(marker))
+			}
 			// Skip unknown segments
 			if err := p.skipSegment(); err != nil {
 				return fmt.Errorf("failed to skip segment 0x%04X: %w", marker, err)
@@ -217,6 +312,22 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 			}
 			tile.COD = cod
 
+		case MarkerCOC:
+			if cs == nil || cs.SIZ == nil {
+				return nil, fmt.Errorf("COC encountered before SIZ")
+			}
+			coc, err := p.parseCOC(cs.SIZ)
+			if err != nil {
+				return nil, err
+			}
+			if tile.COC == nil {
+				tile.COC = make(map[uint16]*COCSegment)
+			}
+			if existing, ok := tile.COC[coc.Component]; ok && !cocEqual(existing, coc) {
+				return nil, fmt.Errorf("duplicate tile COC for component %d", coc.Component)
+			}
+			tile.COC[coc.Component] = coc
+
 		case MarkerQCD:
 			qcd, err := p.parseQCD()
 			if err != nil {
@@ -224,9 +335,39 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 			}
 			tile.QCD = qcd
 
+		case MarkerQCC:
+			if cs == nil || cs.SIZ == nil {
+				return nil, fmt.Errorf("QCC encountered before SIZ")
+			}
+			qcc, err := p.parseQCC(cs.SIZ)
+			if err != nil {
+				return nil, err
+			}
+			if tile.QCC == nil {
+				tile.QCC = make(map[uint16]*QCCSegment)
+			}
+			if existing, ok := tile.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
+				return nil, fmt.Errorf("duplicate tile QCC for component %d", qcc.Component)
+			}
+			tile.QCC[qcc.Component] = qcc
+
+		case MarkerPOC:
+			if cs == nil || cs.SIZ == nil {
+				return nil, fmt.Errorf("POC encountered before SIZ")
+			}
+			poc, err := p.parsePOC(cs.SIZ)
+			if err != nil {
+				return nil, err
+			}
+			tile.POC = append(tile.POC, *poc)
+
 		case MarkerRGN:
 			// Parse tile-part RGN (tile-specific ROI)
-			rgn, err := p.parseRGN()
+			var siz *SIZSegment
+			if cs != nil {
+				siz = cs.SIZ
+			}
+			rgn, err := p.parseRGN(siz)
 			if err != nil {
 				return nil, err
 			}
@@ -268,23 +409,139 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 	}
 
 	// Read tile data using Psot length when available.
-	tile.Data = p.readTileDataWithLength(tileStart, sot.Psot)
+	tile.Data, err = p.readTileDataWithLength(tileStart, sot.Psot)
+	if err != nil {
+		return nil, err
+	}
 
 	return tile, nil
 }
 
-// parseRGN parses the RGN marker segment (ROI)
-// Baseline assumption: Csiz <= 256, so Crgn fits in 1 byte.
-func (p *Parser) parseRGN() (*RGNSegment, error) {
+type tilePartState struct {
+	nextTP uint8
+	total  uint8
+}
+
+func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePartState, part *Tile) error {
+	if part == nil || part.SOT == nil {
+		return fmt.Errorf("missing SOT for tile-part")
+	}
+	idx := part.Index
+	state, ok := states[idx]
+	if !ok {
+		if part.SOT.TPsot != 0 {
+			return fmt.Errorf("tile %d: first tile-part index is %d", idx, part.SOT.TPsot)
+		}
+		state = &tilePartState{
+			nextTP: part.SOT.TPsot + 1,
+			total:  part.SOT.TNsot,
+		}
+		states[idx] = state
+	} else {
+		if part.SOT.TPsot != state.nextTP {
+			return fmt.Errorf("tile %d: unexpected tile-part index %d (expected %d)", idx, part.SOT.TPsot, state.nextTP)
+		}
+		if state.total != 0 && part.SOT.TNsot != 0 && part.SOT.TNsot != state.total {
+			return fmt.Errorf("tile %d: mismatched TNsot %d (expected %d)", idx, part.SOT.TNsot, state.total)
+		}
+		if state.total == 0 && part.SOT.TNsot != 0 {
+			state.total = part.SOT.TNsot
+		}
+		state.nextTP++
+	}
+	if state.total != 0 && state.nextTP > state.total {
+		return fmt.Errorf("tile %d: tile-part count exceeded (TNsot=%d)", idx, state.total)
+	}
+
+	existing := tiles[idx]
+	if existing == nil {
+		tiles[idx] = part
+		if cs != nil {
+			cs.Tiles = append(cs.Tiles, part)
+		}
+		return nil
+	}
+	if existing.SOT != nil && existing.SOT.TNsot == 0 && state.total != 0 {
+		existing.SOT.TNsot = state.total
+	}
+
+	if part.COD != nil {
+		if existing.COD == nil {
+			existing.COD = part.COD
+		} else if !codEqual(existing.COD, part.COD) {
+			return fmt.Errorf("tile %d: COD differs between tile-parts", idx)
+		}
+	}
+	if part.QCD != nil {
+		if existing.QCD == nil {
+			existing.QCD = part.QCD
+		} else if !qcdEqual(existing.QCD, part.QCD) {
+			return fmt.Errorf("tile %d: QCD differs between tile-parts", idx)
+		}
+	}
+	if len(part.COC) > 0 {
+		if existing.COC == nil {
+			existing.COC = make(map[uint16]*COCSegment)
+		}
+		for comp, coc := range part.COC {
+			if prior, ok := existing.COC[comp]; ok {
+				if !cocEqual(prior, coc) {
+					return fmt.Errorf("tile %d: COC differs for component %d", idx, comp)
+				}
+				continue
+			}
+			existing.COC[comp] = coc
+		}
+	}
+	if len(part.QCC) > 0 {
+		if existing.QCC == nil {
+			existing.QCC = make(map[uint16]*QCCSegment)
+		}
+		for comp, qcc := range part.QCC {
+			if prior, ok := existing.QCC[comp]; ok {
+				if !qccEqual(prior, qcc) {
+					return fmt.Errorf("tile %d: QCC differs for component %d", idx, comp)
+				}
+				continue
+			}
+			existing.QCC[comp] = qcc
+		}
+	}
+	if len(part.POC) > 0 {
+		if len(existing.POC) == 0 {
+			existing.POC = append(existing.POC, part.POC...)
+		} else if !pocEqual(existing.POC, part.POC) {
+			return fmt.Errorf("tile %d: POC differs between tile-parts", idx)
+		}
+	}
+	if len(part.RGN) > 0 {
+		if len(existing.RGN) == 0 {
+			existing.RGN = append(existing.RGN, part.RGN...)
+		} else if !rgnEqual(existing.RGN, part.RGN) {
+			return fmt.Errorf("tile %d: RGN differs between tile-parts", idx)
+		}
+	}
+
+	if len(part.Data) > 0 {
+		existing.Data = append(existing.Data, part.Data...)
+	}
+
+	return nil
+}
+
+// parseRGN parses the RGN marker segment (ROI).
+func (p *Parser) parseRGN(siz *SIZSegment) (*RGNSegment, error) {
 	length, err := p.readUint16()
 	if err != nil {
 		return nil, err
 	}
-	if length < 5 {
+	compBytes := componentIndexSize(siz)
+	minLen := uint16(4 + compBytes)
+	if length < minLen {
 		return nil, fmt.Errorf("invalid RGN length: %d", length)
 	}
 
-	crgn, err := p.readUint8()
+	crgn, _, err := p.readComponentIndex(siz)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +555,7 @@ func (p *Parser) parseRGN() (*RGNSegment, error) {
 	}
 
 	// Skip remaining bytes if any
-	remain := int(length) - 5
+	remain := int(length) - int(minLen)
 	if remain > 0 {
 		if _, err := p.read(make([]byte, remain)); err != nil {
 			return nil, err
@@ -306,7 +563,7 @@ func (p *Parser) parseRGN() (*RGNSegment, error) {
 	}
 
 	return &RGNSegment{
-		Crgn:  uint16(crgn),
+		Crgn:  crgn,
 		Srgn:  srgn,
 		SPrgn: sprgn,
 	}, nil
@@ -383,6 +640,7 @@ func (p *Parser) parseCOD() (*CODSegment, error) {
 	}
 
 	cod := &CODSegment{}
+	start := p.offset
 
 	if cod.Scod, err = p.readUint8(); err != nil {
 		return nil, err
@@ -396,39 +654,191 @@ func (p *Parser) parseCOD() (*CODSegment, error) {
 	if cod.MultipleComponentTransform, err = p.readUint8(); err != nil {
 		return nil, err
 	}
-	if cod.NumberOfDecompositionLevels, err = p.readUint8(); err != nil {
+	numLevels, cbw, cbh, cbStyle, transform, precincts, err := p.parseCodingStyleParams(cod.Scod)
+	if err != nil {
 		return nil, err
 	}
-	if cod.CodeBlockWidth, err = p.readUint8(); err != nil {
-		return nil, err
-	}
-	if cod.CodeBlockHeight, err = p.readUint8(); err != nil {
-		return nil, err
-	}
-	if cod.CodeBlockStyle, err = p.readUint8(); err != nil {
-		return nil, err
-	}
-	if cod.Transformation, err = p.readUint8(); err != nil {
-		return nil, err
-	}
+	cod.NumberOfDecompositionLevels = numLevels
+	cod.CodeBlockWidth = cbw
+	cod.CodeBlockHeight = cbh
+	cod.CodeBlockStyle = cbStyle
+	cod.Transformation = transform
+	cod.PrecinctSizes = precincts
 
-	// Read precinct sizes if Scod bit 0 is set
-	if (cod.Scod & 0x01) != 0 {
-		numLevels := int(cod.NumberOfDecompositionLevels) + 1
-		cod.PrecinctSizes = make([]PrecinctSize, numLevels)
-		for i := 0; i < numLevels; i++ {
-			ppxppy, err := p.readUint8()
-			if err != nil {
-				return nil, err
-			}
-			cod.PrecinctSizes[i].PPx = ppxppy & 0x0F
-			cod.PrecinctSizes[i].PPy = ppxppy >> 4
-		}
+	consumed := p.offset - start
+	expected := int(length) - 2
+	if consumed > expected {
+		return nil, fmt.Errorf("COD segment length mismatch: expected %d, got %d", expected, consumed)
 	}
-
-	_ = length // length validation skipped for now
+	if consumed < expected {
+		p.offset += expected - consumed
+	}
 
 	return cod, nil
+}
+
+// parseCOC parses the COC marker segment (component coding style).
+func (p *Parser) parseCOC(siz *SIZSegment) (*COCSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	start := p.offset
+	comp, _, err := p.readComponentIndex(siz)
+	if err != nil {
+		return nil, err
+	}
+	scoc, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	numLevels, cbw, cbh, cbStyle, transform, precincts, err := p.parseCodingStyleParams(scoc)
+	if err != nil {
+		return nil, err
+	}
+	coc := &COCSegment{
+		Component:                   comp,
+		Scoc:                        scoc,
+		NumberOfDecompositionLevels: numLevels,
+		CodeBlockWidth:              cbw,
+		CodeBlockHeight:             cbh,
+		CodeBlockStyle:              cbStyle,
+		Transformation:              transform,
+		PrecinctSizes:               precincts,
+	}
+	consumed := p.offset - start
+	expected := int(length) - 2
+	if consumed > expected {
+		return nil, fmt.Errorf("COC segment length mismatch: expected %d, got %d", expected, consumed)
+	}
+	if consumed < expected {
+		p.offset += expected - consumed
+	}
+	return coc, nil
+}
+
+// parseQCC parses the QCC marker segment (component quantization).
+func (p *Parser) parseQCC(siz *SIZSegment) (*QCCSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	start := p.offset
+	comp, _, err := p.readComponentIndex(siz)
+	if err != nil {
+		return nil, err
+	}
+	sqcc, err := p.readUint8()
+	if err != nil {
+		return nil, err
+	}
+	dataLen := int(length) - 3 - componentIndexSize(siz)
+	if dataLen < 0 {
+		return nil, fmt.Errorf("invalid QCC length: %d", length)
+	}
+	spqcc := make([]byte, dataLen)
+	if dataLen > 0 {
+		if _, err := p.read(spqcc); err != nil {
+			return nil, err
+		}
+	}
+	consumed := p.offset - start
+	expected := int(length) - 2
+	if consumed > expected {
+		return nil, fmt.Errorf("QCC segment length mismatch: expected %d, got %d", expected, consumed)
+	}
+	if consumed < expected {
+		p.offset += expected - consumed
+	}
+	return &QCCSegment{Component: comp, Sqcc: sqcc, SPqcc: spqcc}, nil
+}
+
+// parsePOC parses the POC marker segment.
+func (p *Parser) parsePOC(siz *SIZSegment) (*POCSegment, error) {
+	length, err := p.readUint16()
+	if err != nil {
+		return nil, err
+	}
+	remaining := int(length) - 2
+	compBytes := componentIndexSize(siz)
+	entryLen := 5 + 2*compBytes
+	if remaining < entryLen || remaining%entryLen != 0 {
+		return nil, fmt.Errorf("invalid POC length: %d", length)
+	}
+	entries := make([]POCEntry, 0, remaining/entryLen)
+	for i := 0; i < remaining/entryLen; i++ {
+		rs, err := p.readUint8()
+		if err != nil {
+			return nil, err
+		}
+		csVal, _, err := p.readComponentIndex(siz)
+		if err != nil {
+			return nil, err
+		}
+		ly, err := p.readUint16()
+		if err != nil {
+			return nil, err
+		}
+		re, err := p.readUint8()
+		if err != nil {
+			return nil, err
+		}
+		ceVal, _, err := p.readComponentIndex(siz)
+		if err != nil {
+			return nil, err
+		}
+		pp, err := p.readUint8()
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, POCEntry{
+			RSpoc:  rs,
+			CSpoc:  csVal,
+			LYEpoc: ly,
+			REpoc:  re,
+			CEpoc:  ceVal,
+			Ppoc:   pp,
+		})
+	}
+	return &POCSegment{Entries: entries}, nil
+}
+
+func (p *Parser) parseCodingStyleParams(scod uint8) (uint8, uint8, uint8, uint8, uint8, []PrecinctSize, error) {
+	numLevels, err := p.readUint8()
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, err
+	}
+	cbw, err := p.readUint8()
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, err
+	}
+	cbh, err := p.readUint8()
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, err
+	}
+	cbStyle, err := p.readUint8()
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, err
+	}
+	transform, err := p.readUint8()
+	if err != nil {
+		return 0, 0, 0, 0, 0, nil, err
+	}
+
+	var precincts []PrecinctSize
+	if (scod & 0x01) != 0 {
+		count := int(numLevels) + 1
+		precincts = make([]PrecinctSize, count)
+		for i := 0; i < count; i++ {
+			ppxppy, err := p.readUint8()
+			if err != nil {
+				return 0, 0, 0, 0, 0, nil, err
+			}
+			precincts[i].PPx = ppxppy & 0x0F
+			precincts[i].PPy = ppxppy >> 4
+		}
+	}
+	return numLevels, cbw, cbh, cbStyle, transform, precincts, nil
 }
 
 // parseQCD parses the QCD marker segment
@@ -789,18 +1199,155 @@ func (p *Parser) readTileData() []byte {
 	return p.data[start:p.offset]
 }
 
-func (p *Parser) readTileDataWithLength(tileStart int, psot uint32) []byte {
+func (p *Parser) readTileDataWithLength(tileStart int, psot uint32) ([]byte, error) {
 	if psot == 0 {
-		return p.readTileData()
+		return p.readTileData(), nil
 	}
-	remaining := int(psot) - (p.offset - tileStart)
-	if remaining <= 0 {
-		return []byte{}
+	consumed := p.offset - tileStart
+	if int(psot) < consumed {
+		return p.readTileData(), nil
 	}
+	remaining := int(psot) - consumed
 	if p.offset+remaining > len(p.data) {
-		remaining = len(p.data) - p.offset
+		return p.readTileData(), nil
 	}
 	start := p.offset
 	p.offset += remaining
-	return p.data[start:p.offset]
+	return p.data[start:p.offset], nil
+}
+
+func componentIndexSize(siz *SIZSegment) int {
+	if siz != nil && siz.Csiz > 256 {
+		return 2
+	}
+	return 1
+}
+
+func (p *Parser) readComponentIndex(siz *SIZSegment) (uint16, int, error) {
+	if componentIndexSize(siz) == 2 {
+		val, err := p.readUint16()
+		return val, 2, err
+	}
+	val, err := p.readUint8()
+	return uint16(val), 1, err
+}
+
+func cocEqual(a, b *COCSegment) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Component != b.Component || a.Scoc != b.Scoc ||
+		a.NumberOfDecompositionLevels != b.NumberOfDecompositionLevels ||
+		a.CodeBlockWidth != b.CodeBlockWidth ||
+		a.CodeBlockHeight != b.CodeBlockHeight ||
+		a.CodeBlockStyle != b.CodeBlockStyle ||
+		a.Transformation != b.Transformation {
+		return false
+	}
+	if len(a.PrecinctSizes) != len(b.PrecinctSizes) {
+		return false
+	}
+	for i := range a.PrecinctSizes {
+		if a.PrecinctSizes[i] != b.PrecinctSizes[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func qccEqual(a, b *QCCSegment) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Component != b.Component || a.Sqcc != b.Sqcc {
+		return false
+	}
+	if len(a.SPqcc) != len(b.SPqcc) {
+		return false
+	}
+	for i := range a.SPqcc {
+		if a.SPqcc[i] != b.SPqcc[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func codEqual(a, b *CODSegment) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Scod != b.Scod ||
+		a.ProgressionOrder != b.ProgressionOrder ||
+		a.NumberOfLayers != b.NumberOfLayers ||
+		a.MultipleComponentTransform != b.MultipleComponentTransform ||
+		a.NumberOfDecompositionLevels != b.NumberOfDecompositionLevels ||
+		a.CodeBlockWidth != b.CodeBlockWidth ||
+		a.CodeBlockHeight != b.CodeBlockHeight ||
+		a.CodeBlockStyle != b.CodeBlockStyle ||
+		a.Transformation != b.Transformation {
+		return false
+	}
+	if len(a.PrecinctSizes) != len(b.PrecinctSizes) {
+		return false
+	}
+	for i := range a.PrecinctSizes {
+		if a.PrecinctSizes[i] != b.PrecinctSizes[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func qcdEqual(a, b *QCDSegment) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Sqcd != b.Sqcd {
+		return false
+	}
+	if len(a.SPqcd) != len(b.SPqcd) {
+		return false
+	}
+	for i := range a.SPqcd {
+		if a.SPqcd[i] != b.SPqcd[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func rgnEqual(a, b []*RGNSegment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != b[i] {
+				return false
+			}
+			continue
+		}
+		if a[i].Crgn != b[i].Crgn || a[i].Srgn != b[i].Srgn || a[i].SPrgn != b[i].SPrgn {
+			return false
+		}
+	}
+	return true
+}
+
+func pocEqual(a, b []POCSegment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if len(a[i].Entries) != len(b[i].Entries) {
+			return false
+		}
+		for j := range a[i].Entries {
+			if a[i].Entries[j] != b[i].Entries[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
