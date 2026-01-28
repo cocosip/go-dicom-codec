@@ -77,9 +77,9 @@ Legend: [ ] = pending, [x] = done
 - [x] Decoder resync and boundary cases
 
 ### MagSgn
-- [ ] Magnitude/sign packing order
-- [ ] Bit significance and sign handling
-- [ ] Byte alignment at block end
+- [x] Magnitude/sign packing order
+- [x] Bit significance and sign handling
+- [x] Byte alignment at block end
 
 ### Exponent predictor / quad-pair
 - [ ] Exponent prediction inputs and edge handling

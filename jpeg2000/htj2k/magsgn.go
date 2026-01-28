@@ -5,74 +5,92 @@ package htj2k
 //
 // The MagSgn segment stores magnitude and sign bits for significant samples
 // It grows forward in the codeblock
+// Bits are packed LSB-first with byte-stuffing after 0xFF.
 
 // MagSgnEncoder implements the magnitude-sign encoder for HTJ2K
 type MagSgnEncoder struct {
-	buffer    []byte  // Output buffer (grows forward)
+	buffer []byte // Output buffer (grows forward)
 
-	// Bit-level output
-	bitBuffer byte    // Buffer for incomplete bytes
-	bitCount  int     // Number of bits in bitBuffer (0-7)
+	// Bit-level output (LSB-first, with 0xFF stuffing)
+	tmp      byte // Buffer for incomplete bytes
+	usedBits int  // Number of bits in tmp
+	maxBits  int  // Maximum bits allowed in tmp (8 or 7 after 0xFF)
 }
 
 // NewMagSgnEncoder creates a new MagSgn encoder
 func NewMagSgnEncoder() *MagSgnEncoder {
 	return &MagSgnEncoder{
-		buffer:    make([]byte, 0, 2048),
-		bitBuffer: 0,
-		bitCount:  0,
+		buffer:   make([]byte, 0, 2048),
+		tmp:      0,
+		usedBits: 0,
+		maxBits:  8,
 	}
 }
 
 // EncodeMagSgn encodes magnitude and sign bits for a sample
 // mag: magnitude value (absolute value of coefficient)
 // sign: sign bit (0 = positive, 1 = negative)
-// numBits: number of magnitude bits to encode
+// numBits: number of magnitude bits to encode (sign is encoded as LSB)
 func (m *MagSgnEncoder) EncodeMagSgn(mag uint32, sign int, numBits int) {
-	// Encode magnitude bits
-	for i := numBits - 1; i >= 0; i-- {
-		bit := (mag >> i) & 1
-		m.writeBit(byte(bit))
-	}
-
-	// Encode sign bit
-	m.writeBit(byte(sign))
+	value := (uint64(mag) << 1) | uint64(sign&1)
+	m.writeBits(value, numBits+1)
 }
 
 // EncodeMagnitude encodes only magnitude bits (no sign)
 func (m *MagSgnEncoder) EncodeMagnitude(mag uint32, numBits int) {
-	for i := numBits - 1; i >= 0; i-- {
-		bit := (mag >> i) & 1
-		m.writeBit(byte(bit))
-	}
+	m.writeBits(uint64(mag), numBits)
 }
 
 // EncodeSign encodes only sign bit
 func (m *MagSgnEncoder) EncodeSign(sign int) {
-	m.writeBit(byte(sign))
+	m.writeBits(uint64(sign&1), 1)
 }
 
-// writeBit writes a single bit to the buffer
-func (m *MagSgnEncoder) writeBit(bit byte) {
-	m.bitBuffer = (m.bitBuffer << 1) | (bit & 1)
-	m.bitCount++
+// writeBits writes bits LSB-first with 0xFF byte stuffing
+func (m *MagSgnEncoder) writeBits(value uint64, numBits int) {
+	for numBits > 0 {
+		space := m.maxBits - m.usedBits
+		if space > numBits {
+			space = numBits
+		}
+		mask := uint64((1 << space) - 1)
+		m.tmp |= byte((value & mask) << m.usedBits)
+		m.usedBits += space
+		value >>= space
+		numBits -= space
 
-	if m.bitCount == 8 {
-		m.buffer = append(m.buffer, m.bitBuffer)
-		m.bitBuffer = 0
-		m.bitCount = 0
+		if m.usedBits == m.maxBits {
+			m.buffer = append(m.buffer, m.tmp)
+			if m.tmp == 0xFF {
+				m.maxBits = 7
+			} else {
+				m.maxBits = 8
+			}
+			m.tmp = 0
+			m.usedBits = 0
+		}
 	}
 }
 
 // Flush finalizes encoding and returns the buffer
 func (m *MagSgnEncoder) Flush() []byte {
-	// Flush remaining bits
-	if m.bitCount > 0 {
-		m.bitBuffer <<= (8 - m.bitCount)
-		m.buffer = append(m.buffer, m.bitBuffer)
-		m.bitBuffer = 0
-		m.bitCount = 0
+	// Terminate with 1s per HTJ2K byte-stuffing rules.
+	if m.usedBits > 0 {
+		remaining := m.maxBits - m.usedBits
+		if remaining > 0 {
+			m.tmp |= byte((0xFF & ((1 << remaining) - 1)) << m.usedBits)
+			m.usedBits += remaining
+		}
+		if m.tmp != 0xFF {
+			m.buffer = append(m.buffer, m.tmp)
+		}
+	} else if m.maxBits == 7 && len(m.buffer) > 0 {
+		m.buffer = m.buffer[:len(m.buffer)-1]
 	}
+
+	m.tmp = 0
+	m.usedBits = 0
+	m.maxBits = 8
 
 	return m.buffer
 }
@@ -89,12 +107,13 @@ func (m *MagSgnEncoder) Length() int {
 
 // MagSgnDecoder implements the magnitude-sign decoder for HTJ2K
 type MagSgnDecoder struct {
-	data      []byte  // Input data
-	pos       int     // Current byte position
+	data []byte // Input data
+	pos  int    // Current byte position
 
-	// Bit-level input
-	bitBuffer byte    // Current byte being read
-	bitPos    int     // Current bit position (0-7)
+	// Bit-level input (LSB-first, with 0xFF unstuffing)
+	bitBuffer uint64
+	bitCount  int
+	lastByte  byte
 }
 
 // NewMagSgnDecoder creates a new MagSgn decoder
@@ -103,78 +122,87 @@ func NewMagSgnDecoder(data []byte) *MagSgnDecoder {
 		data:      data,
 		pos:       0,
 		bitBuffer: 0,
-		bitPos:    8, // Will load first byte on first read
+		bitCount:  0,
+		lastByte:  0,
 	}
 }
 
 // DecodeMagSgn decodes magnitude and sign bits
-// numBits: number of magnitude bits to decode
+// numBits: number of magnitude bits to decode (sign is encoded as LSB)
 // Returns: (magnitude, sign, hasMore)
 func (m *MagSgnDecoder) DecodeMagSgn(numBits int) (uint32, int, bool) {
-	// Decode magnitude bits
-	mag := uint32(0)
-	for i := 0; i < numBits; i++ {
-		bit, ok := m.readBit()
-		if !ok {
-			return 0, 0, false
-		}
-		mag = (mag << 1) | uint32(bit)
-	}
-
-	// Decode sign bit
-	sign, ok := m.readBit()
+	value, ok := m.readBits(numBits + 1)
 	if !ok {
-		return mag, 0, false
+		return 0, 0, false
 	}
-
-	return mag, sign, true
+	sign := int(value & 1)
+	mag := value >> 1
+	return uint32(mag), sign, true
 }
 
 // DecodeMagnitude decodes only magnitude bits
 func (m *MagSgnDecoder) DecodeMagnitude(numBits int) (uint32, bool) {
-	mag := uint32(0)
-	for i := 0; i < numBits; i++ {
-		bit, ok := m.readBit()
-		if !ok {
-			return 0, false
-		}
-		mag = (mag << 1) | uint32(bit)
-	}
-	return mag, true
+	value, ok := m.readBits(numBits)
+	return uint32(value), ok
 }
 
 // DecodeSign decodes only sign bit
 func (m *MagSgnDecoder) DecodeSign() (int, bool) {
-	return m.readBit()
+	bit, ok := m.readBits(1)
+	return int(bit), ok
 }
 
-// readBit reads a single bit from the input stream
-func (m *MagSgnDecoder) readBit() (int, bool) {
-	// Load next byte if needed
-	if m.bitPos >= 8 {
-		if m.pos >= len(m.data) {
-			return 0, false
-		}
-		m.bitBuffer = m.data[m.pos]
+// readBits reads bits LSB-first with 0xFF unstuffing
+func (m *MagSgnDecoder) readBits(n int) (uint64, bool) {
+	if n == 0 {
+		return 0, true
+	}
+	for m.bitCount < n && m.pos < len(m.data) {
+		b := m.data[m.pos]
 		m.pos++
-		m.bitPos = 0
+
+		if m.lastByte == 0xFF {
+			m.bitBuffer |= uint64(b&0x7F) << m.bitCount
+			m.bitCount += 7
+		} else {
+			m.bitBuffer |= uint64(b) << m.bitCount
+			m.bitCount += 8
+		}
+
+		m.lastByte = b
 	}
 
-	// Extract bit
-	bit := (m.bitBuffer >> (7 - m.bitPos)) & 1
-	m.bitPos++
+	if m.bitCount < n {
+		// When exhausted, MagSgn feeds 0xFF bytes (all-ones padding).
+		for m.bitCount < n {
+			b := byte(0xFF)
+			if m.lastByte == 0xFF {
+				m.bitBuffer |= uint64(b&0x7F) << m.bitCount
+				m.bitCount += 7
+			} else {
+				m.bitBuffer |= uint64(b) << m.bitCount
+				m.bitCount += 8
+			}
+			m.lastByte = b
+		}
+	}
 
-	return int(bit), true
+	mask := uint64((1 << n) - 1)
+	value := m.bitBuffer & mask
+	m.bitBuffer >>= n
+	m.bitCount -= n
+	return value, true
 }
 
 // HasMore returns true if more data is available
 func (m *MagSgnDecoder) HasMore() bool {
-	return m.pos < len(m.data) || m.bitPos < 8
+	return m.pos < len(m.data) || m.bitCount > 0
 }
 
 // Reset resets the decoder to the beginning
 func (m *MagSgnDecoder) Reset() {
 	m.pos = 0
-	m.bitPos = 8
 	m.bitBuffer = 0
+	m.bitCount = 0
+	m.lastByte = 0
 }
