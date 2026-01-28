@@ -825,3 +825,104 @@ var VLC_tbl1 = []VLCEntry{
 	{7, 0xF, 0x1, 0xF, 0x1, 0x02, 5},
 	{7, 0xF, 0x1, 0xF, 0x4, 0x1C, 5},
 }
+
+// VLCLookupEntry represents a packed VLC lookup table entry
+// Packed format (from OpenJPH ojph_block_common.cpp):
+//   bits 0-2:   cwd_len (3 bits) - VLC codeword length
+//   bit 3:      u_off (1 bit) - u_offset flag
+//   bits 4-7:   rho (4 bits) - significance pattern
+//   bits 8-11:  e_1 (4 bits) - EMB e_1 pattern
+//   bits 12-15: e_k (4 bits) - EMB e_k pattern
+type VLCLookupEntry uint16
+
+// Extract fields from packed VLC lookup entry
+func (e VLCLookupEntry) CwdLen() uint8 { return uint8(e & 0x07) }
+func (e VLCLookupEntry) UOff() uint8   { return uint8((e >> 3) & 0x01) }
+func (e VLCLookupEntry) Rho() uint8    { return uint8((e >> 4) & 0x0F) }
+func (e VLCLookupEntry) E1() uint8     { return uint8((e >> 8) & 0x0F) }
+func (e VLCLookupEntry) EK() uint8     { return uint8((e >> 12) & 0x0F) }
+
+// Pack VLC entry into lookup format
+func packVLCEntry(rho, uOff, e1, ek, cwdLen uint8) VLCLookupEntry {
+	return VLCLookupEntry((uint16(ek) << 12) | (uint16(e1) << 8) |
+		(uint16(rho) << 4) | (uint16(uOff) << 3) | uint16(cwdLen))
+}
+
+// VLCLookupTable0 is the 1024-entry lookup table for initial row quads
+// Indexed by: (context << 7) | (codeword_prefix & 0x7F)
+// Context: 3 bits (0-7), Codeword prefix: 7 bits (0-127)
+var VLCLookupTable0 [1024]VLCLookupEntry
+
+// VLCLookupTable1 is the 1024-entry lookup table for non-initial row quads
+// Indexed by: (context << 7) | (codeword_prefix & 0x7F)
+// Context: 3 bits (0-7), Codeword prefix: 7 bits (0-127)
+var VLCLookupTable1 [1024]VLCLookupEntry
+
+// InitVLCTables initializes the VLC lookup tables from the source tables
+// This must be called before using the VLC tables (e.g., in init() or at startup)
+// Implementation matches OpenJPH's vlc_init_tables() in ojph_block_common.cpp
+func InitVLCTables() {
+	// Initialize table 0 (initial row of quads)
+	// For each possible lookup index (1024 = 8 contexts × 128 codeword prefixes)
+	for i := 0; i < 1024; i++ {
+		cwd := uint8(i & 0x7F) // Extract 7-bit codeword prefix
+		cq := uint8(i >> 7)    // Extract 3-bit context
+
+		// Find matching entry in source table
+		for j := range VLC_tbl0 {
+			entry := &VLC_tbl0[j]
+			if entry.CQ == cq {
+				// Check if codeword matches (mask by codeword length)
+				mask := (uint8(1) << entry.CwdLen) - 1
+				if entry.Cwd == (cwd & mask) {
+					// Pack and store in lookup table
+					VLCLookupTable0[i] = packVLCEntry(
+						entry.Rho, entry.UOff, entry.E1, entry.EK, entry.CwdLen)
+					break
+				}
+			}
+		}
+	}
+
+	// Initialize table 1 (non-initial rows of quads)
+	// Same logic as table 0, but using VLC_tbl1
+	for i := 0; i < 1024; i++ {
+		cwd := uint8(i & 0x7F) // Extract 7-bit codeword prefix
+		cq := uint8(i >> 7)    // Extract 3-bit context
+
+		// Find matching entry in source table
+		for j := range VLC_tbl1 {
+			entry := &VLC_tbl1[j]
+			if entry.CQ == cq {
+				// Check if codeword matches (mask by codeword length)
+				mask := (uint8(1) << entry.CwdLen) - 1
+				if entry.Cwd == (cwd & mask) {
+					// Pack and store in lookup table
+					VLCLookupTable1[i] = packVLCEntry(
+						entry.Rho, entry.UOff, entry.E1, entry.EK, entry.CwdLen)
+					break
+				}
+			}
+		}
+	}
+}
+
+// LookupVLC0 looks up VLC entry for initial row quad
+// Parameters:
+//   context: 3-bit context (sigma) value (0-7)
+//   cwdPrefix: 7-bit codeword prefix from bitstream LSB (0-127)
+// Returns: Packed VLC lookup entry with rho, u_off, e_1, e_k, and cwd_len
+func LookupVLC0(context uint8, cwdPrefix uint8) VLCLookupEntry {
+	index := (uint16(context) << 7) | uint16(cwdPrefix&0x7F)
+	return VLCLookupTable0[index]
+}
+
+// LookupVLC1 looks up VLC entry for non-initial row quad
+// Parameters:
+//   context: 3-bit context (sigma) value (0-7)
+//   cwdPrefix: 7-bit codeword prefix from bitstream LSB (0-127)
+// Returns: Packed VLC lookup entry with rho, u_off, e_1, e_k, and cwd_len
+func LookupVLC1(context uint8, cwdPrefix uint8) VLCLookupEntry {
+	index := (uint16(context) << 7) | uint16(cwdPrefix&0x7F)
+	return VLCLookupTable1[index]
+}

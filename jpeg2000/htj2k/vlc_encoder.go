@@ -285,6 +285,47 @@ func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFir
 	return int(entry.Length), nil
 }
 
+// FlushForFusion finalizes the VLC stream and returns data for MEL/VLC fusion
+// Returns: data bytes (including trailing 0xFF), last data byte, number of used bits in last byte
+// Reference: OpenJPH ojph_block_encoder.cpp lines 420-446
+func (v *VLCEncoder) FlushForFusion() ([]byte, uint8, int) {
+	usedBits := 0
+	lastByte := uint8(0)
+
+	// Flush any remaining bits, padding with 1s
+	if v.vlcBits > 0 {
+		usedBits = v.vlcBits
+		// Pad remaining bits with 1s to fill the byte
+		for v.vlcBits < 8 {
+			v.vlcTmp |= (1 << v.vlcBits)
+			v.vlcBits++
+		}
+		lastByte = v.vlcTmp
+		v.vlcBuf = append(v.vlcBuf, lastByte)
+	}
+
+	// Add trailing padding byte (0xFF) to ensure decoder can read 7 bits
+	v.vlcBuf = append(v.vlcBuf, 0xFF)
+
+	// Skip the first byte (initialization byte) and return the rest AS-IS
+	if len(v.vlcBuf) <= 1 {
+		return []byte{}, 0, 0
+	}
+
+	result := make([]byte, len(v.vlcBuf)-1)
+	copy(result, v.vlcBuf[1:])
+
+	// Get last data byte (before trailing 0xFF)
+	if len(result) > 1 {
+		lastByte = result[len(result)-2] // -2 because last is 0xFF padding
+		if usedBits == 0 {
+			usedBits = 8 // Full byte
+		}
+	}
+
+	return result, lastByte, usedBits
+}
+
 // Flush flushes any pending bits and returns the VLC byte-stream
 // The byte-stream is reversed as per spec requirements
 func (v *VLCEncoder) Flush() []byte {
@@ -322,4 +363,52 @@ func (v *VLCEncoder) Reset() {
 // countBits counts the number of set bits in a uint8 value
 func countBits(val uint8) int {
 	return bits.OnesCount8(val)
+}
+
+// EncodeQuadVLCByEMB encodes a quad using OpenJPH-compatible EMB lookup
+// emb = eps0 = mask of which samples have exponent == max_exponent
+// Returns: (codeword_length, table_e_k, error)
+// The table_e_k is used by the caller for MagSgn encoding: mn = Uq - ekBit
+func (v *VLCEncoder) EncodeQuadVLCByEMB(context, rho, uOff, emb uint8, isFirstRow bool) (int, uint8, error) {
+	tbl := VLC_tbl0
+	if !isFirstRow {
+		tbl = VLC_tbl1
+	}
+
+	if uOff == 0 || emb == 0 {
+		// u_off = 0 or emb = 0: no EMB, find entry with u_off=0
+		for _, tblEntry := range tbl {
+			if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == 0 {
+				if err := v.emitVLCBits(uint32(tblEntry.Cwd), int(tblEntry.CwdLen)); err != nil {
+					return 0, 0, err
+				}
+				return int(tblEntry.CwdLen), 0, nil
+			}
+		}
+	} else {
+		// u_off = 1: find best match using OpenJPH condition: (emb & entry.EK) == entry.E1
+		// Pick entry with highest popcount of EK
+		maxEK := -1
+		var bestEntry *VLCEntry
+		for i := range tbl {
+			tblEntry := &tbl[i]
+			if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == 1 {
+				if (emb & tblEntry.EK) == tblEntry.E1 {
+					ekBits := countBits(tblEntry.EK)
+					if ekBits > maxEK {
+						maxEK = ekBits
+						bestEntry = tblEntry
+					}
+				}
+			}
+		}
+		if bestEntry != nil {
+			if err := v.emitVLCBits(uint32(bestEntry.Cwd), int(bestEntry.CwdLen)); err != nil {
+				return 0, 0, err
+			}
+			return int(bestEntry.CwdLen), bestEntry.EK, nil
+		}
+	}
+
+	return 0, 0, fmt.Errorf("no VLC entry for context=%d, rho=0x%X, uOff=%d, emb=0x%X", context, rho, uOff, emb)
 }

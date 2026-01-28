@@ -105,6 +105,14 @@ func (m *MagSgnEncoder) Length() int {
 	return len(m.buffer)
 }
 
+// Reset resets the encoder for encoding a new block
+func (m *MagSgnEncoder) Reset() {
+	m.buffer = m.buffer[:0]
+	m.tmp = 0
+	m.usedBits = 0
+	m.maxBits = 8
+}
+
 // MagSgnDecoder implements the magnitude-sign decoder for HTJ2K
 type MagSgnDecoder struct {
 	data []byte // Input data

@@ -95,3 +95,14 @@ Legend: [ ] = pending, [x] = done
 - [x] Packet header integration with HT codeblocks
 - [x] Rate control interaction with HT passes
 - [x] Decoder error resilience and resync points
+
+### HTJ2K Encoder (New Implementation)
+- [x] VLC tables (table0/table1) with 12-bit Scup format
+- [x] Context computation (ITU-T.814 equations 1 & 2)
+- [x] VLC encoder with context-aware encoding
+- [x] Quad pair processing and EMB computation
+- [x] Exponent predictor integration
+- [x] UVLC encoder integration
+- [x] MEL/VLC segment fusion
+- [ ] Encoder/decoder roundtrip validation
+- [ ] Full compliance with OpenJPH reference implementation

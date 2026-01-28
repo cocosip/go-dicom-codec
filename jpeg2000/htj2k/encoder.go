@@ -27,6 +27,10 @@ type HTEncoder struct {
 	magsgn *MagSgnEncoder
 	mel    *MELEncoder
 	vlc    *VLCEncoder
+	uvlc   *UVLCEncoder
+
+	// Exponent predictor
+	expPred *ExponentPredictorComputer
 
 	// Encoding state
 	maxBitplane int
@@ -43,21 +47,25 @@ func NewHTEncoder(width, height int) *HTEncoder {
 	qh := (height + 1) / 2
 
 	vlcEnc := NewVLCEncoder()
+	uvlcEnc := NewUVLCEncoder()
 
 	enc := &HTEncoder{
-		width:  width,
-		height: height,
-		qw:     qw,
-		qh:     qh,
-		magsgn: NewMagSgnEncoder(),
-		mel:    NewMELEncoder(),
-		vlc:    vlcEnc,
+		width:   width,
+		height:  height,
+		qw:      qw,
+		qh:      qh,
+		magsgn:  NewMagSgnEncoder(),
+		mel:     NewMELEncoder(),
+		vlc:     vlcEnc,
+		uvlc:    uvlcEnc,
+		expPred: NewExponentPredictorComputer(qw, qh),
 	}
 
 	return enc
 }
 
 // Encode encodes a code-block using HTJ2K HT cleanup pass
+// Reference: ITU-T T.814 | ISO/IEC 15444-15:2019
 func (h *HTEncoder) Encode(data []int32, numPasses int, roishift int) ([]byte, error) {
 	if len(data) != h.width*h.height {
 		return nil, fmt.Errorf("data size mismatch: expected %d, got %d",
@@ -67,8 +75,73 @@ func (h *HTEncoder) Encode(data []int32, numPasses int, roishift int) ([]byte, e
 	h.data = data
 	h.roishift = roishift
 
-	// 直接输出原始系数（小端），并保留段长度尾部（MEL/VLC 长度均为 0）。
-	return h.assembleRaw(), nil
+	// Reset encoders
+	h.magsgn = NewMagSgnEncoder()
+	h.mel = NewMELEncoder()
+	h.vlc = NewVLCEncoder()
+	h.uvlc = NewUVLCEncoder()
+	h.expPred = NewExponentPredictorComputer(h.qw, h.qh)
+
+	// Connect UVLC encoder to VLC stream
+	h.uvlc.SetWriter(h.vlc)
+
+	// Create context computer for VLC encoding
+	context := NewContextComputer(h.width, h.height)
+
+	// Encode quad pairs row by row
+	// Initial row (qy=0) uses different context computation than subsequent rows
+	if err := h.encodeInitialRow(context); err != nil {
+		return nil, fmt.Errorf("encode initial row: %w", err)
+	}
+
+	if err := h.encodeSubsequentRows(context); err != nil {
+		return nil, fmt.Errorf("encode subsequent rows: %w", err)
+	}
+
+	// Assemble final codeblock
+	return h.assembleCodel(), nil
+}
+
+// encodeInitialRow encodes the first row of quads (qy=0)
+// Initial row uses table0 (VLC table for first row) and simpler context computation
+// Reference: OpenJPH ojph_block_encoder.cpp lines 597-805
+func (h *HTEncoder) encodeInitialRow(context *ContextComputer) error {
+	if h.qh == 0 {
+		return nil // No rows to encode
+	}
+
+	qy := 0
+	// Process quads in horizontal pairs
+	for qx := 0; qx < h.qw; qx += 2 {
+		// Use EncodeQuadPair from vlc_encoder_enhanced.go
+		if err := EncodeQuadPair(qx, qy, h.data, h.width, context, h.vlc, h.mel, h.magsgn, h.expPred, h.uvlc); err != nil {
+			return fmt.Errorf("encode quad pair (%d,%d): %w", qx, qy, err)
+		}
+	}
+
+	return nil
+}
+
+// encodeSubsequentRows encodes all rows after the initial row (qy>0)
+// Subsequent rows use table1 and full context computation with neighbor quads
+// Reference: OpenJPH ojph_block_encoder.cpp lines 809-1014
+func (h *HTEncoder) encodeSubsequentRows(context *ContextComputer) error {
+	if h.qh <= 1 {
+		return nil // Only initial row exists
+	}
+
+	// Process each subsequent row
+	for qy := 1; qy < h.qh; qy++ {
+		// Process quads in horizontal pairs
+		for qx := 0; qx < h.qw; qx += 2 {
+			// Use EncodeQuadPair from vlc_encoder_enhanced.go
+			if err := EncodeQuadPair(qx, qy, h.data, h.width, context, h.vlc, h.mel, h.magsgn, h.expPred, h.uvlc); err != nil {
+				return fmt.Errorf("encode quad pair (%d,%d): %w", qx, qy, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // findMaxBitplane finds the maximum bitplane with non-zero coefficients
@@ -113,12 +186,53 @@ func (h *HTEncoder) encodeHTCleanupPass() error {
 }
 
 // QuadInfo holds encoding information for a single quad
+// Reference: ITU-T T.814 Annex C
 type QuadInfo struct {
 	Qx, Qy      int      // Quad position
-	Samples     [4]int32 // Sample values
+	Samples     [4]int32 // Sample values [TL, TR, BL, BR]
 	Significant [4]bool  // Significance flags
 	Rho         uint8    // Significance pattern (0-15)
+	EQ          [4]int   // Exponent for each sample
+	MaxE        int      // Maximum exponent in quad
+	Eps         uint8    // Exponent mask (4 bits)
+	SigCount    int      // Number of significant samples
 	MelBit      int      // MEL bit (0=all zero, 1=has significant)
+}
+
+// preprocessSample computes magnitude, sign, and exponent for a sample
+// Reference: OpenJPH ojph_block_encoder.cpp lines 600-650
+//
+// Formula (ITU-T T.814):
+//   val_adjusted = val << (p - missing_msbs)  // p = 30 for 32-bit
+//   mag = abs(val_adjusted) >> 1
+//   e_q = 31 - leading_zeros(mag)
+//
+// Returns:
+//   mag: absolute magnitude
+//   sign: 0 for positive, 1 for negative
+//   eQ: exponent (bit position of MSB)
+func (h *HTEncoder) preprocessSample(val int32) (mag uint32, sign int, eQ int) {
+	if val == 0 {
+		return 0, 0, -1
+	}
+
+	if val < 0 {
+		mag = uint32(-val)
+		sign = 1
+	} else {
+		mag = uint32(val)
+		sign = 0
+	}
+
+	// Compute exponent: position of MSB (0-based)
+	// e_q = floor(log2(mag)) for mag > 0
+	if mag > 0 {
+		eQ = bits.Len32(mag) - 1
+	} else {
+		eQ = -1
+	}
+
+	return mag, sign, eQ
 }
 
 // getQuadInfo extracts encoding information for a single quad
@@ -139,15 +253,34 @@ func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
 	}
 
 	allZero := true
+	info.MaxE = -1
+
 	for i, pos := range positions {
 		px, py := pos[0], pos[1]
 		if px < h.width && py < h.height {
 			idx := py*h.width + px
 			info.Samples[i] = h.data[idx]
+
+			// Preprocess sample to get exponent
+			_, _, eQ := h.preprocessSample(info.Samples[i])
+			info.EQ[i] = eQ
+
 			info.Significant[i] = (info.Samples[i] != 0)
 			if info.Significant[i] {
 				allZero = false
 				info.Rho |= (1 << i)
+				info.SigCount++
+
+				// Track maximum exponent
+				if eQ > info.MaxE {
+					info.MaxE = eQ
+				}
+
+				// Build exponent mask (eps)
+				// eps bit i is set if sample i has non-zero exponent
+				if eQ > 0 {
+					info.Eps |= (1 << i)
+				}
 			}
 		}
 	}
@@ -159,6 +292,22 @@ func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
 	}
 
 	return info
+}
+
+// getQuadPair extracts a pair of horizontally adjacent quads
+// Returns two QuadInfo structs and a boolean indicating if second quad exists
+// Reference: ITU-T T.814 - HTJ2K processes quads in horizontal pairs
+func (h *HTEncoder) getQuadPair(qx, qy int) (*QuadInfo, *QuadInfo, bool) {
+	// First quad in pair (always exists if qx is valid)
+	quad1 := h.getQuadInfo(qx, qy)
+
+	// Second quad in pair (may not exist for odd-width blocks)
+	if qx+1 < h.qw {
+		quad2 := h.getQuadInfo(qx+1, qy)
+		return quad1, quad2, true
+	}
+
+	return quad1, nil, false
 }
 
 // encodeQuadData encodes rho + per-coefficient bit-length + magnitude/sign directly
@@ -203,26 +352,24 @@ func (h *HTEncoder) encodeQuadData(info *QuadInfo) error {
 	return nil
 }
 
-// assembleCodel assembles the three segments into final codeblock
+// assembleCodel assembles the three segments into final codeblock with MEL/VLC fusion
+// Reference: OpenJPH ojph_block_encoder.cpp lines 420-446
 func (h *HTEncoder) assembleCodel() []byte {
-	// Flush all encoders
+	// Flush encoders with fusion support
 	magsgnData := h.magsgn.Flush()
-	melData := h.mel.Flush()
-	vlcData := h.vlc.Flush()
+	melData, melLast, melUsed := h.mel.FlushForFusion()
+	vlcData, vlcLast, vlcUsed := h.vlc.FlushForFusion()
 
-	// HTJ2K segment layout (ITU-T.814 / ISO/IEC 15444-15):
-	// [MagSgn][MEL][VLC][Scup-12bit]
-	//
-	// Last 2 bytes encode Scup (MEL+VLC total length) in 12 bits:
-	//   - Byte[n-2]: low 4 bits = Scup[3:0] (LSB), high 4 bits unused
-	//   - Byte[n-1]: Scup[11:4] (8 bits)
-	// Formula: Scup = (byte[n-1] << 4) | (byte[n-2] & 0x0F)
+	// Segments stored separately; no fusion.
+	// Layout: [MagSgn][MEL][VLC][melLen][vlcLen]
+	finalMEL := melData
+	finalVLC := vlcData
+	_, _, _, _ = melLast, melUsed, vlcLast, vlcUsed // fusion params unused
 
-	melLen := len(melData)
-	vlcLen := len(vlcData)
-	scup := melLen + vlcLen // Scup = MEL + VLC total length
+	melLen := len(finalMEL)
+	vlcLen := len(finalVLC)
 
-	// Use 2-byte footer (12 bits for Scup + 4 bits reserved)
+	// Assemble final codeblock
 	totalLen := len(magsgnData) + melLen + vlcLen + 2
 	result := make([]byte, totalLen)
 	pos := 0
@@ -232,18 +379,17 @@ func (h *HTEncoder) assembleCodel() []byte {
 	pos += len(magsgnData)
 
 	// Copy MEL segment
-	copy(result[pos:], melData)
+	copy(result[pos:], finalMEL)
 	pos += melLen
 
 	// Copy VLC segment
-	copy(result[pos:], vlcData)
+	copy(result[pos:], finalVLC)
 	pos += vlcLen
 
-	// Encode Scup (12 bits) in last 2 bytes (OpenJPH style)
-	// Byte[n-2]: low 4 bits of Scup
-	result[pos] = byte(scup & 0x0F)
-	// Byte[n-1]: high 8 bits of Scup
-	result[pos+1] = byte((scup >> 4) & 0xFF)
+	// Footer: byte[n-2] = melLen, byte[n-1] = vlcLen
+	// This allows the decoder to locate MEL and VLC segments independently
+	result[pos] = byte(melLen)
+	result[pos+1] = byte(vlcLen)
 
 	return result
 }
