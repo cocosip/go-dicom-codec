@@ -72,9 +72,9 @@ Legend: [ ] = pending, [x] = done
 - [x] UVLC residual decoding rules
 
 ### MEL (run-length coder)
-- [ ] 13-state machine and exponent mapping
-- [ ] Bit packing and flush behavior
-- [ ] Decoder resync and boundary cases
+- [x] 13-state machine and exponent mapping
+- [x] Bit packing and flush behavior
+- [x] Decoder resync and boundary cases
 
 ### MagSgn
 - [ ] Magnitude/sign packing order

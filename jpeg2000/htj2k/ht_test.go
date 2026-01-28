@@ -151,6 +151,38 @@ func TestMELEncoder(t *testing.T) {
 	}
 }
 
+func TestMELEncoderByteStuffing(t *testing.T) {
+	bits := make([]int, 128) // all zeros -> long run, should generate 0xFF
+
+	encoder := NewMELEncoder()
+	for _, bit := range bits {
+		encoder.EncodeBit(bit)
+	}
+	encoded := encoder.Flush()
+
+	hasFF := false
+	for _, b := range encoded {
+		if b == 0xFF {
+			hasFF = true
+			break
+		}
+	}
+	if !hasFF {
+		t.Fatalf("expected 0xFF in MEL output, got %x", encoded)
+	}
+
+	decoder := NewMELDecoder(encoded)
+	for i := range bits {
+		bit, ok := decoder.DecodeBit()
+		if !ok {
+			t.Fatalf("decoder ended early at bit %d", i)
+		}
+		if bit != bits[i] {
+			t.Fatalf("bit %d: got %d, want %d", i, bit, bits[i])
+		}
+	}
+}
+
 // TestMagSgnEncoder tests MagSgn encoder/decoder
 func TestMagSgnEncoder(t *testing.T) {
 	tests := []struct {

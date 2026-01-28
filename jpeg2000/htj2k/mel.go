@@ -1,17 +1,15 @@
 package htj2k
 
 // MEL (Magnitude Exponent Likelihood) encoder/decoder.
-// 完整实现 13 状态自适应游程编码，与 OpenJPH 的 mel_encode/mel_decode 对齐。
-// 参考：ISO/IEC 15444-15:2019 Clause 7.3.3 & OpenJPH ojph_block_encoder.cpp。
+// Implements the 13-state adaptive run-length coder from ISO/IEC 15444-15:2019
+// (aligned with OpenJPH mel_encode/mel_decode behavior).
 
-var melExp = [...]int{0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5}
-
-// MELEncoder implements the MELCODE encoder for HTJ2K block coding.
-// 字节填充规则：若输出字节为 0xFF，则下一字节最多写 7 bit。
+// MELEncoder implements the MEL encoder for HTJ2K block coding.
+// Byte stuffing: if the emitted byte is 0xFF, the next byte carries only 7 bits.
 type MELEncoder struct {
 	buf           []byte
-	tmp           uint8 // 累积的待输出比特（MSB 未必满）
-	remainingBits int   // 当前 tmp 中可再写入的空位数
+	tmp           uint8
+	remainingBits int
 	run           int
 	k             int
 	threshold     int
@@ -20,13 +18,13 @@ type MELEncoder struct {
 // NewMELEncoder creates a new MEL encoder.
 func NewMELEncoder() *MELEncoder {
 	return &MELEncoder{
-		buf:           make([]byte, 0, 192), // MEL 最多约 1bit/quad，预分配足够
+		buf:           make([]byte, 0, 192), // MEL is ~1 bit/quad; pre-allocate enough.
 		remainingBits: 8,
 		threshold:     1,
 	}
 }
 
-// EncodeBit encodes one MEL symbol (0 = 继续游程, 1 = 终止游程并输出 run).
+// EncodeBit encodes one MEL symbol (0 = continue run, 1 = terminate run).
 func (m *MELEncoder) EncodeBit(bit int) {
 	if bit == 0 {
 		m.run++
@@ -36,14 +34,14 @@ func (m *MELEncoder) EncodeBit(bit int) {
 			if m.k < 12 {
 				m.k++
 			}
-			m.threshold = 1 << melExp[m.k]
+			m.threshold = 1 << MEL_E[m.k]
 		}
 		return
 	}
 
-	// bit == 1：输出 0 + run 的二进制（长度 melExp[k]）
+	// bit == 1: emit 0 + run bits (length MEL_E[k]).
 	m.emitBit(0)
-	t := melExp[m.k]
+	t := MEL_E[m.k]
 	for t > 0 {
 		t--
 		m.emitBit(uint8((m.run >> t) & 1))
@@ -52,7 +50,7 @@ func (m *MELEncoder) EncodeBit(bit int) {
 	if m.k > 0 {
 		m.k--
 	}
-	m.threshold = 1 << melExp[m.k]
+	m.threshold = 1 << MEL_E[m.k]
 }
 
 // emitBit writes a single bit to the output buffer with byte stuffing.
@@ -61,7 +59,6 @@ func (m *MELEncoder) emitBit(b uint8) {
 	m.remainingBits--
 	if m.remainingBits == 0 {
 		m.buf = append(m.buf, m.tmp)
-		// 如果输出了 0xFF，下个字节只能写 7 位
 		if m.tmp == 0xFF {
 			m.remainingBits = 7
 		} else {
@@ -72,13 +69,11 @@ func (m *MELEncoder) emitBit(b uint8) {
 }
 
 // Flush finalizes the MEL stream and returns the encoded bytes.
-// 若还有未写出的 run，则强制写出终止符（对应 mel_encode 中 run>0 时的收尾）。
 func (m *MELEncoder) Flush() []byte {
 	if m.run > 0 {
 		m.EncodeBit(1)
 	}
 	if m.remainingBits != 8 {
-		// 左移补齐剩余位
 		m.tmp <<= m.remainingBits
 		m.buf = append(m.buf, m.tmp)
 		m.tmp = 0
@@ -97,22 +92,20 @@ func (m *MELEncoder) Length() int {
 	return len(m.buf)
 }
 
-// MELDecoder mirrors OpenJPH dec_mel_st/mel_decode 逻辑的精简版本。
-// 直接按符号顺序解码（逐个 MEL 事件，而非批量 run 队列）。
+// MELDecoder mirrors OpenJPH mel_decode behavior and expands runs into symbols.
 type MELDecoder struct {
 	data []byte
 	pos  int
 
-	// bit read state with un-stuffing (last 0xFF => next byte 7 bits)
+	// Bit read state with un-stuffing (last 0xFF => next byte 7 bits).
 	lastByte uint8
-	bits     uint8 // cached bits in buffer
-	buf      uint8 // buffer storing bits MSB-first
+	bits     uint8
+	buf      uint8
 
-	// MEL state
-	k         int
-	threshold int
+	// MEL state.
+	k int
 
-	// Pending symbols expanded from last decoded run
+	// Pending symbols expanded from last decoded run.
 	pendingZeros int
 	pendingOne   bool
 }
@@ -120,13 +113,12 @@ type MELDecoder struct {
 // NewMELDecoder creates a new MEL decoder.
 func NewMELDecoder(data []byte) *MELDecoder {
 	return &MELDecoder{
-		data:      data,
-		lastByte:  0x00,
-		threshold: 1,
+		data:     data,
+		lastByte: 0x00,
 	}
 }
 
-// readBit reads one bit applying un-stuffing rule.
+// readBit reads one bit applying the un-stuffing rule.
 func (m *MELDecoder) readBit() (uint8, bool) {
 	if m.bits == 0 {
 		if m.pos >= len(m.data) {
@@ -136,8 +128,7 @@ func (m *MELDecoder) readBit() (uint8, bool) {
 		m.pos++
 
 		if m.lastByte == 0xFF {
-			// 下一个字节只取低 7 位
-			m.buf = b & 0x7F
+			m.buf = (b & 0x7F) << 1
 			m.bits = 7
 		} else {
 			m.buf = b
@@ -152,9 +143,8 @@ func (m *MELDecoder) readBit() (uint8, bool) {
 	return bit, true
 }
 
-// DecodeBit decodes one MEL symbol (0 或 1)。第二返回值表示是否还有数据。
+// DecodeBit decodes one MEL symbol (0 or 1).
 func (m *MELDecoder) DecodeBit() (int, bool) {
-	// 如果有展开的待输出符号，优先返回
 	if m.pendingZeros > 0 {
 		m.pendingZeros--
 		return 0, true
@@ -164,30 +154,25 @@ func (m *MELDecoder) DecodeBit() (int, bool) {
 		return 1, true
 	}
 
-	// 解码一个 run（参照 OpenJPH mel_decode）
 	lead, ok := m.readBit()
 	if !ok {
 		return 0, false
 	}
 
-	eval := melExp[m.k]
+	eval := MEL_E[m.k]
 	if lead == 1 {
-		// run 溢出，无终止 1：zeros = threshold
 		m.pendingZeros = 1 << eval
 		if m.k < 12 {
 			m.k++
 		}
 	} else {
-		// 读取 eval 位作为 run 值，末尾有一个终止 1
 		runVal := 0
-		if eval > 0 {
-			for i := 0; i < eval; i++ {
-				b, ok := m.readBit()
-				if !ok {
-					return 0, false
-				}
-				runVal = (runVal << 1) | int(b)
+		for i := 0; i < eval; i++ {
+			b, ok := m.readBit()
+			if !ok {
+				return 0, false
 			}
+			runVal = (runVal << 1) | int(b)
 		}
 		m.pendingZeros = runVal
 		m.pendingOne = true
@@ -195,7 +180,6 @@ func (m *MELDecoder) DecodeBit() (int, bool) {
 			m.k--
 		}
 	}
-	m.threshold = 1 << melExp[m.k]
 
 	return m.DecodeBit()
 }

@@ -30,6 +30,8 @@ type MELDecoderSpec struct {
 	// Bit-level reading
 	bitBuffer byte
 	bitPos    int
+	bitLimit  int
+	lastByte  byte
 
 	// State machine variables (from spec)
 	MEL_k   int // Current state (0-12)
@@ -40,9 +42,11 @@ type MELDecoderSpec struct {
 // NewMELDecoderSpec creates a new spec-compliant MEL decoder
 func NewMELDecoderSpec(data []byte) *MELDecoderSpec {
 	mel := &MELDecoderSpec{
-		data:   data,
-		pos:    0,
-		bitPos: 8, // Will load first byte on first read
+		data:     data,
+		pos:      0,
+		bitPos:   8, // Will load first byte on first read
+		bitLimit: 8,
+		lastByte: 0x00,
 	}
 	mel.initMELDecoder()
 	return mel
@@ -107,17 +111,25 @@ func (m *MELDecoderSpec) DecodeMELSym() (int, bool) {
 // importMELBit reads a single bit from the MEL bit-stream
 func (m *MELDecoderSpec) importMELBit() (int, bool) {
 	// Load next byte if needed
-	if m.bitPos >= 8 {
+	if m.bitPos >= m.bitLimit {
 		if m.pos >= len(m.data) {
 			return 0, false
 		}
-		m.bitBuffer = m.data[m.pos]
+		b := m.data[m.pos]
 		m.pos++
+		if m.lastByte == 0xFF {
+			m.bitBuffer = (b & 0x7F) << 1
+			m.bitLimit = 7
+		} else {
+			m.bitBuffer = b
+			m.bitLimit = 8
+		}
 		m.bitPos = 0
+		m.lastByte = b
 	}
 
 	// Extract bit (MSB first)
-	bit := (m.bitBuffer >> (7 - m.bitPos)) & 1
+	bit := (m.bitBuffer >> (m.bitLimit - 1 - m.bitPos)) & 1
 	m.bitPos++
 
 	return int(bit), true
