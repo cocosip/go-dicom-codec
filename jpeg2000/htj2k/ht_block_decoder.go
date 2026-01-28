@@ -124,8 +124,8 @@ func (h *HTBlockDecoder) DecodeBlock(codeblock []byte) ([]int32, error) {
 			sx := qx * 2
 			sy := qy * 2
 			positions := [][2]int{
-				{sx, sy}, {sx, sy + 1},
-				{sx + 1, sy}, {sx + 1, sy + 1},
+				{sx, sy}, {sx + 1, sy},
+				{sx, sy + 1}, {sx + 1, sy + 1},
 			}
 
 			for i, pos := range positions {

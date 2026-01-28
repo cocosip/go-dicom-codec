@@ -1,5 +1,7 @@
 package htj2k
 
+import "fmt"
+
 // UVLCEncoder implements U-VLC (Unsigned Variable Length Code) encoding
 // for HTJ2K as specified in ISO/IEC 15444-15:2019 Annex F.3
 //
@@ -310,4 +312,201 @@ func (u *UVLCEncoder) EncodeWithTable(value int, uOff uint8, isInitialPair bool,
 	}
 
 	return true, nil
+}
+
+// EncodePair encodes a UVLC pair matching the decoder's DecodePair logic.
+// This uses the precomputed UVLC tables to find the right codeword.
+// uOff0/uOff1: offset flags for the two quads.
+// u0/u1: unsigned residual values to encode.
+// initialPair: true for first row quad pairs.
+// melEvent: 0 or 1 (only used when initialPair && both uOff=1).
+func (u *UVLCEncoder) EncodePair(uOff0, uOff1 uint8, u0, u1 int, initialPair bool, melEvent int) error {
+	if u.writer == nil {
+		return nil
+	}
+
+	mode := int(uOff0) + 2*int(uOff1)
+	if mode == 0 {
+		return nil
+	}
+
+	if initialPair && mode == 3 && melEvent > 0 {
+		mode = 4
+	}
+
+	var table []UVLCDecodeEntry
+	if initialPair {
+		table = UVLCTbl0[:]
+	} else {
+		table = UVLCTbl1[:]
+	}
+
+	// For mode 4 (initial pair with mel=1), subtract bias of 2 from each
+	targetU0 := uint32(u0)
+	targetU1 := uint32(u1)
+	// No bias subtraction needed: mode=4 table entries already include +2 in prefixes
+
+	// Find the best table entry matching our target values
+	bestLen := 999
+	bestHead := -1
+	bestEntry := UVLCDecodeEntry(0)
+
+	for head := 0; head < 64; head++ {
+		entry := table[(mode<<6)|head]
+		if entry == 0 {
+			continue
+		}
+
+		u0pfx := uint32(entry.U0Prefix())
+		u1pfx := uint32(entry.U1Prefix())
+		u0sufLen := entry.U0SuffixLen()
+		u1sufLen := entry.TotalSuffixLen() - u0sufLen
+
+		// Check if this entry can encode our target values
+		if targetU0 < u0pfx {
+			continue
+		}
+		u0suf := targetU0 - u0pfx
+		if u0sufLen == 0 && u0suf != 0 {
+			continue
+		}
+		if u0sufLen > 0 && u0suf >= (1<<u0sufLen) {
+			continue
+		}
+
+		if targetU1 < u1pfx {
+			continue
+		}
+		u1suf := targetU1 - u1pfx
+		if u1sufLen == 0 && u1suf != 0 {
+			continue
+		}
+		if u1sufLen > 0 && u1suf >= (1<<u1sufLen) {
+			continue
+		}
+
+		totalLen := entry.TotalPrefixLen() + entry.TotalSuffixLen()
+		if totalLen < bestLen {
+			bestLen = totalLen
+			bestHead = head
+			bestEntry = entry
+		}
+	}
+
+	if bestHead < 0 {
+		return fmt.Errorf("no UVLC table entry for mode=%d u0=%d u1=%d", mode, targetU0, targetU1)
+	}
+
+	// Encode prefix: write head bits up to TotalPrefixLen (LSB first)
+	prefixLen := bestEntry.TotalPrefixLen()
+	if err := u.writer.WriteBits(uint32(bestHead), prefixLen); err != nil {
+		return err
+	}
+
+	// Encode suffix
+	sufLen := bestEntry.TotalSuffixLen()
+	if sufLen > 0 {
+		u0sufLen := bestEntry.U0SuffixLen()
+		u0suf := targetU0 - uint32(bestEntry.U0Prefix())
+		u1suf := targetU1 - uint32(bestEntry.U1Prefix())
+		suffix := u0suf | (u1suf << u0sufLen)
+		if err := u.writer.WriteBits(suffix, sufLen); err != nil {
+			return err
+		}
+	}
+
+	// Extension handling for large values
+	if initialPair {
+		bias := UVLCBias[(mode<<6)|bestHead]
+		u0Bias := uint32(bias & 0x3)
+		u1Bias := uint32((bias >> 2) & 0x3)
+
+		if err := u.encodeExtension(targetU0, u0Bias, true); err != nil {
+			return err
+		}
+		if err := u.encodeExtension(targetU1, u1Bias, true); err != nil {
+			return err
+		}
+	} else {
+		if err := u.encodeExtension(targetU0, 0, false); err != nil {
+			return err
+		}
+		if err := u.encodeExtension(targetU1, 0, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (u *UVLCEncoder) encodeExtension(val uint32, bias uint32, useBias bool) error {
+	threshold := uint32(32)
+	if useBias {
+		if val <= bias || val-bias <= threshold {
+			return nil
+		}
+	} else if val <= threshold {
+		return nil
+	}
+	// Write 4-bit extension
+	ext := (val - threshold) >> 2
+	if ext >= 16 {
+		ext = 15
+	}
+	return u.writer.WriteBits(ext, 4)
+}
+
+// HasTableEntry checks if a UVLC table entry exists for the given parameters.
+func (u *UVLCEncoder) HasTableEntry(uOff0, uOff1 uint8, u0, u1 int, initialPair bool, melEvent int) bool {
+	mode := int(uOff0) + 2*int(uOff1)
+	if mode == 0 {
+		return true
+	}
+	if initialPair && mode == 3 && melEvent > 0 {
+		mode = 4
+	}
+
+	var table []UVLCDecodeEntry
+	if initialPair {
+		table = UVLCTbl0[:]
+	} else {
+		table = UVLCTbl1[:]
+	}
+
+	targetU0 := uint32(u0)
+	targetU1 := uint32(u1)
+
+	for head := 0; head < 64; head++ {
+		entry := table[(mode<<6)|head]
+		if entry == 0 {
+			continue
+		}
+		u0pfx := uint32(entry.U0Prefix())
+		u1pfx := uint32(entry.U1Prefix())
+		u0sufLen := entry.U0SuffixLen()
+		u1sufLen := entry.TotalSuffixLen() - u0sufLen
+
+		if targetU0 < u0pfx {
+			continue
+		}
+		u0suf := targetU0 - u0pfx
+		if u0sufLen == 0 && u0suf != 0 {
+			continue
+		}
+		if u0sufLen > 0 && u0suf >= (1<<u0sufLen) {
+			continue
+		}
+		if targetU1 < u1pfx {
+			continue
+		}
+		u1suf := targetU1 - u1pfx
+		if u1sufLen == 0 && u1suf != 0 {
+			continue
+		}
+		if u1sufLen > 0 && u1suf >= (1<<u1sufLen) {
+			continue
+		}
+		return true
+	}
+	return false
 }
