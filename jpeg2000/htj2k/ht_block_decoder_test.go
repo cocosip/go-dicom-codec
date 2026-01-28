@@ -33,8 +33,10 @@ func TestHTBlockDecoder(t *testing.T) {
 			0x80,
 			// VLC data
 			0x06, 0x3F,
-			// Lengths: MEL=1, VLC=2
-			0x01, 0x02,
+			// 12-bit Scup footer: MEL=1, VLC=2, Scup=3
+			// Byte[n-2]: low 4 bits = 3 & 0x0F = 0x03
+			// Byte[n-1]: high 8 bits = (3 >> 4) = 0x00
+			0x03, 0x00,
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -67,8 +69,10 @@ func TestHTBlockDecoder(t *testing.T) {
 			0xFF, 0x00,
 			// VLC data
 			0x06, 0x3F, 0x00, 0x7F,
-			// Lengths: MEL=2, VLC=4
-			0x02, 0x04,
+			// 12-bit Scup footer: MEL=2, VLC=4, Scup=6
+			// Byte[n-2]: low 4 bits = 6 & 0x0F = 0x06
+			// Byte[n-1]: high 8 bits = (6 >> 4) = 0x00
+			0x06, 0x00,
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -105,17 +109,17 @@ func TestHTBlockDecoder(t *testing.T) {
 					0x12, 0x34, // MagSgn (2 bytes)
 					0x80,       // MEL (1 byte)
 					0x06, 0x3F, // VLC (2 bytes)
-					0x01, 0x02, // Lengths
+					0x03, 0x00, // 12-bit Scup: MEL=1, VLC=2, Scup=3
 				},
 				expectErr: false,
 			},
 			{
-				name: "InvalidLengths",
+				name: "InvalidScup",
 				block: []byte{
 					0x12,       // MagSgn
-					0xFF, 0xFF, // Invalid lengths
+					0xFF, 0xFF, // Invalid Scup: 4095 > 4079 (max per ITU-T.814)
 				},
-				expectErr: false, // Should handle gracefully
+				expectErr: true, // Should reject invalid Scup
 			},
 		}
 
@@ -146,8 +150,10 @@ func TestHTBlockDecoderWithContext(t *testing.T) {
 			0xAA, 0x55,
 			// VLC: various codewords
 			0x06, 0x3F, 0x00, 0x7F, 0x11, 0x5F,
-			// Lengths: MEL=2, VLC=6
-			0x02, 0x06,
+			// 12-bit Scup footer: MEL=2, VLC=6, Scup=8
+			// Byte[n-2]: low 4 bits = 8 & 0x0F = 0x08
+			// Byte[n-1]: high 8 bits = (8 >> 4) = 0x00
+			0x08, 0x00,
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -182,7 +188,7 @@ func TestHTBlockDecoderWithContext(t *testing.T) {
 			0x01, 0x02,       // MagSgn
 			0x80,             // MEL: one significant quad
 			0x06, 0x3F,       // VLC
-			0x01, 0x02,       // Lengths
+			0x03, 0x00,       // 12-bit Scup: MEL=1, VLC=2, Scup=3
 		}
 
 		_, err := decoder.DecodeBlock(testBlock)
@@ -213,7 +219,7 @@ func BenchmarkHTBlockDecoder(b *testing.B) {
 		0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC,
 		0xDE, 0xF0,
 		0x06, 0x3F, 0x00, 0x7F, 0x11, 0x5F,
-		0x02, 0x06,
+		0x08, 0x00, // 12-bit Scup: MEL=2, VLC=6, Scup=8
 	}
 
 	b.Run("4x4Block", func(b *testing.B) {
@@ -233,8 +239,11 @@ func BenchmarkHTBlockDecoder(b *testing.B) {
 	b.Run("32x32Block", func(b *testing.B) {
 		largeBlock := make([]byte, 256)
 		copy(largeBlock, testBlock)
+		// 12-bit Scup: MEL=8, VLC=16, Scup=24
+		// Byte[n-2]: low 4 bits = 24 & 0x0F = 8
+		// Byte[n-1]: high 8 bits = 24 >> 4 = 1
 		largeBlock[len(largeBlock)-2] = 8
-		largeBlock[len(largeBlock)-1] = 16
+		largeBlock[len(largeBlock)-1] = 1
 
 		for i := 0; i < b.N; i++ {
 			decoder := NewHTBlockDecoder(32, 32)

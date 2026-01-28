@@ -93,5 +93,5 @@ Legend: [ ] = pending, [x] = done
 
 ### HTJ2K pipeline integration
 - [x] Packet header integration with HT codeblocks
-- [ ] Rate control interaction with HT passes
-- [ ] Decoder error resilience and resync points
+- [x] Rate control interaction with HT passes
+- [x] Decoder error resilience and resync points

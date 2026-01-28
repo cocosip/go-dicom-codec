@@ -40,6 +40,10 @@ type Decoder struct {
 	// Optional per-component offsets
 	mctOffsets []int32
 	bindings   []mctBinding
+
+	// Error resilience configuration
+	resilient bool // Enable error resilience mode (warnings instead of errors)
+	strict    bool // Strict mode: fail on any error (default: false for resilience)
 }
 
 type mctBinding struct {
@@ -68,6 +72,19 @@ func (d *Decoder) SetROIConfig(cfg *ROIConfig) {
 // SetBlockDecoderFactory sets a custom block decoder factory (e.g., for HTJ2K support)
 func (d *Decoder) SetBlockDecoderFactory(factory t2.BlockDecoderFactory) {
 	d.blockDecoderFactory = factory
+}
+
+// SetResilient enables error resilience mode (warnings instead of fatal errors)
+func (d *Decoder) SetResilient(resilient bool) {
+	d.resilient = resilient
+}
+
+// SetStrict enables strict mode (fail on any error, no resilience)
+func (d *Decoder) SetStrict(strict bool) {
+	d.strict = strict
+	if strict {
+		d.resilient = false // Strict mode overrides resilience
+	}
 }
 
 // Decode decodes a JPEG 2000 codestream

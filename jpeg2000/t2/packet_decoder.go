@@ -52,6 +52,10 @@ type PacketDecoder struct {
 
 	// Persisted code-block states per component/resolution/precinct for tag-tree decoding
 	cbStates map[string]*packetHeaderContext
+
+	// Error resilience
+	resilient bool // Enable error resilience mode (warnings instead of errors)
+	strict    bool // Strict mode: fail on any error
 }
 
 type cbGridDim struct {
@@ -86,6 +90,21 @@ func NewPacketDecoder(data []byte, numComponents, numLayers, numResolutions int,
 		cbPrecinctOrder:     make(map[int]map[int]map[int][]int),
 		cbPrecinctPositions: make(map[int]map[int]map[int]map[int][]cbPosition),
 		cbPrecinctDims:      make(map[int]map[int]map[int]map[int]cbGridDim),
+		resilient:           false,
+		strict:              false,
+	}
+}
+
+// SetResilient enables error resilience mode (warnings instead of fatal errors)
+func (pd *PacketDecoder) SetResilient(resilient bool) {
+	pd.resilient = resilient
+}
+
+// SetStrict enables strict mode (fail on any error, no resilience)
+func (pd *PacketDecoder) SetStrict(strict bool) {
+	pd.strict = strict
+	if strict {
+		pd.resilient = false // Strict mode overrides resilience
 	}
 }
 
@@ -540,6 +559,7 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 
 	// Decode packet body (code-block contributions)
 	body := &bytes.Buffer{}
+	partialBuffer := false
 	for i := range packet.CodeBlockIncls {
 		cbIncl := &packet.CodeBlockIncls[i] // Get pointer to modify the slice element
 		if cbIncl.Included && cbIncl.DataLength > 0 {
@@ -548,19 +568,69 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				continue
 			}
 			if pd.offset >= len(pd.data) {
+				partialBuffer = true
 				break
 			}
 
-			if pd.offset+cbIncl.DataLength > len(pd.data) {
-				cbIncl.DataLength = len(pd.data) - pd.offset
+			// Segment length validation with overflow checks (OpenJPEG alignment)
+			// Check for integer overflow: offset + length < offset
+			if pd.offset+cbIncl.DataLength < pd.offset {
+				if pd.strict {
+					return packet, fmt.Errorf("segment length overflow detected for codeblock %d", i)
+				}
+				if pd.resilient {
+					// Mark this and remaining blocks as corrupted
+					partialBuffer = true
+					break
+				}
+				return packet, fmt.Errorf("segment length overflow detected for codeblock %d", i)
 			}
+
+			// Check bounds: offset + length > total data length
+			if pd.offset+cbIncl.DataLength > len(pd.data) {
+				if pd.strict {
+					return packet, fmt.Errorf("segment length exceeds available data for codeblock %d: offset=%d, length=%d, total=%d",
+						i, pd.offset, cbIncl.DataLength, len(pd.data))
+				}
+				if pd.resilient {
+					// Truncate to remaining space and mark partial
+					cbIncl.DataLength = len(pd.data) - pd.offset
+					partialBuffer = true
+				} else {
+					// Default: truncate gracefully
+					cbIncl.DataLength = len(pd.data) - pd.offset
+				}
+			}
+
+			// JPWL error handling: segment length limit (8192 bytes per codeblock)
+			const maxSegmentLength = 8192
+			if cbIncl.DataLength > maxSegmentLength {
+				if pd.strict {
+					return packet, fmt.Errorf("segment length exceeds JPWL limit for codeblock %d: %d > %d",
+						i, cbIncl.DataLength, maxSegmentLength)
+				}
+				// Truncate to limit (OpenJPEG behavior)
+				remainingSpace := len(pd.data) - pd.offset
+				if remainingSpace < maxSegmentLength {
+					cbIncl.DataLength = remainingSpace
+				} else {
+					cbIncl.DataLength = maxSegmentLength
+				}
+			}
+
 			cbData := pd.data[pd.offset : pd.offset+cbIncl.DataLength]
 			cbIncl.Data = cbData
 			body.Write(cbData)
 			pd.offset += cbIncl.DataLength
+
+			// Mark if we detected partial buffer condition
+			if partialBuffer {
+				cbIncl.Corrupted = true
+			}
 		}
 	}
 	packet.Body = body.Bytes()
+	packet.PartialBuffer = partialBuffer
 
 	return packet, nil
 }

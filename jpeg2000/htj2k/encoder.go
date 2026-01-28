@@ -210,18 +210,20 @@ func (h *HTEncoder) assembleCodel() []byte {
 	melData := h.mel.Flush()
 	vlcData := h.vlc.Flush()
 
-	// HTJ2K segment layout (ISO/IEC 15444-15:2019):
-	// [MagSgn][MEL][VLC][Lengths(2 bytes)]
+	// HTJ2K segment layout (ITU-T.814 / ISO/IEC 15444-15):
+	// [MagSgn][MEL][VLC][Scup-12bit]
 	//
-	// Last 2 bytes encode segment lengths:
-	//   - Byte[n-2]: MEL length
-	//   - Byte[n-1]: VLC length
+	// Last 2 bytes encode Scup (MEL+VLC total length) in 12 bits:
+	//   - Byte[n-2]: low 4 bits = Scup[3:0] (LSB), high 4 bits unused
+	//   - Byte[n-1]: Scup[11:4] (8 bits)
+	// Formula: Scup = (byte[n-1] << 4) | (byte[n-2] & 0x0F)
 
 	melLen := len(melData)
 	vlcLen := len(vlcData)
+	scup := melLen + vlcLen // Scup = MEL + VLC total length
 
-	// Use 2-byte length fields for MEL and VLC to avoid overflow on larger blocks.
-	totalLen := len(magsgnData) + melLen + vlcLen + 4
+	// Use 2-byte footer (12 bits for Scup + 4 bits reserved)
+	totalLen := len(magsgnData) + melLen + vlcLen + 2
 	result := make([]byte, totalLen)
 	pos := 0
 
@@ -237,25 +239,29 @@ func (h *HTEncoder) assembleCodel() []byte {
 	copy(result[pos:], vlcData)
 	pos += vlcLen
 
-	// Encode segment lengths (big-endian uint16)
-	result[pos] = byte((melLen >> 8) & 0xFF)
-	result[pos+1] = byte(melLen & 0xFF)
-	result[pos+2] = byte((vlcLen >> 8) & 0xFF)
-	result[pos+3] = byte(vlcLen & 0xFF)
+	// Encode Scup (12 bits) in last 2 bytes (OpenJPH style)
+	// Byte[n-2]: low 4 bits of Scup
+	result[pos] = byte(scup & 0x0F)
+	// Byte[n-1]: high 8 bits of Scup
+	result[pos+1] = byte((scup >> 4) & 0xFF)
 
 	return result
 }
 
-// assembleRaw 将所有系数按 int32 小端序写入，并在尾部附加 4 字节段长度（melLen=0, vlcLen=0）。
+// assembleRaw 将所有系数按 int32 小端序写入，并在尾部附加 2 字节Scup（=0表示raw mode）
 func (h *HTEncoder) assembleRaw() []byte {
 	dataBytes := make([]byte, len(h.data)*4)
 	for i, v := range h.data {
 		binary.LittleEndian.PutUint32(dataBytes[i*4:], uint32(v))
 	}
 
-	// mel/vlc 长度均为 0，占 4 字节尾部
-	result := make([]byte, len(dataBytes)+4)
+	// Raw mode: Scup = 0 (MEL=0, VLC=0), 占 2 字节尾部
+	// 使用与assembleCodel相同的12位Scup编码格式
+	result := make([]byte, len(dataBytes)+2)
 	copy(result, dataBytes)
-	// 最后 4 字节已为 0
+	// Byte[n-2] = 0x00 (低4位Scup=0, 高4位保留=0)
+	// Byte[n-1] = 0x00 (高8位Scup=0)
+	result[len(result)-2] = 0x00
+	result[len(result)-1] = 0x00
 	return result
 }

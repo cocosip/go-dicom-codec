@@ -50,6 +50,10 @@ type TileDecoder struct {
 	// HTJ2K support
 	isHTJ2K             bool
 	blockDecoderFactory BlockDecoderFactory
+
+	// Error resilience
+	resilient bool // Enable error resilience mode
+	strict    bool // Strict mode: fail on any error
 }
 
 // ComponentDecoder decodes a single component within a tile
@@ -102,6 +106,11 @@ type CodeBlockDecoder struct {
 	numPasses int
 	t1Decoder BlockDecoder // Can be EBCOT T1 or HTJ2K decoder
 	coeffs    []int32      // Decoded coefficients
+
+	// Error resilience
+	corrupted     bool // Block is corrupted and should be skipped
+	partialBuffer bool // Insufficient data for completing packet
+	numChunks     int  // Number of successfully decoded chunks
 }
 
 type ROIInfo struct {
@@ -287,9 +296,24 @@ func NewTileDecoder(
 		tileY0:              tileY0,
 		tileX1:              tileX1,
 		tileY1:              tileY1,
+		resilient:           false,
+		strict:              false,
 	}
 
 	return td
+}
+
+// SetResilient enables error resilience mode (warnings instead of fatal errors)
+func (td *TileDecoder) SetResilient(resilient bool) {
+	td.resilient = resilient
+}
+
+// SetStrict enables strict mode (fail on any error, no resilience)
+func (td *TileDecoder) SetStrict(strict bool) {
+	td.strict = strict
+	if strict {
+		td.resilient = false // Strict mode overrides resilience
+	}
 }
 
 // Decode decodes the tile and returns the pixel data for each component
@@ -341,6 +365,10 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		ProgressionOrder(td.cod.ProgressionOrder),
 		td.cod.CodeBlockStyle,
 	)
+
+	// Propagate error resilience settings
+	packetDec.SetResilient(td.resilient)
+	packetDec.SetStrict(td.strict)
 
 	// Set image dimensions and code-block size
 	cbWidth, cbHeight := td.cod.CodeBlockSize()

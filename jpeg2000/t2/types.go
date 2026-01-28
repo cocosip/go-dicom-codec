@@ -22,6 +22,9 @@ type Packet struct {
 	ComponentIndex  int             // Component index
 	PrecinctIndex   int             // Precinct index
 	CodeBlockIncls  []CodeBlockIncl // Code-block inclusion information
+
+	// Error resilience
+	PartialBuffer bool // Insufficient data to complete packet
 }
 
 // CodeBlockIncl represents code-block inclusion and contribution information
@@ -34,6 +37,9 @@ type CodeBlockIncl struct {
 	ZeroBitplanes  int    // Number of missing MSB bit-planes (from tag tree)
 	PassLengths    []int  // Cumulative byte length of each pass (for TERMALL mode)
 	UseTERMALL     bool   // If true, passes are terminated (TERMALL mode)
+
+	// Error resilience
+	Corrupted bool // Codeblock data is corrupted or truncated
 }
 
 // Precinct represents a precinct in the codestream
