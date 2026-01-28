@@ -71,7 +71,7 @@ func TestContextComputer(t *testing.T) {
 	t.Run("QuadSignificanceUpdate", func(t *testing.T) {
 		cc := NewContextComputer(8, 8)
 
-		// Update quad with pattern 0b1010 (top-right and bottom-right significant)
+		// Update quad with pattern 0b1010 (bottom-left and bottom-right significant)
 		cc.UpdateQuadSignificance(1, 1, 0x0A)
 
 		// Check individual samples
@@ -79,11 +79,11 @@ func TestContextComputer(t *testing.T) {
 		if cc.IsSignificant(2, 2) {
 			t.Error("Sample (2,2) should not be significant (bit 0 = 0)")
 		}
-		if !cc.IsSignificant(3, 2) {
-			t.Error("Sample (3,2) should be significant (bit 1 = 1)")
+		if cc.IsSignificant(3, 2) {
+			t.Error("Sample (3,2) should not be significant (bit 2 = 0)")
 		}
-		if cc.IsSignificant(2, 3) {
-			t.Error("Sample (2,3) should not be significant (bit 2 = 0)")
+		if !cc.IsSignificant(2, 3) {
+			t.Error("Sample (2,3) should be significant (bit 1 = 1)")
 		}
 		if !cc.IsSignificant(3, 3) {
 			t.Error("Sample (3,3) should be significant (bit 3 = 1)")

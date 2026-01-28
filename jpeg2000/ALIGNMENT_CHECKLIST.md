@@ -82,16 +82,16 @@ Legend: [ ] = pending, [x] = done
 - [x] Byte alignment at block end
 
 ### Exponent predictor / quad-pair
-- [ ] Exponent prediction inputs and edge handling
-- [ ] Quad-pair decoding order and state updates
-- [ ] Coupling with VLC context selection
+- [x] Exponent prediction inputs and edge handling
+- [x] Quad-pair decoding order and state updates
+- [x] Coupling with VLC context selection
 
 ### HT block framework
-- [ ] Quad scanning order and block segmentation
-- [ ] MagSgn/MEL/VLC stream growth direction and interleave
-- [ ] HT block header and termination rules
+- [x] Quad scanning order and block segmentation
+- [x] MagSgn/MEL/VLC stream growth direction and interleave
+- [x] HT block header and termination rules
 
 ### HTJ2K pipeline integration
-- [ ] Packet header integration with HT codeblocks
+- [x] Packet header integration with HT codeblocks
 - [ ] Rate control interaction with HT passes
 - [ ] Decoder error resilience and resync points

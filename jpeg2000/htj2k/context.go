@@ -39,7 +39,7 @@ func (c *ContextComputer) SetSignificant(x, y int, significant bool) {
 	}
 	qx := x / 2
 	qy := y / 2
-	bit := uint8(1 << ((y%2)*2 + (x % 2)))
+	bit := uint8(1 << ((x%2)*2 + (y % 2)))
 	if significant {
 		c.rho[qy][qx] |= bit
 		return
@@ -54,7 +54,7 @@ func (c *ContextComputer) IsSignificant(x, y int) bool {
 	}
 	qx := x / 2
 	qy := y / 2
-	bit := uint8(1 << ((y%2)*2 + (x % 2)))
+	bit := uint8(1 << ((x%2)*2 + (y % 2)))
 	return (c.rho[qy][qx] & bit) != 0
 }
 

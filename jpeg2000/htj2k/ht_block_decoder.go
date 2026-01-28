@@ -1,6 +1,10 @@
 package htj2k
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"errors"
+	"math/bits"
+)
 
 // HTBlockDecoder implements complete HTJ2K block decoding
 // with proper context computation and VLC decoding
@@ -13,8 +17,7 @@ type HTBlockDecoder struct {
 	// Component decoders
 	mel     *MELDecoderSpec
 	magsgn  *MagSgnDecoder
-	vlc     *VLCDecoder
-	context *ContextComputer
+	vlc     vlcQuadDecoder
 
 	// Decoded coefficients
 	data []int32
@@ -30,7 +33,6 @@ func NewHTBlockDecoder(width, height int) *HTBlockDecoder {
 		height:  height,
 		numQX:   numQX,
 		numQY:   numQY,
-		context: NewContextComputer(width, height),
 		data:    make([]int32, width*height),
 	}
 }
@@ -43,15 +45,130 @@ func (h *HTBlockDecoder) DecodeBlock(codeblock []byte) ([]int32, error) {
 		return nil, err
 	}
 
-	// Decode quads in raster order
-	for qy := 0; qy < h.numQY; qy++ {
-		isFirstRow := (qy == 0)
+	if h.mel == nil || h.vlc == nil || h.magsgn == nil {
+		return h.data, nil
+	}
 
-		for qx := 0; qx < h.numQX; qx++ {
-			if err := h.decodeQuad(qx, qy, isFirstRow); err != nil {
-				// On error, treat remaining samples as zero
-				break
+	qp := NewQuadPairDecoderWithVLC(h.vlc, h.numQX, h.numQY)
+	qp.SetMELDecoder(h.mel)
+	pairs, err := qp.DecodeAllQuadPairs(h.numQY)
+	if err != nil {
+		if errors.Is(err, ErrInsufficientData) {
+			return h.data, nil
+		}
+		return h.data, err
+	}
+
+	type quadInfo struct {
+		rho      uint8
+		uf       uint8
+		uq       uint32
+		e1       uint8
+		ek       uint8
+		sigCount int
+	}
+
+	quads := make([]quadInfo, h.numQX*h.numQY)
+	pairsPerRow := (h.numQX + 1) / 2
+	pairIdx := 0
+	for qy := 0; qy < h.numQY; qy++ {
+		for g := 0; g < pairsPerRow; g++ {
+			pair := pairs[pairIdx]
+			pairIdx++
+
+			qx1 := 2 * g
+			if qx1 < h.numQX {
+				rho, uf, uq, e1, ek := GetQuadInfo(pair, 0)
+				quads[qy*h.numQX+qx1] = quadInfo{
+					rho:      rho,
+					uf:       uf,
+					uq:       uq,
+					e1:       e1,
+					ek:       ek,
+					sigCount: bits.OnesCount8(rho),
+				}
 			}
+
+			qx2 := qx1 + 1
+			if pair.HasSecondQuad && qx2 < h.numQX {
+				rho, uf, uq, e1, ek := GetQuadInfo(pair, 1)
+				quads[qy*h.numQX+qx2] = quadInfo{
+					rho:      rho,
+					uf:       uf,
+					uq:       uq,
+					e1:       e1,
+					ek:       ek,
+					sigCount: bits.OnesCount8(rho),
+				}
+			}
+		}
+	}
+
+	predictor := NewExponentPredictorComputer(h.numQX, h.numQY)
+	for qy := 0; qy < h.numQY; qy++ {
+		for qx := 0; qx < h.numQX; qx++ {
+			info := quads[qy*h.numQX+qx]
+			predictor.SetQuadExponents(qx, qy, 0, info.sigCount)
+
+			if info.rho == 0 {
+				predictor.SetQuadExponents(qx, qy, 0, info.sigCount)
+				continue
+			}
+
+			Kq := predictor.ComputePredictor(qx, qy)
+			Uq := Kq + int(info.uq)
+			if Uq < 0 {
+				Uq = 0
+			}
+
+			maxE := 0
+			sx := qx * 2
+			sy := qy * 2
+			positions := [][2]int{
+				{sx, sy}, {sx, sy + 1},
+				{sx + 1, sy}, {sx + 1, sy + 1},
+			}
+
+			for i, pos := range positions {
+				if (info.rho>>i)&1 == 0 {
+					continue
+				}
+				ekBit := int((info.ek >> i) & 1)
+				e1Bit := uint32((info.e1 >> i) & 1)
+				mn := Uq - ekBit
+				if mn < 0 {
+					mn = 0
+				}
+
+				mag, sign, ok := h.magsgn.DecodeMagSgn(mn)
+				if !ok {
+					mag = 0
+					sign = 0
+				}
+
+				if e1Bit != 0 && mn < 32 {
+					mag |= 1 << mn
+				}
+
+				if mag > 0 {
+					exp := MagnitudeExponent(mag)
+					if exp > maxE {
+						maxE = exp
+					}
+				}
+
+				coeff := int32(mag)
+				if sign != 0 {
+					coeff = -coeff
+				}
+
+				px, py := pos[0], pos[1]
+				if px < h.width && py < h.height {
+					h.data[py*h.width+px] = coeff
+				}
+			}
+
+			predictor.SetQuadExponents(qx, qy, maxE, info.sigCount)
 		}
 	}
 
@@ -104,85 +221,7 @@ func (h *HTBlockDecoder) parseSegments(codeblock []byte) error {
 	// Initialize decoders
 	h.magsgn = NewMagSgnDecoder(magsgnData)
 	h.mel = NewMELDecoderSpec(melData)
-	h.vlc = NewVLCDecoder(vlcData)
-
-	return nil
-}
-
-// decodeQuad decodes a single 2x2 quad
-func (h *HTBlockDecoder) decodeQuad(qx, qy int, isFirstRow bool) error {
-	// Step 1: Decode MEL bit
-	// MEL bit indicates if the quad has any significant samples
-	if h.mel == nil {
-		// No MEL data - all quads are zero
-		return nil
-	}
-
-	melBit, hasMore := h.mel.DecodeMELSym()
-	if !hasMore {
-		// MEL stream exhausted - remaining quads are zero
-		return nil
-	}
-
-	if melBit == 0 {
-		// MEL bit == 0: All samples in quad are zero
-		return nil
-	}
-
-	// Step 2: Compute context based on neighboring significance
-	context := h.context.ComputeContext(qx, qy, isFirstRow)
-
-	// Step 3: Decode VLC to get significance pattern and magnitude info
-	rho, u_off, e_k, e_1, found := h.vlc.DecodeQuadWithContext(context, isFirstRow)
-	if !found {
-		// VLC decoder exhausted
-		return nil
-	}
-
-	// Step 4: Update significance map
-	h.context.UpdateQuadSignificance(qx, qy, rho)
-
-	// Step 5: Decode magnitudes and signs for significant samples
-	sx := qx * 2
-	sy := qy * 2
-
-	for i := 0; i < 4; i++ {
-		if (rho & (1 << i)) != 0 {
-			// Sample is significant - decode magnitude and sign
-
-			// Compute number of magnitude bits to decode
-			// This uses e_k, e_1, and u_off from VLC decoding
-			numBits := int(e_k)
-			if i < 2 && e_1 > 0 {
-				numBits = int(e_1)
-			}
-
-			// Decode magnitude
-			mag, sign, ok := h.magsgn.DecodeMagSgn(numBits)
-			if !ok {
-				mag = 0
-				sign = 0
-			}
-
-			// Apply unsigned offset
-			if u_off > 0 {
-				mag += uint32(u_off)
-			}
-
-			// Convert to signed coefficient
-			coeff := int32(mag)
-			if sign != 0 {
-				coeff = -coeff
-			}
-
-			// Store coefficient
-			px := sx + (i % 2)
-			py := sy + (i / 2)
-			if px < h.width && py < h.height {
-				h.data[py*h.width+px] = coeff
-			}
-		}
-	}
+	h.vlc = NewVLCDecoderReverse(vlcData)
 
 	return nil
 }

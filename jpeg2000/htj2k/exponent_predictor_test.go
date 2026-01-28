@@ -134,20 +134,19 @@ func TestExponentPredictorComputer_NonFirstRow(t *testing.T) {
 		desc     string
 	}{
 		{
-			name: "No neighbors, no gamma",
+			name: "No gamma uses Kq=1",
 			setup: func(epc *ExponentPredictorComputer) {
-				// Quad (0,1) has no left neighbor
 				// Top neighbor (0,0) has E'=0 (not set)
 				// Current quad (0,1) has gamma=0 (<=1 significant)
 				epc.SetQuadExponents(0, 1, 0, 0)
 			},
 			qx:       0,
 			qy:       1,
-			expected: 0, // Kq = max(0, 0) - 0 = 0
-			desc:     "Leftmost column, second row, no gamma",
+			expected: 1, // Kq = 1 when gamma=0
+			desc:     "Second row, gamma=0",
 		},
 		{
-			name: "Top neighbor only",
+			name: "Gamma=0 ignores top",
 			setup: func(epc *ExponentPredictorComputer) {
 				// Set top neighbor (1,0) to E'=5
 				epc.SetQuadExponents(1, 0, 5, 1)
@@ -156,66 +155,46 @@ func TestExponentPredictorComputer_NonFirstRow(t *testing.T) {
 			},
 			qx:       1,
 			qy:       1,
-			expected: 5, // Kq = max(0, 5) - 0 = 5
-			desc:     "Top neighbor E'=5, no left, no gamma",
+			expected: 1, // Kq = 1 when gamma=0
+			desc:     "Top neighbor E'=5, gamma=0",
 		},
 		{
-			name: "Left neighbor only",
+			name: "Gamma=1 uses top exponent",
 			setup: func(epc *ExponentPredictorComputer) {
-				// Set left neighbor (1,1) to E'=7
-				epc.SetQuadExponents(1, 1, 7, 1)
-				// Current quad (2,1) has gamma=0
-				epc.SetQuadExponents(2, 1, 0, 1)
-			},
-			qx:       2,
-			qy:       1,
-			expected: 7, // Kq = max(7, 0) - 0 = 7
-			desc:     "Left neighbor E'=7, no top, no gamma",
-		},
-		{
-			name: "Both neighbors, no gamma",
-			setup: func(epc *ExponentPredictorComputer) {
-				// Set left neighbor (1,1) to E'=7
-				epc.SetQuadExponents(1, 1, 7, 1)
 				// Set top neighbor (2,0) to E'=5
 				epc.SetQuadExponents(2, 0, 5, 1)
-				// Current quad (2,1) has gamma=0
-				epc.SetQuadExponents(2, 1, 0, 1)
+				// Current quad (2,1) has gamma=1
+				epc.SetQuadExponents(2, 1, 0, 2)
 			},
 			qx:       2,
 			qy:       1,
-			expected: 7, // Kq = max(7, 5) - 0 = 7
-			desc:     "Left=7, Top=5, max=7, no gamma",
+			expected: 4, // Kq = max(1, 5-1) = 4
+			desc:     "Top neighbor E'=5, gamma=1",
 		},
 		{
-			name: "Both neighbors, with gamma",
+			name: "Gamma=1 clamps to 1 when top is small",
 			setup: func(epc *ExponentPredictorComputer) {
-				// Set left neighbor (1,2) to E'=7
-				epc.SetQuadExponents(1, 2, 7, 1)
-				// Set top neighbor (2,1) to E'=5
-				epc.SetQuadExponents(2, 1, 5, 1)
-				// Current quad (2,2) has gamma=1 (>1 significant)
-				epc.SetQuadExponents(2, 2, 0, 2)
+				// Set top neighbor (0,0) to E'=1
+				epc.SetQuadExponents(0, 0, 1, 1)
+				// Current quad (0,1) has gamma=1
+				epc.SetQuadExponents(0, 1, 0, 2)
 			},
-			qx:       2,
-			qy:       2,
-			expected: 6, // Kq = max(7, 5) - 1 = 6
-			desc:     "Left=7, Top=5, max=7, gamma=1 -> 7-1=6",
+			qx:       0,
+			qy:       1,
+			expected: 1, // Kq = max(1, 1-1) = 1
+			desc:     "Top neighbor E'=1, gamma=1",
 		},
 		{
-			name: "Top neighbor larger, with gamma",
+			name: "Gamma=1 with zero top exponent",
 			setup: func(epc *ExponentPredictorComputer) {
-				// Set left neighbor (2,2) to E'=5
-				epc.SetQuadExponents(2, 2, 5, 1)
-				// Set top neighbor (3,1) to E'=8
-				epc.SetQuadExponents(3, 1, 8, 1)
-				// Current quad (3,2) has gamma=1 (>1 significant)
-				epc.SetQuadExponents(3, 2, 0, 3)
+				// Top neighbor (3,0) is unset -> E'=0
+				// Current quad (3,1) has gamma=1
+				epc.SetQuadExponents(3, 1, 0, 3)
 			},
 			qx:       3,
-			qy:       2,
-			expected: 7, // Kq = max(5, 8) - 1 = 7
-			desc:     "Left=5, Top=8, max=8, gamma=1 -> 8-1=7",
+			qy:       1,
+			expected: 1, // Kq = max(1, 0-1) = 1
+			desc:     "Top neighbor E'=0, gamma=1",
 		},
 	}
 
@@ -253,28 +232,26 @@ func TestExponentPredictorComputer_ComputeExponentBound(t *testing.T) {
 			expected: 4, // Kq=1 (first row), Uq = 1 + 3 = 4
 		},
 		{
-			name: "Non-first row, neighbors E'=7, no gamma, uq=2",
+			name: "Non-first row, gamma=0, uq=2",
 			setup: func(epc *ExponentPredictorComputer) {
-				epc.SetQuadExponents(1, 1, 7, 1)
-				epc.SetQuadExponents(2, 0, 5, 1)
-				epc.SetQuadExponents(2, 1, 0, 1)
+				epc.SetQuadExponents(2, 0, 7, 1)
+				epc.SetQuadExponents(2, 1, 0, 1) // gamma=0
 			},
 			qx:       2,
 			qy:       1,
 			uq:       2,
-			expected: 9, // Kq=max(7,5)=7, Uq = 7 + 2 = 9
+			expected: 3, // Kq=1, Uq = 1 + 2 = 3
 		},
 		{
-			name: "Non-first row, with gamma, uq=5",
+			name: "Non-first row, gamma=1, uq=5",
 			setup: func(epc *ExponentPredictorComputer) {
-				epc.SetQuadExponents(2, 2, 8, 1)
 				epc.SetQuadExponents(3, 1, 6, 1)
 				epc.SetQuadExponents(3, 2, 0, 3) // gamma=1
 			},
 			qx:       3,
 			qy:       2,
 			uq:       5,
-			expected: 12, // Kq=max(8,6)-1=7, Uq = 7 + 5 = 12
+			expected: 10, // Kq=max(1, 6-1)=5, Uq = 5 + 5 = 10
 		},
 	}
 
@@ -315,19 +292,19 @@ func TestExponentPredictorComputer_CompleteScenario(t *testing.T) {
 	// Quad (0,1): left=none, top=(0,0)=3, gamma=0
 	epc.SetQuadExponents(0, 1, 5, 1)
 	Kq01 := epc.ComputePredictor(0, 1)
-	if Kq01 != 3 { // max(0, 3) - 0 = 3
-		t.Errorf("Kq(0,1) = %d, want 3", Kq01)
+	if Kq01 != 1 { // gamma=0 -> Kq=1
+		t.Errorf("Kq(0,1) = %d, want 1", Kq01)
 	}
 
 	// Quad (1,1): left=(0,1)=5, top=(1,0)=4, gamma=1
 	epc.SetQuadExponents(1, 1, 6, 2)
 	Kq11 := epc.ComputePredictor(1, 1)
-	if Kq11 != 4 { // max(5, 4) - 1 = 4
-		t.Errorf("Kq(1,1) = %d, want 4", Kq11)
+	if Kq11 != 3 { // max(1, 4-1) = 3
+		t.Errorf("Kq(1,1) = %d, want 3", Kq11)
 	}
 
 	Uq11 := epc.ComputeExponentBound(1, 1, 1) // uq=1
-	if Uq11 != 5 {                            // Kq=4, Uq=4+1=5
-		t.Errorf("Uq(1,1) = %d, want 5", Uq11)
+	if Uq11 != 4 {                            // Kq=3, Uq=3+1=4
+		t.Errorf("Uq(1,1) = %d, want 4", Uq11)
 	}
 }
