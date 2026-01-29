@@ -370,7 +370,8 @@ func (h *HTEncoder) assembleCodel() []byte {
 	vlcLen := len(finalVLC)
 
 	// Assemble final codeblock
-	totalLen := len(magsgnData) + melLen + vlcLen + 2
+	// Footer is now 4 bytes: melLen (2 bytes LE) + vlcLen (2 bytes LE)
+	totalLen := len(magsgnData) + melLen + vlcLen + 4
 	result := make([]byte, totalLen)
 	pos := 0
 
@@ -386,28 +387,30 @@ func (h *HTEncoder) assembleCodel() []byte {
 	copy(result[pos:], finalVLC)
 	pos += vlcLen
 
-	// Footer: byte[n-2] = melLen, byte[n-1] = vlcLen
-	// This allows the decoder to locate MEL and VLC segments independently
-	result[pos] = byte(melLen)
-	result[pos+1] = byte(vlcLen)
+	// Footer: 4 bytes total
+	// bytes[n-4:n-2] = melLen as uint16 LE
+	// bytes[n-2:n] = vlcLen as uint16 LE
+	// This supports segment lengths up to 65535 bytes
+	binary.LittleEndian.PutUint16(result[pos:pos+2], uint16(melLen))
+	binary.LittleEndian.PutUint16(result[pos+2:pos+4], uint16(vlcLen))
 
 	return result
 }
 
-// assembleRaw 将所有系数按 int32 小端序写入，并在尾部附加 2 字节Scup（=0表示raw mode）
+// assembleRaw 将所有系数按 int32 小端序写入，并在尾部附加 4 字节footer（=0表示raw mode）
 func (h *HTEncoder) assembleRaw() []byte {
 	dataBytes := make([]byte, len(h.data)*4)
 	for i, v := range h.data {
 		binary.LittleEndian.PutUint32(dataBytes[i*4:], uint32(v))
 	}
 
-	// Raw mode: Scup = 0 (MEL=0, VLC=0), 占 2 字节尾部
-	// 使用与assembleCodel相同的12位Scup编码格式
-	result := make([]byte, len(dataBytes)+2)
+	// Raw mode: melLen=0, vlcLen=0, 占 4 字节尾部
+	// 使用与assembleCodel相同的footer格式
+	result := make([]byte, len(dataBytes)+4)
 	copy(result, dataBytes)
-	// Byte[n-2] = 0x00 (低4位Scup=0, 高4位保留=0)
-	// Byte[n-1] = 0x00 (高8位Scup=0)
-	result[len(result)-2] = 0x00
-	result[len(result)-1] = 0x00
+	// bytes[n-4:n-2] = melLen = 0 (uint16 LE)
+	// bytes[n-2:n] = vlcLen = 0 (uint16 LE)
+	binary.LittleEndian.PutUint16(result[len(result)-4:len(result)-2], 0)
+	binary.LittleEndian.PutUint16(result[len(result)-2:], 0)
 	return result
 }

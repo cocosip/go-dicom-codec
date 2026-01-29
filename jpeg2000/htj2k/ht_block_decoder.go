@@ -1,6 +1,7 @@
 package htj2k
 
 import (
+	"encoding/binary"
 	"errors"
 	"math/bits"
 )
@@ -176,18 +177,20 @@ func (h *HTBlockDecoder) DecodeBlock(codeblock []byte) ([]int32, error) {
 
 // parseSegments parses the codeblock into MagSgn, MEL, and VLC segments
 func (h *HTBlockDecoder) parseSegments(codeblock []byte) error {
-	if len(codeblock) < 2 {
+	if len(codeblock) < 4 {
 		// Empty or too small - all zeros
 		return nil
 	}
 
-	// Parse footer: byte[n-2] = melLen, byte[n-1] = vlcLen
+	// Parse footer: 4 bytes total
+	// bytes[n-4:n-2] = melLen as uint16 LE
+	// bytes[n-2:n] = vlcLen as uint16 LE
 	lcup := len(codeblock)
-	melLen := int(codeblock[lcup-2])
-	vlcLen := int(codeblock[lcup-1])
+	melLen := int(binary.LittleEndian.Uint16(codeblock[lcup-4 : lcup-2]))
+	vlcLen := int(binary.LittleEndian.Uint16(codeblock[lcup-2 : lcup]))
 	scup := melLen + vlcLen
 
-	magsgnLen := lcup - 2 - scup
+	magsgnLen := lcup - 4 - scup
 	if magsgnLen < 0 {
 		return nil
 	}

@@ -69,19 +69,19 @@ func (h *HTDecoder) Decode(codeblock []byte, numPasses int) ([]int32, error) {
 }
 
 // parseCodeblock parses segments.
-// Footer format: byte[n-2] = melLen, byte[n-1] = vlcLen.
-// Layout: [MagSgn][MEL][VLC][melLen][vlcLen]
+// Footer format: 4 bytes - melLen (uint16 LE) + vlcLen (uint16 LE)
+// Layout: [MagSgn][MEL][VLC][melLen(2)][vlcLen(2)]
 func (h *HTDecoder) parseCodeblock(codeblock []byte) error {
-	if len(codeblock) < 2 {
+	if len(codeblock) < 4 {
 		return fmt.Errorf("codeblock too short")
 	}
 
 	lcup := len(codeblock)
-	melLen := int(codeblock[lcup-2])
-	vlcLen := int(codeblock[lcup-1])
+	melLen := int(binary.LittleEndian.Uint16(codeblock[lcup-4 : lcup-2]))
+	vlcLen := int(binary.LittleEndian.Uint16(codeblock[lcup-2 : lcup]))
 	scup := melLen + vlcLen
 
-	magsgnLen := lcup - 2 - scup
+	magsgnLen := lcup - 4 - scup
 	if magsgnLen < 0 {
 		return fmt.Errorf("invalid segment lengths")
 	}
