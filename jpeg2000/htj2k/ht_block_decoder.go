@@ -3,6 +3,7 @@ package htj2k
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/bits"
 )
 
@@ -192,7 +193,7 @@ func (h *HTBlockDecoder) parseSegments(codeblock []byte) error {
 
 	magsgnLen := lcup - 4 - scup
 	if magsgnLen < 0 {
-		return nil
+		return fmt.Errorf("invalid segment lengths: magsgnLen=%d, scup=%d, lcup=%d", magsgnLen, scup, lcup)
 	}
 
 	magsgnData := codeblock[0:magsgnLen]

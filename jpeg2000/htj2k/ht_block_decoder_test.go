@@ -27,16 +27,16 @@ func TestHTBlockDecoder(t *testing.T) {
 		// Create a simple test codeblock
 		// This is a synthetic example - real HTJ2K would be more complex
 		testBlock := []byte{
-			// MagSgn data (simplified)
+			// MagSgn data (2 bytes)
 			0x12, 0x34,
-			// MEL data
+			// MEL data (1 byte)
 			0x80,
-			// VLC data
+			// VLC data (2 bytes)
 			0x06, 0x3F,
-			// 12-bit Scup footer: MEL=1, VLC=2, Scup=3
-			// Byte[n-2]: low 4 bits = 3 & 0x0F = 0x03
-			// Byte[n-1]: high 8 bits = (3 >> 4) = 0x00
-			0x03, 0x00,
+			// Footer: [melLen (2 bytes LE), vlcLen (2 bytes LE)]
+			// melLen = 1, vlcLen = 2, scup = 3
+			0x01, 0x00, // melLen = 1
+			0x02, 0x00, // vlcLen = 2
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -63,16 +63,16 @@ func TestHTBlockDecoder(t *testing.T) {
 
 		// Create a test block with multiple quads
 		testBlock := []byte{
-			// MagSgn data
+			// MagSgn data (4 bytes)
 			0x01, 0x02, 0x04, 0x08,
-			// MEL data
+			// MEL data (2 bytes)
 			0xFF, 0x00,
-			// VLC data
+			// VLC data (4 bytes)
 			0x06, 0x3F, 0x00, 0x7F,
-			// 12-bit Scup footer: MEL=2, VLC=4, Scup=6
-			// Byte[n-2]: low 4 bits = 6 & 0x0F = 0x06
-			// Byte[n-1]: high 8 bits = (6 >> 4) = 0x00
-			0x06, 0x00,
+			// Footer: [melLen (2 bytes LE), vlcLen (2 bytes LE)]
+			// melLen = 2, vlcLen = 4, scup = 6
+			0x02, 0x00, // melLen = 2
+			0x04, 0x00, // vlcLen = 4
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -109,17 +109,21 @@ func TestHTBlockDecoder(t *testing.T) {
 					0x12, 0x34, // MagSgn (2 bytes)
 					0x80,       // MEL (1 byte)
 					0x06, 0x3F, // VLC (2 bytes)
-					0x03, 0x00, // 12-bit Scup: MEL=1, VLC=2, Scup=3
+					// Footer: [melLen (2 bytes LE), vlcLen (2 bytes LE)]
+					0x01, 0x00, // melLen = 1
+					0x02, 0x00, // vlcLen = 2
 				},
 				expectErr: false,
 			},
 			{
 				name: "InvalidScup",
 				block: []byte{
-					0x12,       // MagSgn
-					0xFF, 0xFF, // Invalid Scup: 4095 > 4079 (max per ITU-T.814)
+					0x12,       // MagSgn (1 byte, so magsgnLen would be negative)
+					0xFF, 0xFF, // melLen = 65535
+					0xFF, 0xFF, // vlcLen = 65535
+					// Total Scup = 131070, but lcup=5, so magsgnLen = 5-4-131070 = negative
 				},
-				expectErr: true, // Should reject invalid Scup
+				expectErr: true, // Should reject invalid segment lengths
 			},
 		}
 
@@ -150,10 +154,10 @@ func TestHTBlockDecoderWithContext(t *testing.T) {
 			0xAA, 0x55,
 			// VLC: various codewords
 			0x06, 0x3F, 0x00, 0x7F, 0x11, 0x5F,
-			// 12-bit Scup footer: MEL=2, VLC=6, Scup=8
-			// Byte[n-2]: low 4 bits = 8 & 0x0F = 0x08
-			// Byte[n-1]: high 8 bits = (8 >> 4) = 0x00
-			0x08, 0x00,
+			// Footer: [melLen (2 bytes LE), vlcLen (2 bytes LE)]
+			// MEL=2, VLC=6
+			0x02, 0x00, // melLen = 2
+			0x06, 0x00, // vlcLen = 6
 		}
 
 		data, err := decoder.DecodeBlock(testBlock)
@@ -185,10 +189,12 @@ func TestHTBlockDecoderWithContext(t *testing.T) {
 
 		// Simple block to test significance propagation
 		testBlock := []byte{
-			0x01, 0x02,       // MagSgn
-			0x80,             // MEL: one significant quad
-			0x06, 0x3F,       // VLC
-			0x03, 0x00,       // 12-bit Scup: MEL=1, VLC=2, Scup=3
+			0x01, 0x02,       // MagSgn (2 bytes)
+			0x80,             // MEL (1 byte)
+			0x06, 0x3F,       // VLC (2 bytes)
+			// Footer: [melLen (2 bytes LE), vlcLen (2 bytes LE)]
+			0x01, 0x00,       // melLen = 1
+			0x02, 0x00,       // vlcLen = 2
 		}
 
 		_, err := decoder.DecodeBlock(testBlock)
