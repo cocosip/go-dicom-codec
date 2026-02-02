@@ -27,8 +27,8 @@ func TestNewHTJ2KLosslessParameters(t *testing.T) {
 	if params.Quality != 100 {
 		t.Errorf("Lossless Quality = %d, want 100", params.Quality)
 	}
-	if params.NumLevels != 3 {
-		t.Errorf("Default NumLevels = %d, want 3", params.NumLevels)
+	if params.NumLevels != 0 {
+		t.Errorf("Default NumLevels = %d, want 0", params.NumLevels)
 	}
 }
 

@@ -602,11 +602,13 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 				}
 			}
 
-			// JPWL error handling: segment length limit (8192 bytes per codeblock)
-			const maxSegmentLength = 8192
+			// JPWL error handling: segment length limit
+			// JPEG2000 Part 1 allows up to 64KB per codeblock (16-bit length field)
+			// Increased from 8192 to support HTJ2K which produces larger codeblocks
+			const maxSegmentLength = 65535
 			if cbIncl.DataLength > maxSegmentLength {
 				if pd.strict {
-					return packet, fmt.Errorf("segment length exceeds JPWL limit for codeblock %d: %d > %d",
+					return packet, fmt.Errorf("segment length exceeds limit for codeblock %d: %d > %d",
 						i, cbIncl.DataLength, maxSegmentLength)
 				}
 				// Truncate to limit (OpenJPEG behavior)

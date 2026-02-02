@@ -55,7 +55,7 @@ func NewHTJ2KLosslessParameters() *HTJ2KParameters {
 		Quality:     100, // Quality 100 for lossless
 		BlockWidth:  64,
 		BlockHeight: 64,
-		NumLevels:   2, // Use 2 levels - known issue: HTJ2K has problems with certain image sizes/patterns (see issue tracker)
+		NumLevels:   0, // Use 0 levels (no DWT) - DWT integration with HTJ2K needs further investigation
 		params:      make(map[string]interface{}),
 	}
 }
