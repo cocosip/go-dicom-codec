@@ -205,6 +205,7 @@ func (d *UVLCDecoder) decodeUVLCEntry(table []UVLCDecodeEntry, mode int) (UVLCDe
 
 func (d *UVLCDecoder) applyUExtension(u uint32, bias uint32, useBias bool) (uint32, error) {
 	threshold := uint32(32)
+
 	if useBias {
 		if u <= bias || u-bias <= threshold {
 			return u, nil

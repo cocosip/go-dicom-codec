@@ -379,7 +379,12 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 			}
 		}
 
-		if s2.rho != 0 {
+		// Encode VLC for quad 2
+		// For context=0, only encode VLC if rho!=0 (MEL bit=1)
+		// For context!=0, always encode VLC (even if rho=0)
+		shouldEncodeVLC := (ctx2 != 0) || (s2.rho != 0)
+
+		if shouldEncodeVLC {
 			_, tableEK2, err := vlcEnc.EncodeQuadVLCByEMB(ctx2, s2.rho, s2.uOff, s2.eps0, isFirstRow)
 			if err != nil {
 				return fmt.Errorf("VLC encode quad (%d,%d): %w", qx+1, qy, err)

@@ -360,17 +360,55 @@ func (h *HTEncoder) assembleCodel() []byte {
 	melData, melLast, melUsed := h.mel.FlushForFusion()
 	vlcData, vlcLast, vlcUsed := h.vlc.FlushForFusion()
 
-	// Segments stored separately; no fusion.
-	// Layout: [MagSgn][MEL][VLC][melLen][vlcLen]
+	// Try to fuse the last bytes of MEL and VLC segments
+	// Fusion is possible when:
+	// 1. Both segments have data
+	// 2. The used bits don't overlap (melUsed + vlcUsed <= 8)
+	// 3. The fused byte is not 0xFF (to avoid stuffing issues)
+	// 4. VLC has enough remaining space
+
 	finalMEL := melData
 	finalVLC := vlcData
-	_, _, _, _ = melLast, melUsed, vlcLast, vlcUsed // fusion params unused
+
+	if len(melData) > 0 && len(vlcData) > 0 && melUsed > 0 && vlcUsed > 0 {
+		// Calculate remaining bits in each byte
+		melRemaining := 8 - melUsed
+		vlcSpace := 8 - vlcUsed
+
+		// Check if fusion is possible
+		if melRemaining > 0 && vlcSpace > 0 && (melUsed+vlcUsed <= 8) {
+			// Try to fuse: OR the two bytes together
+			fusedByte := melLast | vlcLast
+
+			// Verify fusion conditions:
+			// 1. The bits don't overlap (XOR check)
+			// 2. The fused byte is not 0xFF
+			melMask := byte((0xFF << melRemaining) & 0xFF)
+			vlcMask := byte(0xFF >> (8 - vlcUsed))
+
+			bitsOverlap := ((fusedByte ^ melLast) & melMask) | ((fusedByte ^ vlcLast) & vlcMask)
+			canFuse := (bitsOverlap == 0) && (fusedByte != 0xFF)
+
+			if canFuse {
+				// Fusion successful: remove last bytes and add fused byte
+				if len(melData) > 0 {
+					finalMEL = melData[:len(melData)-1]
+				}
+				if len(vlcData) > 0 {
+					finalVLC = vlcData[:len(vlcData)-1]
+				}
+
+				// Add the fused byte to MEL segment (or VLC, convention varies)
+				finalMEL = append(finalMEL, fusedByte)
+			}
+		}
+	}
 
 	melLen := len(finalMEL)
 	vlcLen := len(finalVLC)
 
 	// Assemble final codeblock
-	// Footer is now 4 bytes: melLen (2 bytes LE) + vlcLen (2 bytes LE)
+	// Layout: [MagSgn][MEL][VLC][melLen(2B)][vlcLen(2B)]
 	totalLen := len(magsgnData) + melLen + vlcLen + 4
 	result := make([]byte, totalLen)
 	pos := 0

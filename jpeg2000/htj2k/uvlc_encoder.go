@@ -410,6 +410,7 @@ func (u *UVLCEncoder) EncodePair(uOff0, uOff1 uint8, u0, u1 int, initialPair boo
 		u0suf := targetU0 - uint32(bestEntry.U0Prefix())
 		u1suf := targetU1 - uint32(bestEntry.U1Prefix())
 		suffix := u0suf | (u1suf << u0sufLen)
+
 		if err := u.writer.WriteBits(suffix, sufLen); err != nil {
 			return err
 		}
