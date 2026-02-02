@@ -55,7 +55,7 @@ func NewHTJ2KLosslessParameters() *HTJ2KParameters {
 		Quality:     100, // Quality 100 for lossless
 		BlockWidth:  64,
 		BlockHeight: 64,
-		NumLevels:   3, // Conservative default (TODO: fix HTJ2K block coding issue for >64x64 images with gradient patterns)
+		NumLevels:   2, // Use 2 levels - known issue: HTJ2K has problems with certain image sizes/patterns (see issue tracker)
 		params:      make(map[string]interface{}),
 	}
 }

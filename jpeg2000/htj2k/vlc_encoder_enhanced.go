@@ -344,12 +344,21 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 		}
 	}
 
-	if s1.rho != 0 {
+	// Encode VLC for quad 1
+	// For context=0, only encode VLC if rho!=0 (MEL bit=1)
+	// For context!=0, always encode VLC (even if rho=0)
+	shouldEncodeVLC1 := (ctx1 != 0) || (s1.rho != 0)
+
+	if shouldEncodeVLC1 {
 		_, tableEK1, err := vlcEnc.EncodeQuadVLCByEMB(ctx1, s1.rho, s1.uOff, s1.eps0, isFirstRow)
 		if err != nil {
 			return fmt.Errorf("VLC encode quad (%d,%d): %w", qx, qy, err)
 		}
 		s1.tableEK = tableEK1
+	}
+
+	// Update context significance for quad 1 (only if rho != 0)
+	if s1.rho != 0 {
 		context.UpdateQuadSignificance(qx, qy, s1.rho)
 	}
 
@@ -390,6 +399,10 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 				return fmt.Errorf("VLC encode quad (%d,%d): %w", qx+1, qy, err)
 			}
 			s2.tableEK = tableEK2
+		}
+
+		// Update context significance for quad 2 (only if rho != 0)
+		if s2.rho != 0 {
 			context.UpdateQuadSignificance(qx+1, qy, s2.rho)
 		}
 

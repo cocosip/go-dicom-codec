@@ -41,6 +41,11 @@ func NewHTBlockDecoder(width, height int) *HTBlockDecoder {
 // DecodeBlock decodes an HTJ2K codeblock
 // Returns the decoded coefficient data
 func (h *HTBlockDecoder) DecodeBlock(codeblock []byte) ([]int32, error) {
+	// Clear data array to ensure clean state
+	for i := range h.data {
+		h.data[i] = 0
+	}
+
 	// Parse codeblock into three segments
 	if err := h.parseSegments(codeblock); err != nil {
 		return nil, err
