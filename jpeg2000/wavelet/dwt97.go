@@ -3,19 +3,20 @@ package wavelet
 // DWT97 implements the 9/7 irreversible wavelet transform
 // Used for lossy JPEG 2000 compression
 // Reference: ISO/IEC 15444-1:2019 Annex F
+// Direct translation from OpenJPEG to ensure 100% compatibility
 
 // 9/7 filter coefficients (Cohen-Daubechies-Feauveau)
-// These are the lifting scheme coefficients for the CDF 9/7 wavelet
+// Direct translation from OpenJPEG's dwt.c to ensure 100% compatibility
 const (
-	// Analysis (forward transform)
-	alpha97 = -1.586134342059924 // Predict 1
-	beta97  = -0.052980118572961 // Update 1
-	gamma97 = 0.882911075530934  // Predict 2
-	delta97 = 0.443506852043971  // Update 2
+	// From OpenJPEG table F.4 from the standard
+	alpha97 = -1.586134342  // opj_dwt_alpha
+	beta97  = -0.052980118  // opj_dwt_beta
+	gamma97 = 0.882911075   // opj_dwt_gamma
+	delta97 = 0.443506852   // opj_dwt_delta
 
 	// Normalization factors
-	K97  = 1.230174104914001 // Low-pass gain
-	K97i = 1.0 / K97         // High-pass gain (1/K)
+	K97    = 1.230174105 // opj_K
+	invK97 = 0.812893066 // opj_invK = 1.0 / 1.230174105
 )
 
 // Forward97_1D performs the forward 9/7 wavelet transform on a 1D signal
@@ -30,103 +31,135 @@ func Forward97_1D(data []float64) {
 
 // Forward97_1DWithParity performs the forward 9/7 wavelet transform on a 1D signal.
 // even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+//
+// This is a direct translation of OpenJPEG's opj_dwt_encode_1_real() to ensure 100% compatibility.
 func Forward97_1DWithParity(data []float64, even bool) {
-	n := len(data)
-	if n <= 1 {
+	width := len(data)
+	if width <= 1 {
 		return
 	}
 
-	nL, nH := splitLengths(n, even)
-	if nL == 0 || nH == 0 {
-		return
+	// Calculate sn (low-pass count) and dn (high-pass count)
+	var sn, dn int32
+	if even {
+		sn = int32((width + 1) >> 1)
+		dn = int32(width) - sn
+	} else {
+		sn = int32(width >> 1)
+		dn = int32(width) - sn
 	}
 
-	low := make([]float64, nL)
-	high := make([]float64, nH)
+	// Work directly on interleaved data, matching OpenJPEG's approach
+	var a, b int32
+	if even {
+		a = 0 // Low-pass at even indices
+		b = 1 // High-pass at odd indices
+	} else {
+		a = 1 // Low-pass at odd indices
+		b = 0 // High-pass at even indices
+	}
+
+	// Apply lifting steps directly on interleaved data
+	// Step 1: alpha (predict 1)
+	encodeStep2_97(data, a, b+1, dn, min32(dn, sn-b), alpha97)
+
+	// Step 2: beta (update 1)
+	encodeStep2_97(data, b, a+1, sn, min32(sn, dn-a), beta97)
+
+	// Step 3: gamma (predict 2)
+	encodeStep2_97(data, a, b+1, dn, min32(dn, sn-b), gamma97)
+
+	// Step 4: delta (update 2)
+	encodeStep2_97(data, b, a+1, sn, min32(sn, dn-a), delta97)
+
+	// Normalization (scale)
+	if a == 0 {
+		encodeStep1Combined_97(data, sn, dn, invK97, K97)
+	} else {
+		encodeStep1Combined_97(data, dn, sn, K97, invK97)
+	}
+
+	// Deinterleave to [L | H] format
+	deinterleaveH_97(data, dn, sn, even)
+}
+
+// encodeStep2_97 implements OpenJPEG's opj_dwt_encode_step2 for 9/7 wavelet
+// Direct translation to match exact behavior
+func encodeStep2_97(data []float64, flStart, fwStart int32, end, m int32, c float64) {
+	imax := min32(end, m)
+
+	if imax > 0 {
+		// First iteration (special case)
+		fw := fwStart
+		fl := flStart
+		data[fw-1] += (data[fl] + data[fw]) * c
+		fw += 2
+
+		// Main loop
+		for i := int32(1); i < imax; i++ {
+			data[fw-1] += (data[fw-2] + data[fw]) * c
+			fw += 2
+		}
+	}
+
+	// Boundary case
+	if m < end {
+		fw := fwStart + 2*m
+		data[fw-1] += (2 * data[fw-2]) * c
+	}
+}
+
+// encodeStep1Combined_97 implements OpenJPEG's opj_dwt_encode_step1_combined
+// Applies normalization factors to interleaved data
+func encodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 float64) {
+	itersCommon := min32(iters_c1, iters_c2)
+
+	var i int32
+	fw := int32(0)
+	for i = 0; i < itersCommon; i++ {
+		data[fw] *= c1
+		data[fw+1] *= c2
+		fw += 2
+	}
+
+	if i < iters_c1 {
+		data[fw] *= c1
+	} else if i < iters_c2 {
+		data[fw+1] *= c2
+	}
+}
+
+// deinterleaveH_97 separates interleaved data into [low | high] format
+func deinterleaveH_97(data []float64, dn, sn int32, even bool) {
+	width := int(dn + sn)
+	tmp := make([]float64, width)
 
 	if even {
-		for i := 0; i < nL; i++ {
-			low[i] = data[2*i]
+		// cas == 0: even indices are low-pass
+		for i := int32(0); i < sn; i++ {
+			tmp[i] = data[2*i]
 		}
-		for i := 0; i < nH; i++ {
-			high[i] = data[2*i+1]
+		for i := int32(0); i < dn; i++ {
+			tmp[sn+i] = data[2*i+1]
 		}
 	} else {
-		for i := 0; i < nL; i++ {
-			low[i] = data[2*i+1]
+		// cas == 1: odd indices are low-pass
+		for i := int32(0); i < sn; i++ {
+			tmp[i] = data[2*i+1]
 		}
-		for i := 0; i < nH; i++ {
-			high[i] = data[2*i]
+		for i := int32(0); i < dn; i++ {
+			tmp[sn+i] = data[2*i]
 		}
 	}
 
-	// Predict 1
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
-		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] += alpha97 * (left + right)
-	}
+	copy(data, tmp)
+}
 
-	// Update 1
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] += beta97 * (left + right)
+func min32(a, b int32) int32 {
+	if a < b {
+		return a
 	}
-
-	// Predict 2
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
-		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] += gamma97 * (left + right)
-	}
-
-	// Update 2
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] += delta97 * (left + right)
-	}
-
-	// Normalization
-	for i := 0; i < nL; i++ {
-		low[i] *= K97
-	}
-	for i := 0; i < nH; i++ {
-		high[i] *= K97i
-	}
-
-	// Deinterleave back to [L | H]
-	copy(data[:nL], low)
-	copy(data[nL:], high)
+	return b
 }
 
 // Inverse97_1D performs the inverse 9/7 wavelet transform on a 1D signal
@@ -139,210 +172,182 @@ func Inverse97_1D(data []float64) {
 
 // Inverse97_1DWithParity performs the inverse 9/7 wavelet transform on a 1D signal.
 // even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+//
+// This reverses the OpenJPEG forward transform to ensure 100% compatibility.
 func Inverse97_1DWithParity(data []float64, even bool) {
-	n := len(data)
-	if n <= 1 {
+	width := len(data)
+	if width <= 1 {
 		return
 	}
 
-	nL, nH := splitLengths(n, even)
-	if nL == 0 || nH == 0 {
-		return
-	}
-
-	low := make([]float64, nL)
-	high := make([]float64, nH)
-
-	copy(low, data[:nL])
-	copy(high, data[nL:])
-
-	// Inverse normalization
-	for i := 0; i < nL; i++ {
-		low[i] /= K97
-	}
-	for i := 0; i < nH; i++ {
-		high[i] /= K97i
-	}
-
-	// Inverse update 2
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] -= delta97 * (left + right)
-	}
-
-	// Inverse predict 2
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
-		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] -= gamma97 * (left + right)
-	}
-
-	// Inverse update 1
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] -= beta97 * (left + right)
-	}
-
-	// Inverse predict 1
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
-		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] -= alpha97 * (left + right)
-	}
-
-	// Interleave back to samples
+	// Calculate sn (low-pass count) and dn (high-pass count)
+	var sn, dn int32
 	if even {
-		for i := 0; i < nL; i++ {
-			data[2*i] = low[i]
-		}
-		for i := 0; i < nH; i++ {
-			data[2*i+1] = high[i]
-		}
+		sn = int32((width + 1) >> 1)
+		dn = int32(width) - sn
 	} else {
-		for i := 0; i < nH; i++ {
-			data[2*i] = high[i]
-		}
-		for i := 0; i < nL; i++ {
-			data[2*i+1] = low[i]
-		}
+		sn = int32(width >> 1)
+		dn = int32(width) - sn
+	}
+
+	var a, b int32
+	if even {
+		a = 0 // Low-pass at even indices
+		b = 1 // High-pass at odd indices
+	} else {
+		a = 1 // Low-pass at odd indices
+		b = 0 // High-pass at even indices
+	}
+
+	// Step 1: Interleave [L | H] format back to interleaved
+	interleaveH_97(data, dn, sn, even)
+
+	// Step 2: Inverse normalization (reverse of step1_combined)
+	if a == 0 {
+		decodeStep1Combined_97(data, sn, dn, invK97, K97)
+	} else {
+		decodeStep1Combined_97(data, dn, sn, K97, invK97)
+	}
+
+	// Step 3-6: Inverse lifting steps (reverse order of forward)
+	// Inverse delta (reverse of step 4)
+	decodeStep2_97(data, b, a+1, sn, min32(sn, dn-a), delta97)
+
+	// Inverse gamma (reverse of step 3)
+	decodeStep2_97(data, a, b+1, dn, min32(dn, sn-b), gamma97)
+
+	// Inverse beta (reverse of step 2)
+	decodeStep2_97(data, b, a+1, sn, min32(sn, dn-a), beta97)
+
+	// Inverse alpha (reverse of step 1)
+	decodeStep2_97(data, a, b+1, dn, min32(dn, sn-b), alpha97)
+}
+
+// decodeStep2_97 implements the inverse of encodeStep2_97
+func decodeStep2_97(data []float64, flStart, fwStart int32, end, m int32, c float64) {
+	// Inverse operation: subtract instead of add
+	encodeStep2_97(data, flStart, fwStart, end, m, -c)
+}
+
+// decodeStep1Combined_97 implements the inverse of encodeStep1Combined_97
+func decodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 float64) {
+	itersCommon := min32(iters_c1, iters_c2)
+
+	var i int32
+	fw := int32(0)
+	for i = 0; i < itersCommon; i++ {
+		data[fw] /= c1
+		data[fw+1] /= c2
+		fw += 2
+	}
+
+	if i < iters_c1 {
+		data[fw] /= c1
+	} else if i < iters_c2 {
+		data[fw+1] /= c2
 	}
 }
 
+// interleaveH_97 converts [low | high] format back to interleaved
+func interleaveH_97(data []float64, dn, sn int32, even bool) {
+	width := int(dn + sn)
+	tmp := make([]float64, width)
+
+	if even {
+		// cas == 0: even indices are low-pass, odd are high-pass
+		for i := int32(0); i < sn; i++ {
+			tmp[2*i] = data[i]
+		}
+		for i := int32(0); i < dn; i++ {
+			tmp[2*i+1] = data[sn+i]
+		}
+	} else {
+		// cas == 1: odd indices are low-pass, even are high-pass
+		for i := int32(0); i < sn; i++ {
+			tmp[2*i+1] = data[i]
+		}
+		for i := int32(0); i < dn; i++ {
+			tmp[2*i] = data[sn+i]
+		}
+	}
+
+	copy(data, tmp)
+}
+
 // Forward97_2D performs the forward 9/7 wavelet transform on a 2D image
-// Applies 1D transform to rows, then to columns (separable transform)
-// Input: data (row-major order), width, height, stride
-// Output: LL (top-left), HL (top-right), LH (bottom-left), HH (bottom-right)
-//
-// The stride parameter is the full width of the data array (important for multi-level transforms)
-// For the first level, stride == width
-// For subsequent levels, stride remains the original width while width shrinks
 func Forward97_2D(data []float64, width, height, stride int) {
 	Forward97_2DWithParity(data, width, height, stride, true, true)
 }
 
 // Forward97_2DWithParity performs the forward 9/7 wavelet transform on a 2D image
-// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+// IMPORTANT: OpenJPEG does VERTICAL (columns) first, then HORIZONTAL (rows).
 func Forward97_2DWithParity(data []float64, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
 
-	// Step 1: Transform rows
-	if width > 1 {
-		row := make([]float64, width)
-		for y := 0; y < height; y++ {
-			// Extract row (use stride for indexing)
-			for x := 0; x < width; x++ {
-				row[x] = data[y*stride+x]
+	// Transform columns (VERTICAL pass - OpenJPEG does this FIRST)
+	if height > 1 {
+		col := make([]float64, height)
+		for x := 0; x < width; x++ {
+			for y := 0; y < height; y++ {
+				col[y] = data[y*stride+x]
 			}
-
-			// Transform row
-			Forward97_1DWithParity(row, evenRow)
-
-			// Write back (use stride for indexing)
-			for x := 0; x < width; x++ {
-				data[y*stride+x] = row[x]
+			Forward97_1DWithParity(col, evenCol)
+			for y := 0; y < height; y++ {
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
 
-	// Step 2: Transform columns
-	if height > 1 {
-		col := make([]float64, height)
-		for x := 0; x < width; x++ {
-			// Extract column (use stride for row indexing)
-			for y := 0; y < height; y++ {
-				col[y] = data[y*stride+x]
+	// Transform rows (HORIZONTAL pass - OpenJPEG does this SECOND)
+	if width > 1 {
+		row := make([]float64, width)
+		for y := 0; y < height; y++ {
+			for x := 0; x < width; x++ {
+				row[x] = data[y*stride+x]
 			}
-
-			// Transform column
-			Forward97_1DWithParity(col, evenCol)
-
-			// Write back (use stride for row indexing)
-			for y := 0; y < height; y++ {
-				data[y*stride+x] = col[y]
+			Forward97_1DWithParity(row, evenRow)
+			for x := 0; x < width; x++ {
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
 }
 
 // Inverse97_2D performs the inverse 9/7 wavelet transform on a 2D image
-// Applies inverse 1D transform to columns, then to rows
-// Input: data with subbands (LL, HL, LH, HH), width, height, stride
-// Output: reconstructed image
 func Inverse97_2D(data []float64, width, height, stride int) {
 	Inverse97_2DWithParity(data, width, height, stride, true, true)
 }
 
 // Inverse97_2DWithParity performs the inverse 9/7 wavelet transform on a 2D image
-// evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
 func Inverse97_2DWithParity(data []float64, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
 
-	// Step 1: Inverse transform columns
+	// Inverse transform columns first
 	if height > 1 {
 		col := make([]float64, height)
 		for x := 0; x < width; x++ {
-			// Extract column (use stride for row indexing)
 			for y := 0; y < height; y++ {
 				col[y] = data[y*stride+x]
 			}
-
-			// Inverse transform column
 			Inverse97_1DWithParity(col, evenCol)
-
-			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
 				data[y*stride+x] = col[y]
 			}
 		}
 	}
 
-	// Step 2: Inverse transform rows
+	// Inverse transform rows
 	if width > 1 {
 		row := make([]float64, width)
 		for y := 0; y < height; y++ {
-			// Extract row (use stride for indexing)
 			for x := 0; x < width; x++ {
 				row[x] = data[y*stride+x]
 			}
-
-			// Inverse transform row
 			Inverse97_1DWithParity(row, evenRow)
-
-			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
 				data[y*stride+x] = row[x]
 			}
@@ -351,23 +356,15 @@ func Inverse97_2DWithParity(data []float64, width, height, stride int, evenRow, 
 }
 
 // ForwardMultilevel97 performs multilevel 9/7 wavelet decomposition
-// levels: number of decomposition levels (1 = one level, 2 = two levels, etc.)
-// After each level, only the LL subband is further decomposed
 func ForwardMultilevel97(data []float64, width, height, levels int) {
 	ForwardMultilevel97WithParity(data, width, height, levels, 0, 0)
 }
 
-// ForwardMultilevel97WithParity performs multilevel 9/7 wavelet decomposition with origin parity.
+// ForwardMultilevel97WithParity performs multilevel 9/7 wavelet decomposition with origin parity
 func ForwardMultilevel97WithParity(data []float64, width, height, levels int, x0, y0 int) {
-	// Keep the original stride (full width) throughout all levels
-	// This is critical: after level 1, the LL subband is stored in the top-left,
-	// but the row stride remains the original full width
 	originalStride := width
-
-	// Current resolution dimensions
 	curWidth := width
 	curHeight := height
-
 	curX0 := x0
 	curY0 := y0
 
@@ -379,13 +376,8 @@ func ForwardMultilevel97WithParity(data []float64, width, height, levels int, x0
 		evenRow := isEven(curX0)
 		evenCol := isEven(curY0)
 
-		// Transform current level in-place with original stride
-		// For level 0: curWidth == originalStride
-		// For level 1+: curWidth < originalStride (only process LL subband)
 		Forward97_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 
-		// Next level will work only on LL subband (top-left region)
-		// Update dimensions for next iteration
 		lowW, _ := splitLengths(curWidth, evenRow)
 		lowH, _ := splitLengths(curHeight, evenCol)
 		curWidth = lowW
@@ -396,18 +388,14 @@ func ForwardMultilevel97WithParity(data []float64, width, height, levels int, x0
 }
 
 // InverseMultilevel97 performs multilevel 9/7 wavelet reconstruction
-// levels: number of decomposition levels to inverse
-// Reconstructs from coarsest to finest
 func InverseMultilevel97(data []float64, width, height, levels int) {
 	InverseMultilevel97WithParity(data, width, height, levels, 0, 0)
 }
 
-// InverseMultilevel97WithParity performs multilevel 9/7 wavelet reconstruction with origin parity.
+// InverseMultilevel97WithParity performs multilevel 9/7 wavelet reconstruction with origin parity
 func InverseMultilevel97WithParity(data []float64, width, height, levels int, x0, y0 int) {
-	// Keep the original stride (full width) throughout all levels
 	originalStride := width
 
-	// Calculate dimensions at each level
 	levelWidths := make([]int, levels+1)
 	levelHeights := make([]int, levels+1)
 	levelX0 := make([]int, levels+1)
@@ -428,19 +416,17 @@ func InverseMultilevel97WithParity(data []float64, width, height, levels int, x0
 		levelY0[i] = nextCoord(levelY0[i-1])
 	}
 
-	// Inverse transform from coarsest to finest
 	for level := levels - 1; level >= 0; level-- {
 		curWidth := levelWidths[level]
 		curHeight := levelHeights[level]
 		evenRow := isEven(levelX0[level])
 		evenCol := isEven(levelY0[level])
 
-		// Inverse transform this level in-place with original stride
 		Inverse97_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 	}
 }
 
-// ConvertInt32ToFloat64 converts int32 array to float64 for 9/7 transform
+// Helper functions for int32/float64 conversion
 func ConvertInt32ToFloat64(data []int32) []float64 {
 	result := make([]float64, len(data))
 	for i, v := range data {
@@ -449,7 +435,6 @@ func ConvertInt32ToFloat64(data []int32) []float64 {
 	return result
 }
 
-// ConvertFloat64ToInt32 converts float64 array back to int32 after inverse transform
 func ConvertFloat64ToInt32(data []float64) []int32 {
 	result := make([]int32, len(data))
 	for i, v := range data {

@@ -33,6 +33,8 @@ func bandNumbpsFromQCD(qcd *codestream.QCDSegment, numLevels, res, band int) (in
 		if idx >= len(qcd.SPqcd) {
 			return 0, false
 		}
+		// OpenJPEG implementation: exponent is stored in bits 3-7 (expn<<3)
+		// This differs from JPEG2000 standard (bits 0-4) but matches OpenJPEG behavior
 		expn := int(qcd.SPqcd[idx] >> 3)
 		return expn + guardBits - 1, true
 	case 1:

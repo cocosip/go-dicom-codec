@@ -380,6 +380,11 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 		return nil, fmt.Errorf("failed to write QCD: %w", err)
 	}
 
+	// Write version COM marker (similar to OpenJPEG)
+	if err := e.writeVersionCOM(buf); err != nil {
+		return nil, fmt.Errorf("failed to write version COM: %w", err)
+	}
+
 	// Write RGN (ROI) if present
 	if err := e.writeRGN(buf); err != nil {
 		return nil, fmt.Errorf("failed to write RGN: %w", err)
@@ -1516,6 +1521,27 @@ func (e *Encoder) writeRGN(buf *bytes.Buffer) error {
 			return err
 		}
 	}
+
+	return nil
+}
+
+// writeVersionCOM writes a COM (Comment) marker with version information.
+// This matches OpenJPEG's behavior of including a version string.
+func (e *Encoder) writeVersionCOM(buf *bytes.Buffer) error {
+	const version = "go-dicom-codec JPEG2000 encoder v1.0"
+
+	data := &bytes.Buffer{}
+
+	// Rcom = 0x0001 (Binary data, Latin alphabet)
+	_ = binary.Write(data, binary.BigEndian, uint16(0x0001))
+
+	// Comment text
+	data.WriteString(version)
+
+	// Write marker and length
+	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerCOM))
+	_ = binary.Write(buf, binary.BigEndian, uint16(data.Len()+2))
+	buf.Write(data.Bytes())
 
 	return nil
 }

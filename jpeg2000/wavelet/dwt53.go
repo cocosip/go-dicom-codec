@@ -20,70 +20,85 @@ func Forward53_1D(data []int32) {
 
 // Forward53_1DWithParity performs the forward 5/3 wavelet transform on a 1D signal
 // even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+//
+// This is a direct translation of OpenJPEG's opj_dwt_encode_and_deinterleave_h_one_row()
+// to ensure 100% compatibility.
 func Forward53_1DWithParity(data []int32, even bool) {
-	n := len(data)
-	if n <= 1 {
-		if !even && n == 1 {
-			data[0] *= 2
-		}
-		return
-	}
-
-	nL, nH := splitLengths(n, even)
-	if nL == 0 || nH == 0 {
-		return
-	}
-
-	low := make([]int32, nL)
-	high := make([]int32, nH)
+	width := len(data)
 
 	if even {
-		for i := 0; i < nL; i++ {
-			low[i] = data[2*i]
+		// even=true: low-pass from even indices (0, 2, 4, ...), high-pass from odd (1, 3, 5, ...)
+		// This matches OpenJPEG's "even" case
+
+		if width <= 1 {
+			return
 		}
-		for i := 0; i < nH; i++ {
-			high[i] = data[2*i+1]
+
+		// sn = number of low-pass samples, dn = number of high-pass samples
+		sn := int32((width + 1) >> 1)
+		dn := int32(width - int(sn))
+
+		// Allocate temporary array
+		tmp := make([]int32, width)
+
+		// Predict step: high[i] -= (low[i] + low[i+1]) >> 1
+		var i int32
+		for i = 0; i < sn-1; i++ {
+			tmp[sn+i] = data[2*i+1] - ((data[i*2] + data[(i+1)*2]) >> 1)
 		}
+		if (width % 2) == 0 {
+			tmp[sn+i] = data[2*i+1] - data[i*2]
+		}
+
+		// Update step: low[i] += (high[i-1] + high[i] + 2) >> 2
+		data[0] += (tmp[sn] + tmp[sn] + 2) >> 2
+		for i = 1; i < dn; i++ {
+			data[i] = data[2*i] + ((tmp[sn+(i-1)] + tmp[sn+i] + 2) >> 2)
+		}
+		if (width % 2) == 1 {
+			data[i] = data[2*i] + ((tmp[sn+(i-1)] + tmp[sn+(i-1)] + 2) >> 2)
+		}
+
+		// Copy high-pass coefficients to second half
+		copy(data[sn:], tmp[sn:sn+dn])
+
 	} else {
-		for i := 0; i < nL; i++ {
-			low[i] = data[2*i+1]
-		}
-		for i := 0; i < nH; i++ {
-			high[i] = data[2*i]
-		}
-	}
+		// even=false: low-pass from odd indices (1, 3, 5, ...), high-pass from even (0, 2, 4, ...)
+		// This matches OpenJPEG's "!even" case
 
-	// Predict
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
+		if width == 1 {
+			data[0] *= 2
+			return
 		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] = high[i] - ((left + right) >> 1)
-	}
 
-	// Update
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] = low[i] + ((left + right + 2) >> 2)
-	}
+		// sn = number of low-pass samples, dn = number of high-pass samples
+		sn := int32(width >> 1)
+		dn := int32(width - int(sn))
 
-	// Deinterleave back to [L | H]
-	copy(data[:nL], low)
-	copy(data[nL:], high)
+		// Allocate temporary array
+		tmp := make([]int32, width)
+
+		// Predict step: high[i] -= (low[i-1] + low[i]) >> 1
+		tmp[sn+0] = data[0] - data[1]
+		var i int32
+		for i = 1; i < sn; i++ {
+			tmp[sn+i] = data[2*i] - ((data[2*i+1] + data[2*(i-1)+1]) >> 1)
+		}
+		if (width % 2) == 1 {
+			tmp[sn+i] = data[2*i] - data[2*(i-1)+1]
+		}
+
+		// Update step: low[i] += (high[i] + high[i+1] + 2) >> 2
+		for i = 0; i < dn-1; i++ {
+			data[i] = data[2*i+1] + ((tmp[sn+i] + tmp[sn+i+1] + 2) >> 2)
+		}
+		if (width % 2) == 0 {
+			data[i] = data[2*i+1] + ((tmp[sn+i] + tmp[sn+i] + 2) >> 2)
+		}
+
+		// Copy high-pass coefficients to second half
+		copy(data[sn:], tmp[sn:sn+dn])
+	}
 }
 
 // Inverse53_1D performs the inverse 5/3 wavelet transform on a 1D signal
@@ -102,69 +117,118 @@ func Inverse53_1D(data []int32) {
 
 // Inverse53_1DWithParity performs the inverse 5/3 wavelet transform on a 1D signal.
 // even=true means low-pass starts at even indices (cas=0). even=false means odd (cas=1).
+//
+// This is a direct translation of OpenJPEG's opj_idwt53_h_cas0/cas1() to ensure 100% compatibility.
 func Inverse53_1DWithParity(data []int32, even bool) {
-	n := len(data)
-	if n <= 1 {
-		if !even && n == 1 {
-			data[0] /= 2
-		}
-		return
-	}
+	width := len(data)
 
-	nL, nH := splitLengths(n, even)
-	if nL == 0 || nH == 0 {
-		return
-	}
-
-	low := make([]int32, nL)
-	high := make([]int32, nH)
-
-	copy(low, data[:nL])
-	copy(high, data[nL:])
-
-	// Reverse update
-	for i := 0; i < nL; i++ {
-		left := high[0]
-		if i > 0 {
-			left = high[i-1]
-		}
-		right := high[nH-1]
-		if i < nH {
-			right = high[i]
-		}
-		low[i] = low[i] - ((left + right + 2) >> 2)
-	}
-
-	// Reverse predict
-	for i := 0; i < nH; i++ {
-		leftIdx := i
-		if leftIdx >= nL {
-			leftIdx = nL - 1
-		}
-		rightIdx := leftIdx
-		if i+1 < nL {
-			rightIdx = i + 1
-		}
-		left := low[leftIdx]
-		right := low[rightIdx]
-		high[i] = high[i] + ((left + right) >> 1)
-	}
-
-	// Interleave back to samples
 	if even {
-		for i := 0; i < nL; i++ {
-			data[2*i] = low[i]
+		// even=true: cas=0, low-pass from even indices
+		// This matches OpenJPEG's opj_idwt53_h_cas0
+
+		if width <= 1 {
+			return
 		}
-		for i := 0; i < nH; i++ {
-			data[2*i+1] = high[i]
+
+		sn := int32((width + 1) >> 1)
+
+		// in_even points to low-pass (first half), in_odd points to high-pass (second half)
+		// We'll work in-place using a temporary array
+		tmp := make([]int32, width)
+
+		var d1c, d1n, s1n, s0c, s0n int32
+
+		s1n = data[0]        // in_even[0]
+		d1n = data[sn]       // in_odd[0]
+		s0n = s1n - ((d1n + 1) >> 1)
+
+		var i, j int32
+		for i, j = 0, 1; i < (int32(width)-3); i, j = i+2, j+1 {
+			d1c = d1n
+			s0c = s0n
+
+			s1n = data[j]      // in_even[j]
+			d1n = data[sn+j]   // in_odd[j]
+
+			s0n = s1n - ((d1c + d1n + 2) >> 2)
+
+			tmp[i] = s0c
+			tmp[i+1] = d1c + ((s0c + s0n) >> 1)
 		}
+
+		tmp[i] = s0n
+
+		if (width & 1) != 0 { // len is odd
+			tmp[width-1] = data[(width-1)/2] - ((d1n + 1) >> 1)
+			tmp[width-2] = d1n + ((s0n + tmp[width-1]) >> 1)
+		} else { // len is even
+			tmp[width-1] = d1n + s0n
+		}
+
+		copy(data, tmp)
+
 	} else {
-		for i := 0; i < nH; i++ {
-			data[2*i] = high[i]
+		// even=false: cas=1, low-pass from odd indices
+		// This matches OpenJPEG's opj_idwt53_h_cas1
+
+		if width == 1 {
+			data[0] /= 2
+			return
 		}
-		for i := 0; i < nL; i++ {
-			data[2*i+1] = low[i]
+
+		if width == 2 {
+			// Special case for width==2
+			out1 := data[0] - ((data[1] + 1) >> 1)
+			out0 := data[1] + out1
+			data[0] = out0
+			data[1] = out1
+			return
 		}
+
+		// width > 2
+		sn := int32(width >> 1)
+
+		// in_even points to low-pass (second half), in_odd points to high-pass (first half)
+		// Note: this is swapped compared to cas0!
+		tmp := make([]int32, width)
+
+		var s1, s2, dc, dn_var int32
+
+		s1 = data[sn+1]  // in_even[1]
+		dc = data[0] - ((data[sn] + s1 + 2) >> 2)  // in_odd[0] - ((in_even[0] + s1 + 2) >> 2)
+		tmp[0] = data[sn] + dc  // in_even[0] + dc
+
+		var i, j int32
+		// OpenJPEG: i < (len - 2 - !(len & 1))
+		// !(len & 1) = 1 when even, 0 when odd
+		notOdd := int32(0)
+		if (width & 1) == 0 {
+			notOdd = 1
+		}
+		limit := int32(width) - 2 - notOdd
+
+		for i, j = 1, 1; i < limit; i, j = i+2, j+1 {
+			s2 = data[sn+j+1]  // in_even[j+1]
+
+			dn_var = data[j] - ((s1 + s2 + 2) >> 2)  // in_odd[j] - ((s1 + s2 + 2) >> 2)
+			tmp[i] = dc
+			tmp[i+1] = s1 + ((dn_var + dc) >> 1)
+
+			dc = dn_var
+			s1 = s2
+		}
+
+		tmp[i] = dc
+
+		if (width & 1) == 0 { // len is even
+			dn_var = data[width/2-1] - ((s1 + 1) >> 1)  // in_odd[len/2-1] - ((s1 + 1) >> 1)
+			tmp[width-2] = s1 + ((dn_var + dc) >> 1)
+			tmp[width-1] = dn_var
+		} else { // len is odd
+			tmp[width-1] = s1 + dc
+		}
+
+		copy(data, tmp)
 	}
 }
 
@@ -190,33 +254,13 @@ func Forward53_2D(data []int32, width, height, stride int) {
 
 // Forward53_2DWithParity performs the forward 5/3 wavelet transform on a 2D image
 // evenRow/evenCol control parity for horizontal/vertical passes (cas=0 when true).
+// IMPORTANT: OpenJPEG does VERTICAL (columns) first, then HORIZONTAL (rows).
 func Forward53_2DWithParity(data []int32, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
 
-	// Allocate row buffer
-	row := make([]int32, width)
-
-	// Step 1: Transform rows
-	if width > 1 {
-		for y := 0; y < height; y++ {
-			// Extract row (use stride for indexing)
-			for x := 0; x < width; x++ {
-				row[x] = data[y*stride+x]
-			}
-
-			// Transform row
-			Forward53_1DWithParity(row, evenRow)
-
-			// Write back (use stride for indexing)
-			for x := 0; x < width; x++ {
-				data[y*stride+x] = row[x]
-			}
-		}
-	}
-
-	// Step 2: Transform columns
+	// Step 1: Transform columns (VERTICAL pass - OpenJPEG does this FIRST)
 	if height > 1 {
 		col := make([]int32, height)
 		for x := 0; x < width; x++ {
@@ -225,12 +269,31 @@ func Forward53_2DWithParity(data []int32, width, height, stride int, evenRow, ev
 				col[y] = data[y*stride+x]
 			}
 
-			// Transform column
+			// Transform column with evenCol parity (from y0)
 			Forward53_1DWithParity(col, evenCol)
 
 			// Write back (use stride for row indexing)
 			for y := 0; y < height; y++ {
 				data[y*stride+x] = col[y]
+			}
+		}
+	}
+
+	// Step 2: Transform rows (HORIZONTAL pass - OpenJPEG does this SECOND)
+	if width > 1 {
+		row := make([]int32, width)
+		for y := 0; y < height; y++ {
+			// Extract row (use stride for indexing)
+			for x := 0; x < width; x++ {
+				row[x] = data[y*stride+x]
+			}
+
+			// Transform row with evenRow parity (from x0)
+			Forward53_1DWithParity(row, evenRow)
+
+			// Write back (use stride for indexing)
+			for x := 0; x < width; x++ {
+				data[y*stride+x] = row[x]
 			}
 		}
 	}
@@ -251,26 +314,7 @@ func Inverse53_2DWithParity(data []int32, width, height, stride int, evenRow, ev
 		return
 	}
 
-	// Step 1: Inverse transform columns
-	if height > 1 {
-		col := make([]int32, height)
-		for x := 0; x < width; x++ {
-			// Extract column (use stride for row indexing)
-			for y := 0; y < height; y++ {
-				col[y] = data[y*stride+x]
-			}
-
-			// Inverse transform column
-			Inverse53_1DWithParity(col, evenCol)
-
-			// Write back (use stride for row indexing)
-			for y := 0; y < height; y++ {
-				data[y*stride+x] = col[y]
-			}
-		}
-	}
-
-	// Step 2: Inverse transform rows
+	// Step 1: Inverse transform rows (HORIZONTAL pass - done FIRST in inverse)
 	if width > 1 {
 		row := make([]int32, width)
 		for y := 0; y < height; y++ {
@@ -279,12 +323,31 @@ func Inverse53_2DWithParity(data []int32, width, height, stride int, evenRow, ev
 				row[x] = data[y*stride+x]
 			}
 
-			// Inverse transform row
+			// Inverse transform row with evenRow parity
 			Inverse53_1DWithParity(row, evenRow)
 
 			// Write back (use stride for indexing)
 			for x := 0; x < width; x++ {
 				data[y*stride+x] = row[x]
+			}
+		}
+	}
+
+	// Step 2: Inverse transform columns (VERTICAL pass - done SECOND in inverse)
+	if height > 1 {
+		col := make([]int32, height)
+		for x := 0; x < width; x++ {
+			// Extract column (use stride for row indexing)
+			for y := 0; y < height; y++ {
+				col[y] = data[y*stride+x]
+			}
+
+			// Inverse transform column with evenCol parity
+			Inverse53_1DWithParity(col, evenCol)
+
+			// Write back (use stride for row indexing)
+			for y := 0; y < height; y++ {
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
