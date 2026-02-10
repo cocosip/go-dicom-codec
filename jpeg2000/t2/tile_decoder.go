@@ -589,14 +589,43 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 							}
 							bandNumbps, ok := bandNumbpsFromQCD(td.qcd, comp.numLevels, res, band)
 							var maxBP int
+
+							maxFromPass := -1
+							hasMaxFromPass := false
+							if cbInfoData.totalPasses > 0 {
+								const T1_NMSEDEC_FRACBITS = 6
+								cblkNumbps := (cbInfoData.totalPasses + 2) / 3
+								if cblkNumbps <= 0 {
+									maxFromPass = -1
+								} else {
+									maxFromPass = (cblkNumbps - 1) + T1_NMSEDEC_FRACBITS
+								}
+								hasMaxFromPass = true
+							}
+
+							maxFromQCD := -1
+							hasMaxFromQCD := false
 							if ok && bandNumbps > 0 {
 								const T1_NMSEDEC_FRACBITS = 6
 								cblkNumbps := bandNumbps - zbp
 								if cblkNumbps <= 0 {
-									maxBP = -1
+									maxFromQCD = -1
 								} else {
-									maxBP = (cblkNumbps - 1) + T1_NMSEDEC_FRACBITS
+									maxFromQCD = (cblkNumbps - 1) + T1_NMSEDEC_FRACBITS
 								}
+								hasMaxFromQCD = true
+							}
+
+							if hasMaxFromPass && hasMaxFromQCD {
+								if maxFromPass > maxFromQCD {
+									maxBP = maxFromPass
+								} else {
+									maxBP = maxFromQCD
+								}
+							} else if hasMaxFromQCD {
+								maxBP = maxFromQCD
+							} else if hasMaxFromPass {
+								maxBP = maxFromPass
 							} else {
 								const T1_NMSEDEC_FRACBITS = 6
 								componentBitDepth := int(td.siz.Components[comp.componentIdx].Ssiz&0x7F) + 1

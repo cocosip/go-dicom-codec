@@ -2150,10 +2150,6 @@ func (e *Encoder) applyRateDistortionGlobal(blocks []*t2.PrecinctCodeBlock, pack
 
 	if e.params.UsePCRDOpt && e.params.TargetRatio > 0 {
 		midRefine := e.params.TargetRatio >= 7.5 && e.params.TargetRatio <= 8.5
-		if !midRefine && e.params.TargetRatio <= 8.0 {
-			e.applyRateDistortion(blocks, origBytes)
-			return
-		}
 		targetTotal := float64(origBytes) / e.params.TargetRatio
 		fixed := float64(e.estimateFixedOverheadForTiles(numTiles))
 		if targetTotal <= fixed {
@@ -2280,14 +2276,41 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 		}
 		if appendLossless && len(cb.Passes) > 0 {
 			last := numLayers - 1
-			cb.LayerPasses[last] = len(cb.Passes)
-			if prevEnd < 0 {
-				prevEnd = 0
+			prevPasses := 0
+			if last > 0 && (last-1) < len(cb.LayerPasses) {
+				prevPasses = cb.LayerPasses[last-1]
 			}
-			if prevEnd > len(cb.CompleteData) {
-				prevEnd = len(cb.CompleteData)
+			if prevPasses < 0 {
+				prevPasses = 0
 			}
-			cb.LayerData[last] = cb.CompleteData[prevEnd:]
+			if prevPasses > len(cb.Passes) {
+				prevPasses = len(cb.Passes)
+			}
+
+			fullPasses := len(cb.Passes)
+			cb.LayerPasses[last] = fullPasses
+
+			start := 0
+			if prevPasses > 0 {
+				start = cb.Passes[prevPasses-1].ActualBytes
+				if start == 0 {
+					start = cb.Passes[prevPasses-1].Rate
+				}
+			}
+			end := cb.Passes[fullPasses-1].ActualBytes
+			if end == 0 {
+				end = cb.Passes[fullPasses-1].Rate
+			}
+			if start < 0 {
+				start = 0
+			}
+			if end < start {
+				end = start
+			}
+			if end > len(cb.CompleteData) {
+				end = len(cb.CompleteData)
+			}
+			cb.LayerData[last] = cb.CompleteData[start:end]
 		}
 		cb.Data = cb.CompleteData
 		cb.UseTERMALL = numLayers > 1 // Only use TERMALL for multi-layer
@@ -2338,7 +2361,13 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 
 	budget := totalRate
 	if e.params.TargetRatio > 0 && origBytes > 0 {
-		target := float64(origBytes) / e.params.TargetRatio
+		effectiveTargetRatio := e.params.TargetRatio
+		// Non-PCRD path is quality-oriented: avoid over-aggressive truncation that
+		// collapses texture/detail at high requested ratios.
+		if !e.params.UsePCRDOpt && effectiveTargetRatio > 6.0 {
+			effectiveTargetRatio = 6.0
+		}
+		target := float64(origBytes) / effectiveTargetRatio
 		if target < budget {
 			budget = target
 		}
@@ -2433,14 +2462,41 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 
 		if appendLossless && len(cb.Passes) > 0 {
 			last := numLayers - 1
-			cb.LayerPasses[last] = len(cb.Passes)
-			if prevEnd < 0 {
-				prevEnd = 0
+			prevPasses := 0
+			if last > 0 && (last-1) < len(cb.LayerPasses) {
+				prevPasses = cb.LayerPasses[last-1]
 			}
-			if prevEnd > len(cb.CompleteData) {
-				prevEnd = len(cb.CompleteData)
+			if prevPasses < 0 {
+				prevPasses = 0
 			}
-			cb.LayerData[last] = cb.CompleteData[prevEnd:]
+			if prevPasses > len(cb.Passes) {
+				prevPasses = len(cb.Passes)
+			}
+
+			fullPasses := len(cb.Passes)
+			cb.LayerPasses[last] = fullPasses
+
+			start := 0
+			if prevPasses > 0 {
+				start = cb.Passes[prevPasses-1].ActualBytes
+				if start == 0 {
+					start = cb.Passes[prevPasses-1].Rate
+				}
+			}
+			end := cb.Passes[fullPasses-1].ActualBytes
+			if end == 0 {
+				end = cb.Passes[fullPasses-1].Rate
+			}
+			if start < 0 {
+				start = 0
+			}
+			if end < start {
+				end = start
+			}
+			if end > len(cb.CompleteData) {
+				end = len(cb.CompleteData)
+			}
+			cb.LayerData[last] = cb.CompleteData[start:end]
 		}
 
 		// Keep full data for compatibility

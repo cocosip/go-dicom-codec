@@ -541,22 +541,6 @@ func (pd *PacketDecoder) decodePacket(layer, resolution, component, precinctIdx 
 	packet.Header = header
 	packet.CodeBlockIncls = cbIncls
 
-	// Fallback: if data length missing, infer from remaining bytes for single included block
-	includedWithZero := 0
-	for _, cb := range packet.CodeBlockIncls {
-		if cb.Included && cb.DataLength <= 0 {
-			includedWithZero++
-		}
-	}
-	if includedWithZero == 1 {
-		remain := len(pd.data) - pd.offset
-		for i := range packet.CodeBlockIncls {
-			if packet.CodeBlockIncls[i].Included && packet.CodeBlockIncls[i].DataLength <= 0 {
-				packet.CodeBlockIncls[i].DataLength = remain
-			}
-		}
-	}
-
 	// Decode packet body (code-block contributions)
 	body := &bytes.Buffer{}
 	partialBuffer := false
