@@ -2587,43 +2587,57 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 			level = 0
 		}
 
-		// CRITICAL FIX: OpenJPEG uses (level_no + 1) for HL/LH/HH subband dimensions
-		// See tcd.c: opj_int64_ceildivpow2(..., (OPJ_INT32)(l_level_no + 1))
-		// This means we divide by 2^(level+1) instead of 2^level
-		divisor := 1 << (level + 1)
-		sbWidth := (width + divisor - 1) / divisor   // Ceiling division
-		sbHeight := (height + divisor - 1) / divisor // Ceiling division
-		scale := divisor
+		// Helper function for ceiling division by power of 2 (matching OpenJPEG)
+		ceildivpow2 := func(a, b int) int {
+			return (a + (1 << b) - 1) >> b
+		}
 
-		// HL (high-low): right half of top half
-		hlData := make([]int32, sbWidth*sbHeight)
-		for y := 0; y < sbHeight; y++ {
-			for x := 0; x < sbWidth; x++ {
-				srcIdx := y*width + (sbWidth + x)
-				if srcIdx < len(data) && sbWidth+x < width {
-					hlData[y*sbWidth+x] = data[srcIdx]
+		scale := 1 << (level + 1)
+
+		// OpenJPEG band offset calculation (see tcd.c lines 1043-1056):
+		// bandno: 1=HL, 2=LH, 3=HH
+		// x0b = bandno & 1 (1 for HL and HH, 0 for LH)
+		// y0b = bandno >> 1 (1 for LH and HH, 0 for HL)
+		// width = ceildivpow2(image_width - (x0b << level), level+1)
+		// height = ceildivpow2(image_height - (y0b << level), level+1)
+
+		// LL subband dimensions (needed for offsets)
+		llWidth := ceildivpow2(width-(0<<level), level+1)
+		llHeight := ceildivpow2(height-(0<<level), level+1)
+
+		// HL (high-low): x0b=1, y0b=0
+		hlWidth := ceildivpow2(width-(1<<level), level+1)
+		hlHeight := ceildivpow2(height-(0<<level), level+1)
+		hlData := make([]int32, hlWidth*hlHeight)
+		for y := 0; y < hlHeight; y++ {
+			for x := 0; x < hlWidth; x++ {
+				srcIdx := y*width + (llWidth + x)
+				if srcIdx < len(data) && llWidth+x < width {
+					hlData[y*hlWidth+x] = data[srcIdx]
 				}
 				// else: pad with zero (already initialized to 0)
 			}
 		}
 		subbands = append(subbands, subbandInfo{
 			data:   hlData,
-			x0:     sbWidth,
+			x0:     llWidth,
 			y0:     0,
-			width:  sbWidth,
-			height: sbHeight,
+			width:  hlWidth,
+			height: hlHeight,
 			band:   1, // HL
 			res:    resolution,
 			scale:  scale,
 		})
 
-		// LH (low-high): left half of bottom half
-		lhData := make([]int32, sbWidth*sbHeight)
-		for y := 0; y < sbHeight; y++ {
-			for x := 0; x < sbWidth; x++ {
-				srcIdx := (sbHeight+y)*width + x
-				if srcIdx < len(data) && sbHeight+y < height {
-					lhData[y*sbWidth+x] = data[srcIdx]
+		// LH (low-high): x0b=0, y0b=1
+		lhWidth := ceildivpow2(width-(0<<level), level+1)
+		lhHeight := ceildivpow2(height-(1<<level), level+1)
+		lhData := make([]int32, lhWidth*lhHeight)
+		for y := 0; y < lhHeight; y++ {
+			for x := 0; x < lhWidth; x++ {
+				srcIdx := (llHeight+y)*width + x
+				if srcIdx < len(data) && llHeight+y < height {
+					lhData[y*lhWidth+x] = data[srcIdx]
 				}
 				// else: pad with zero (already initialized to 0)
 			}
@@ -2631,31 +2645,33 @@ func (e *Encoder) getSubbandsForResolution(data []int32, width, height, resoluti
 		subbands = append(subbands, subbandInfo{
 			data:   lhData,
 			x0:     0,
-			y0:     sbHeight,
-			width:  sbWidth,
-			height: sbHeight,
+			y0:     llHeight,
+			width:  lhWidth,
+			height: lhHeight,
 			band:   2, // LH
 			res:    resolution,
 			scale:  scale,
 		})
 
-		// HH (high-high): right half of bottom half
-		hhData := make([]int32, sbWidth*sbHeight)
-		for y := 0; y < sbHeight; y++ {
-			for x := 0; x < sbWidth; x++ {
-				srcIdx := (sbHeight+y)*width + (sbWidth + x)
-				if srcIdx < len(data) && sbHeight+y < height && sbWidth+x < width {
-					hhData[y*sbWidth+x] = data[srcIdx]
+		// HH (high-high): x0b=1, y0b=1
+		hhWidth := ceildivpow2(width-(1<<level), level+1)
+		hhHeight := ceildivpow2(height-(1<<level), level+1)
+		hhData := make([]int32, hhWidth*hhHeight)
+		for y := 0; y < hhHeight; y++ {
+			for x := 0; x < hhWidth; x++ {
+				srcIdx := (llHeight+y)*width + (llWidth + x)
+				if srcIdx < len(data) && llHeight+y < height && llWidth+x < width {
+					hhData[y*hhWidth+x] = data[srcIdx]
 				}
 				// else: pad with zero (already initialized to 0)
 			}
 		}
 		subbands = append(subbands, subbandInfo{
 			data:   hhData,
-			x0:     sbWidth,
-			y0:     sbHeight,
-			width:  sbWidth,
-			height: sbHeight,
+			x0:     llWidth,
+			y0:     llHeight,
+			width:  hhWidth,
+			height: hhHeight,
 			band:   3, // HH
 			res:    resolution,
 			scale:  scale,

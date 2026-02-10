@@ -778,11 +778,32 @@ func (d *Decoder) getGrayscalePixelData() []byte {
 		result := make([]byte, numPixels)
 		for i := 0; i < numPixels; i++ {
 			val := d.data[0][i]
-			if val < 0 {
-				val = 0
-			} else if val > 255 {
-				val = 255
+
+			// For signed data, convert to 2's complement representation
+			if d.isSigned {
+				// Signed data: clamp to signed range
+				minVal := -(1 << (d.bitDepth - 1))
+				maxVal := (1 << (d.bitDepth - 1)) - 1
+				if val < int32(minVal) {
+					val = int32(minVal)
+				} else if val > int32(maxVal) {
+					val = int32(maxVal)
+				}
+				// Convert to unsigned representation for storage (2's complement)
+				if val < 0 {
+					val += (1 << d.bitDepth)
+				}
+			} else {
+				// Unsigned data: clamp to [0, 2^bitDepth-1]
+				if val < 0 {
+					val = 0
+				}
+				maxVal := (1 << d.bitDepth) - 1
+				if val > int32(maxVal) {
+					val = int32(maxVal)
+				}
 			}
+
 			result[i] = byte(val)
 		}
 		return result
@@ -792,13 +813,33 @@ func (d *Decoder) getGrayscalePixelData() []byte {
 	result := make([]byte, numPixels*2)
 	for i := 0; i < numPixels; i++ {
 		val := d.data[0][i]
-		if val < 0 {
-			val = 0
+
+		// For signed data, convert to 2's complement representation
+		// For unsigned data, clamp to valid range
+		if d.isSigned {
+			// Signed data: clamp to signed range
+			minVal := -(1 << (d.bitDepth - 1))
+			maxVal := (1 << (d.bitDepth - 1)) - 1
+			if val < int32(minVal) {
+				val = int32(minVal)
+			} else if val > int32(maxVal) {
+				val = int32(maxVal)
+			}
+			// Convert to unsigned representation for storage (2's complement)
+			if val < 0 {
+				val += (1 << d.bitDepth)
+			}
+		} else {
+			// Unsigned data: clamp to [0, maxVal]
+			if val < 0 {
+				val = 0
+			}
+			maxVal := (1 << d.bitDepth) - 1
+			if val > int32(maxVal) {
+				val = int32(maxVal)
+			}
 		}
-		maxVal := (1 << d.bitDepth) - 1
-		if val > int32(maxVal) {
-			val = int32(maxVal)
-		}
+
 		// Little-endian
 		result[i*2] = byte(val)
 		result[i*2+1] = byte(val >> 8)
@@ -816,11 +857,32 @@ func (d *Decoder) getInterleavedPixelData() []byte {
 		for i := 0; i < numPixels; i++ {
 			for c := 0; c < d.components; c++ {
 				val := d.data[c][i]
-				if val < 0 {
-					val = 0
-				} else if val > 255 {
-					val = 255
+
+				// For signed data, convert to 2's complement representation
+				if d.isSigned {
+					// Signed data: clamp to signed range
+					minVal := -(1 << (d.bitDepth - 1))
+					maxVal := (1 << (d.bitDepth - 1)) - 1
+					if val < int32(minVal) {
+						val = int32(minVal)
+					} else if val > int32(maxVal) {
+						val = int32(maxVal)
+					}
+					// Convert to unsigned representation for storage (2's complement)
+					if val < 0 {
+						val += (1 << d.bitDepth)
+					}
+				} else {
+					// Unsigned data: clamp to [0, 2^bitDepth-1]
+					if val < 0 {
+						val = 0
+					}
+					maxVal := (1 << d.bitDepth) - 1
+					if val > int32(maxVal) {
+						val = int32(maxVal)
+					}
 				}
+
 				result[i*d.components+c] = byte(val)
 			}
 		}
@@ -832,13 +894,33 @@ func (d *Decoder) getInterleavedPixelData() []byte {
 	for i := 0; i < numPixels; i++ {
 		for c := 0; c < d.components; c++ {
 			val := d.data[c][i]
-			if val < 0 {
-				val = 0
+
+			// For signed data, convert to 2's complement representation
+			// For unsigned data, clamp to valid range
+			if d.isSigned {
+				// Signed data: clamp to signed range
+				minVal := -(1 << (d.bitDepth - 1))
+				maxVal := (1 << (d.bitDepth - 1)) - 1
+				if val < int32(minVal) {
+					val = int32(minVal)
+				} else if val > int32(maxVal) {
+					val = int32(maxVal)
+				}
+				// Convert to unsigned representation for storage (2's complement)
+				if val < 0 {
+					val += (1 << d.bitDepth)
+				}
+			} else {
+				// Unsigned data: clamp to [0, maxVal]
+				if val < 0 {
+					val = 0
+				}
+				maxVal := (1 << d.bitDepth) - 1
+				if val > int32(maxVal) {
+					val = int32(maxVal)
+				}
 			}
-			maxVal := (1 << d.bitDepth) - 1
-			if val > int32(maxVal) {
-				val = int32(maxVal)
-			}
+
 			idx := (i*d.components + c) * 2
 			result[idx] = byte(val)
 			result[idx+1] = byte(val >> 8)
