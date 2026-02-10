@@ -321,26 +321,13 @@ func Inverse97_2D(data []float64, width, height, stride int) {
 }
 
 // Inverse97_2DWithParity performs the inverse 9/7 wavelet transform on a 2D image
+// IMPORTANT: Inverse order - HORIZONTAL (rows) first, then VERTICAL (columns).
 func Inverse97_2DWithParity(data []float64, width, height, stride int, evenRow, evenCol bool) {
 	if width <= 1 && height <= 1 {
 		return
 	}
 
-	// Inverse transform columns first
-	if height > 1 {
-		col := make([]float64, height)
-		for x := 0; x < width; x++ {
-			for y := 0; y < height; y++ {
-				col[y] = data[y*stride+x]
-			}
-			Inverse97_1DWithParity(col, evenCol)
-			for y := 0; y < height; y++ {
-				data[y*stride+x] = col[y]
-			}
-		}
-	}
-
-	// Inverse transform rows
+	// Inverse transform rows (HORIZONTAL pass - done FIRST in inverse)
 	if width > 1 {
 		row := make([]float64, width)
 		for y := 0; y < height; y++ {
@@ -350,6 +337,20 @@ func Inverse97_2DWithParity(data []float64, width, height, stride int, evenRow, 
 			Inverse97_1DWithParity(row, evenRow)
 			for x := 0; x < width; x++ {
 				data[y*stride+x] = row[x]
+			}
+		}
+	}
+
+	// Inverse transform columns (VERTICAL pass - done SECOND in inverse)
+	if height > 1 {
+		col := make([]float64, height)
+		for x := 0; x < width; x++ {
+			for y := 0; y < height; y++ {
+				col[y] = data[y*stride+x]
+			}
+			Inverse97_1DWithParity(col, evenCol)
+			for y := 0; y < height; y++ {
+				data[y*stride+x] = col[y]
 			}
 		}
 	}
