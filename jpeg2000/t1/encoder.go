@@ -38,10 +38,6 @@ type T1Encoder struct {
 	termall      bool // Terminate all passes
 	segmentation bool // Use segmentation symbols
 
-	traceBlockLabel string
-	tracePassIndex  int
-	tracePassType   int
-	traceRaw        bool
 }
 
 func isLazyRawPass(bitplane int, maxBitplane int, passType int, cblkstyle int) bool {

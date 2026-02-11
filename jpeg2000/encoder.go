@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
-	"os"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
@@ -91,34 +89,6 @@ type EncodeParams struct {
 	// Block encoder factory (for HTJ2K support)
 	// If nil, defaults to EBCOT T1 encoder
 	BlockEncoderFactory func(width, height int) BlockEncoder
-
-	// T1EventTrace optionally enables per-bit Tier-1 trace for a selected code-block.
-	// Fields in T1EventTraceConfig use -1 as wildcard.
-	T1EventTrace *T1EventTraceConfig
-}
-
-// T1EventTraceConfig selects one Tier-1 code-block and emits per-bit events.
-// Use -1 for wildcard matching on any selector field.
-type T1EventTraceConfig struct {
-	Component       int
-	Resolution      int
-	Band            int
-	GlobalCodeBlock int
-	CBX             int
-	CBY             int
-	Writer          io.Writer
-}
-
-// NewT1EventTraceConfig creates a trace config with wildcard selectors.
-func NewT1EventTraceConfig() *T1EventTraceConfig {
-	return &T1EventTraceConfig{
-		Component:       -1,
-		Resolution:      -1,
-		Band:            -1,
-		GlobalCodeBlock: -1,
-		CBX:             -1,
-		CBY:             -1,
-	}
 }
 
 // BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
@@ -2823,29 +2793,6 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 	}
 
 	return codeBlocks
-}
-
-func traceSelectorMatch(selector, value int) bool {
-	return selector < 0 || selector == value
-}
-
-func (cfg *T1EventTraceConfig) matches(comp, res, band, cbx, cby, globalCB int) bool {
-	if cfg == nil {
-		return false
-	}
-	return traceSelectorMatch(cfg.Component, comp) &&
-		traceSelectorMatch(cfg.Resolution, res) &&
-		traceSelectorMatch(cfg.Band, band) &&
-		traceSelectorMatch(cfg.CBX, cbx) &&
-		traceSelectorMatch(cfg.CBY, cby) &&
-		traceSelectorMatch(cfg.GlobalCodeBlock, globalCB)
-}
-
-func (cfg *T1EventTraceConfig) outputWriter() io.Writer {
-	if cfg != nil && cfg.Writer != nil {
-		return cfg.Writer
-	}
-	return os.Stdout
 }
 
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder
