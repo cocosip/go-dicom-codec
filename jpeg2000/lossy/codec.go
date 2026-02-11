@@ -210,7 +210,7 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 func RegisterJPEG2000LossyCodec() {
 	registry := codec.GetGlobalRegistry()
 	j2kCodec := NewCodec()
-	registry.RegisterCodec(transfer.JPEG2000, j2kCodec)
+	registry.RegisterCodec(transfer.JPEG2000Lossy, j2kCodec)
 }
 
 // RegisterJPEG2000MultiComponentCodec registers JPEG 2000 Part 2 multi-component codec.

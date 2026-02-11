@@ -94,7 +94,7 @@ func main() {
 		{"JPEG-LS NearLossless", transfer.JPEGLSNearLossless, "jpegls_near_lossless", true},
 		{"RLE", transfer.RLELossless, "rle", false},
 		{"JPEG 2000 Lossless", transfer.JPEG2000Lossless, "j2k_lossless", true},
-		{"JPEG 2000 Lossy", transfer.JPEG2000, "j2k_lossy", false},
+		{"JPEG 2000 Lossy", transfer.JPEG2000Lossy, "j2k_lossy", false},
 	}
 
 	// Get codec registry

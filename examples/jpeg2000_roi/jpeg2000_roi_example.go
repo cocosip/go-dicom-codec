@@ -47,9 +47,8 @@ func simpleROIExample(pixelData []byte, width, height int) {
 	// Create encoding parameters
 	params := jpeg2000.DefaultEncodeParams(width, height, 1, 8, false)
 	params.Lossless = false
-	params.Rate = 60    // Low quality for background
 	params.NumLevels = 5
-	params.ROI = roi       // ROI gets higher quality
+	params.ROI = roi // ROI gets higher quality
 
 	// Encode
 	encoder := jpeg2000.NewEncoder(params)
@@ -64,7 +63,7 @@ func simpleROIExample(pixelData []byte, width, height int) {
 	fmt.Printf("   Image size: %dx%d\n", width, height)
 	fmt.Printf("   ROI region: %dx%d at (%d, %d)\n",
 		roi.Width, roi.Height, roi.X0, roi.Y0)
-	fmt.Printf("   Background quality: %d\n", params.Rate)
+
 	fmt.Printf("   ROI shift: %d (background compressed %dx more)\n",
 		roi.Shift, 1<<roi.Shift)
 	fmt.Printf("   Compression: %.2fx\n", ratio)
@@ -109,7 +108,6 @@ func multipleROIExample(pixelData []byte, width, height int) {
 	// Create encoding parameters
 	params := jpeg2000.DefaultEncodeParams(width, height, 1, 8, false)
 	params.Lossless = false
-	params.Rate = 50      // Very low background quality
 	params.NumLevels = 5
 	params.ROIConfig = roiConfig
 
@@ -124,7 +122,6 @@ func multipleROIExample(pixelData []byte, width, height int) {
 	// Report results
 	ratio := float64(len(pixelData)) / float64(len(compressed))
 	fmt.Printf("   Number of ROI regions: %d\n", len(roiConfig.ROIs))
-	fmt.Printf("   Background quality: %d\n", params.Rate)
 	fmt.Printf("   Compression: %.2fx\n", ratio)
 
 	for i, roi := range roiConfig.ROIs {
@@ -170,7 +167,6 @@ func circularROIExample(pixelData []byte, width, height int) {
 	// Create encoding parameters
 	params := jpeg2000.DefaultEncodeParams(width, height, 1, 8, false)
 	params.Lossless = false
-	params.Rate = 60
 	params.NumLevels = 5
 	params.ROIConfig = roiConfig
 
@@ -197,7 +193,6 @@ func circularROIExample(pixelData []byte, width, height int) {
 	fmt.Printf("   Image size: %dx%d\n", width, height)
 	fmt.Printf("   ROI shape: Circular (radius=%d pixels)\n", radius)
 	fmt.Printf("   ROI coverage: %.1f%% of image\n", roiPercent)
-	fmt.Printf("   Background quality: %d\n", params.Rate)
 	fmt.Printf("   Compression: %.2fx\n", ratio)
 	fmt.Println("   鉁?Circular ROI encoded using bitmap mask")
 
