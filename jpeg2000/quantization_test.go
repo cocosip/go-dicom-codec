@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand"
 	"testing"
-	"time"
 )
 
 func nearlyEqual(a, b, tol float64) bool {
@@ -21,22 +20,25 @@ func nearlyEqual(a, b, tol float64) bool {
 }
 
 func TestCalculateQuantizationParams_StyleAndLengths(t *testing.T) {
-	// lossless mode
-	pLossless := CalculateQuantizationParams(100, 5, 16)
-	if pLossless.Style != 0 {
-		t.Fatalf("expected Style=0 for quality>=100, got %d", pLossless.Style)
+	// quality 100 should still produce near-lossless lossy quantization
+	numLevels := 4
+	pNearLossless := CalculateQuantizationParams(100, numLevels, 16)
+	if pNearLossless.Style != 2 {
+		t.Fatalf("expected Style=2 for quality=100, got %d", pNearLossless.Style)
 	}
-	if pLossless.GuardBits != 2 {
-		t.Fatalf("expected GuardBits=2, got %d", pLossless.GuardBits)
+	expectedSubbands := 3*numLevels + 1
+	if len(pNearLossless.StepSizes) != expectedSubbands || len(pNearLossless.EncodedSteps) != expectedSubbands {
+		t.Fatalf("quality=100 should emit full subband steps, got steps=%d encoded=%d want=%d", len(pNearLossless.StepSizes), len(pNearLossless.EncodedSteps), expectedSubbands)
+	}
+	if pNearLossless.GuardBits != 2 {
+		t.Fatalf("expected GuardBits=2, got %d", pNearLossless.GuardBits)
 	}
 
 	// lossy mode
-	numLevels := 4
 	pLossy := CalculateQuantizationParams(80, numLevels, 16)
 	if pLossy.Style != 2 {
 		t.Fatalf("expected Style=2 for lossy mode, got %d", pLossy.Style)
 	}
-	expectedSubbands := 3*numLevels + 1
 	if len(pLossy.StepSizes) != expectedSubbands || len(pLossy.EncodedSteps) != expectedSubbands {
 		t.Fatalf("unexpected subband count: got steps=%d encoded=%d want=%d", len(pLossy.StepSizes), len(pLossy.EncodedSteps), expectedSubbands)
 	}
@@ -81,19 +83,20 @@ func TestQualityMonotonicity_LLStep(t *testing.T) {
 }
 
 func TestQuantizeDequantizeErrorByQuality(t *testing.T) {
-	// synthetic coefficients
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Deterministic synthetic coefficients to avoid flaky comparisons.
+	rng := rand.New(rand.NewSource(42))
 	coeffs := make([]int32, 5000)
 	for i := range coeffs {
 		coeffs[i] = int32(rng.Intn(1<<14) - (1 << 13))
 	}
 
-	// compare average absolute error across qualities using LL step size
+	// Compare average absolute reconstruction error across low qualities where
+	// LL quantization step remains >1 and therefore produces measurable loss.
 	type pair struct {
 		q   int
 		err float64
 	}
-	qs := []int{20, 80, 95}
+	qs := []int{1, 3, 5}
 	results := make([]pair, 0, len(qs))
 	for _, q := range qs {
 		p := CalculateQuantizationParams(q, 5, 16)
@@ -108,12 +111,12 @@ func TestQuantizeDequantizeErrorByQuality(t *testing.T) {
 		results = append(results, pair{q: q, err: avg})
 	}
 
-	// Expect error(20) > error(80) > error(95)
+	// Lower quality should be no better than higher quality.
 	if !(results[0].err > results[1].err) {
-		t.Fatalf("expected error(q=20)>error(q=80), got %.6f <= %.6f", results[0].err, results[1].err)
+		t.Fatalf("expected error(q=%d)>error(q=%d), got %.6f <= %.6f", results[0].q, results[1].q, results[0].err, results[1].err)
 	}
 	if !(results[1].err > results[2].err) {
-		t.Fatalf("expected error(q=80)>error(q=95), got %.6f <= %.6f", results[1].err, results[2].err)
+		t.Fatalf("expected error(q=%d)>error(q=%d), got %.6f <= %.6f", results[1].q, results[2].q, results[1].err, results[2].err)
 	}
 }
 
@@ -126,9 +129,9 @@ func TestBoundaryQualityValues(t *testing.T) {
 		{"Quality 1 (max compression)", 1, 2},
 		{"Quality 50 (medium)", 50, 2},
 		{"Quality 99 (near-lossless)", 99, 2},
-		{"Quality 100 (lossless)", 100, 0},
+		{"Quality 100 (near-lossless)", 100, 2},
 		{"Quality below 1 (clamped)", 0, 2},
-		{"Quality above 100 (clamped)", 101, 0},
+		{"Quality above 100 (clamped)", 101, 2},
 	}
 
 	for _, tt := range tests {

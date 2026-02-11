@@ -36,9 +36,6 @@ func qualityScale(quality int) float64 {
 	if quality > 100 {
 		quality = 100
 	}
-	if quality >= 100 {
-		return 0
-	}
 	scale := math.Pow(2.0, (100.0-float64(quality))/12.5)
 	if scale < 0.01 {
 		scale = 0.01
@@ -144,14 +141,6 @@ func CalculateQuantizationParams(quality, numLevels, bitDepth int) *Quantization
 	}
 	if quality > 100 {
 		quality = 100
-	}
-
-	// For lossless (quality >= 100), return no quantization.
-	if quality >= 100 {
-		return &QuantizationParams{
-			Style:     0, // No quantization
-			GuardBits: 2,
-		}
 	}
 
 	// Calculate number of subbands: LL + 3 * numLevels (HL, LH, HH per level).

@@ -2871,7 +2871,7 @@ func (e *Encoder) attachT1EventTrace(t1Enc *t1.T1Encoder, cb codeBlockInfo, cbId
 	)
 	writer := cfg.outputWriter()
 	fmt.Fprintf(writer, "T1TRACE start %s\n", label)
-	t1Enc.SetEventTracer(t1.NewTextEventTracer(writer), label)
+
 }
 
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder

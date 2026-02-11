@@ -35,24 +35,25 @@ func TestCOMMarkerEncodesROIConfig(t *testing.T) {
 		t.Fatalf("parse codestream failed: %v", err)
 	}
 
-	if len(cs.COM) != 1 {
-		t.Fatalf("expected 1 COM segment, got %d", len(cs.COM))
+	var roiCOM *codestream.COMSegment
+	for i := range cs.COM {
+		seg := cs.COM[i]
+		if seg.Rcom != 0 || len(seg.Data) < 7 {
+			continue
+		}
+		if string(seg.Data[:6]) == "JP2ROI" {
+			roiCOM = &cs.COM[i]
+			break
+		}
 	}
-	com := cs.COM[0]
-	if com.Rcom != 0 {
-		t.Fatalf("unexpected Rcom: got %d", com.Rcom)
+	if roiCOM == nil {
+		t.Fatalf("missing ROI COM segment, total COM segments=%d", len(cs.COM))
 	}
-	if len(com.Data) < 7 {
-		t.Fatalf("COM data too short: %d bytes", len(com.Data))
-	}
-	if string(com.Data[:6]) != "JP2ROI" {
-		t.Fatalf("unexpected COM magic: %q", string(com.Data[:6]))
-	}
-	if version := com.Data[6]; version != 1 {
+	if version := roiCOM.Data[6]; version != 1 {
 		t.Fatalf("unexpected COM version: got %d", version)
 	}
 
-	cfg, err := parseROIFromCOMData(com.Data[7:])
+	cfg, err := parseROIFromCOMData(roiCOM.Data[7:])
 	if err != nil {
 		t.Fatalf("parseROIFromCOMData failed: %v", err)
 	}

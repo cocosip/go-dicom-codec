@@ -11,8 +11,16 @@ var _ codec.Parameters = (*JPEG2000LossyParameters)(nil)
 // JPEG2000LossyParameters contains parameters for JPEG 2000 lossy compression.
 type JPEG2000LossyParameters struct {
 	// Quality controls the compression quality vs. file size tradeoff (1-100).
-	// 100 = near-lossless, 80 = high quality (default), 1 = max compression.
+	// 100 = near-lossless, 35 = fo-dicom/OpenJPEG-like default, 1 = max compression.
 	Quality int
+
+	// Rate is the fo-dicom/OpenJPEG style target rate parameter (higher means better quality).
+	// Effective target ratio ~= Rate * BitsStored / BitsAllocated. Default: 20.
+	Rate int
+
+	// RateLevels is the fo-dicom/OpenJPEG layer ladder used with Rate.
+	// Default: [1280, 640, 320, 160, 80, 40, 20, 10, 5].
+	RateLevels []int
 
 	// NumLevels specifies the number of wavelet decomposition levels (0-6).
 	// More levels = better compression but slower encoding/decoding. Default: 5.
@@ -39,8 +47,10 @@ type JPEG2000LossyParameters struct {
 // NewLossyParameters creates a new JPEG2000LossyParameters with default values.
 func NewLossyParameters() *JPEG2000LossyParameters {
 	return &JPEG2000LossyParameters{
-		Quality:        80, // Default high quality
-		NumLevels:      5,  // Default 5 decomposition levels
+		Quality:        35, // Approximate fo-dicom/OpenJPEG default (Rate=20)
+		Rate:           20,
+		RateLevels:     []int{1280, 640, 320, 160, 80, 40, 20, 10, 5},
+		NumLevels:      5, // Default 5 decomposition levels
 		NumLayers:      1,
 		TargetRatio:    0,
 		QuantStepScale: 1.0,
@@ -54,6 +64,10 @@ func (p *JPEG2000LossyParameters) GetParameter(name string) interface{} {
 	switch name {
 	case "quality":
 		return p.Quality
+	case "rate":
+		return p.Rate
+	case "rateLevels":
+		return p.RateLevels
 	case "numLevels":
 		return p.NumLevels
 	case "numLayers":
@@ -75,6 +89,14 @@ func (p *JPEG2000LossyParameters) SetParameter(name string, value interface{}) {
 	case "quality":
 		if v, ok := value.(int); ok {
 			p.Quality = v
+		}
+	case "rate":
+		if v, ok := value.(int); ok {
+			p.Rate = v
+		}
+	case "rateLevels":
+		if v, ok := value.([]int); ok {
+			p.RateLevels = v
 		}
 	case "numLevels":
 		if v, ok := value.(int); ok {
@@ -107,7 +129,13 @@ func (p *JPEG2000LossyParameters) SetParameter(name string, value interface{}) {
 // Validate checks if the parameters are valid and normalizes values.
 func (p *JPEG2000LossyParameters) Validate() error {
 	if p.Quality < 1 || p.Quality > 100 {
-		p.Quality = 80
+		p.Quality = 35
+	}
+	if p.Rate <= 0 {
+		p.Rate = 20
+	}
+	if len(p.RateLevels) == 0 {
+		p.RateLevels = []int{1280, 640, 320, 160, 80, 40, 20, 10, 5}
 	}
 	if p.NumLevels < 0 || p.NumLevels > 6 {
 		p.NumLevels = 5
@@ -124,6 +152,18 @@ func (p *JPEG2000LossyParameters) Validate() error {
 // WithQuality sets the quality and returns the parameters for chaining.
 func (p *JPEG2000LossyParameters) WithQuality(quality int) *JPEG2000LossyParameters {
 	p.Quality = quality
+	return p
+}
+
+// WithRate sets fo-dicom/OpenJPEG style rate and returns the parameters for chaining.
+func (p *JPEG2000LossyParameters) WithRate(rate int) *JPEG2000LossyParameters {
+	p.Rate = rate
+	return p
+}
+
+// WithRateLevels sets fo-dicom/OpenJPEG style rate levels and returns the parameters for chaining.
+func (p *JPEG2000LossyParameters) WithRateLevels(levels []int) *JPEG2000LossyParameters {
+	p.RateLevels = levels
 	return p
 }
 

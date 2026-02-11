@@ -12,15 +12,17 @@ import (
 
 var _ codec.Codec = (*Codec)(nil)
 
+const defaultQuality = 35
+
 // Codec implements the JPEG 2000 Lossy codec
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.91
 type Codec struct {
 	transferSyntax *transfer.Syntax
-	quality        int // Default quality (1-100)
+	quality        int // Default quality (1-100), aligned to fo-dicom/OpenJPEG defaults
 }
 
 // NewCodec creates a new JPEG 2000 Lossy codec
-// quality: 1-100, where 100 is near-lossless (default: 80)
+// quality: 1-100, where 100 is near-lossless (default: 35, approx fo-dicom Rate=20)
 func NewCodec(quality int) *Codec {
 	return NewCodecWithTransferSyntax(transfer.JPEG2000, quality)
 }
@@ -28,7 +30,7 @@ func NewCodec(quality int) *Codec {
 // NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
 func NewCodecWithTransferSyntax(ts *transfer.Syntax, quality int) *Codec {
 	if quality < 1 || quality > 100 {
-		quality = 80 // default
+		quality = defaultQuality // default (approx fo-dicom/OpenJPEG Rate=20)
 	}
 	return &Codec{
 		transferSyntax: ts, // Lossy or Lossless
@@ -37,9 +39,9 @@ func NewCodecWithTransferSyntax(ts *transfer.Syntax, quality int) *Codec {
 }
 
 // NewPart2MultiComponentCodec creates a JPEG 2000 Part 2 Multi-component codec (UID .93)
-// quality: 1-100 (default 80 if out of range)
+// quality: 1-100 (default 35 if out of range)
 func NewPart2MultiComponentCodec(quality int) *Codec {
-    return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, quality)
+	return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, quality)
 }
 
 // Name returns the codec name
@@ -86,6 +88,16 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 			if nl := parameters.GetParameter("numLevels"); nl != nil {
 				if nlInt, ok := nl.(int); ok && nlInt >= 0 && nlInt <= 6 {
 					lossyParams.NumLevels = nlInt
+				}
+			}
+			if r := parameters.GetParameter("rate"); r != nil {
+				if rInt, ok := r.(int); ok && rInt > 0 {
+					lossyParams.Rate = rInt
+				}
+			}
+			if rl := parameters.GetParameter("rateLevels"); rl != nil {
+				if arr, ok := rl.([]int); ok && len(arr) > 0 {
+					lossyParams.RateLevels = arr
 				}
 			}
 		}
@@ -180,15 +192,15 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 // RegisterJPEG2000LossyCodec registers the JPEG 2000 Lossy codec with the global registry
 func RegisterJPEG2000LossyCodec() {
 	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodec(80) // Default quality: 80
+	j2kCodec := NewCodec(defaultQuality) // Default quality: 35 (approx fo-dicom/OpenJPEG Rate=20)
 	registry.RegisterCodec(transfer.JPEG2000, j2kCodec)
 }
 
 // RegisterJPEG2000MultiComponentCodec registers JPEG 2000 Part 2 multi-component codec.
 func RegisterJPEG2000MultiComponentCodec() {
-    registry := codec.GetGlobalRegistry()
-    j2kCodec := NewPart2MultiComponentCodec(80)
-    registry.RegisterCodec(transfer.JPEG2000Part2MultiComponent, j2kCodec)
+	registry := codec.GetGlobalRegistry()
+	j2kCodec := NewPart2MultiComponentCodec(defaultQuality)
+	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponent, j2kCodec)
 }
 
 func init() {
@@ -234,7 +246,17 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInf
 			encParams.Quality = 92
 		}
 	}
-	encParams.TargetRatio = p.TargetRatio
+	targetRatio := p.TargetRatio
+	if targetRatio <= 0 && p.Rate > 0 && p.Quality == defaultQuality {
+		targetRatio = rateToTargetRatio(p.Rate, int(frameInfo.BitsStored), int(frameInfo.BitsAllocated))
+	}
+	if targetRatio > 0 {
+		encParams.TargetRatio = targetRatio
+		encParams.UsePCRDOpt = true
+		if encParams.NumLayers <= 1 {
+			encParams.NumLayers = layersFromRateLevels(p.Rate, p.RateLevels)
+		}
+	}
 	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
 
 	if p != nil {
@@ -357,6 +379,35 @@ func qualityFromRatio(ratio float64) int {
 	// ratio=2 -> ~85, ratio=3 -> ~76, ratio=5 -> ~65, ratio=10 -> ~50
 	q := int(math.Round(100 - 15*math.Log2(ratio)))
 	return clampQuality(q)
+}
+
+func rateToTargetRatio(rate, bitsStored, bitsAllocated int) float64 {
+	if rate <= 0 {
+		return 0
+	}
+	if bitsAllocated <= 0 {
+		bitsAllocated = bitsStored
+	}
+	if bitsStored <= 0 || bitsAllocated <= 0 {
+		return float64(rate)
+	}
+	return float64(rate) * float64(bitsStored) / float64(bitsAllocated)
+}
+
+func layersFromRateLevels(rate int, levels []int) int {
+	if rate <= 0 || len(levels) == 0 {
+		return 1
+	}
+	layers := 1
+	for _, v := range levels {
+		if v > rate {
+			layers++
+		}
+	}
+	if layers < 1 {
+		return 1
+	}
+	return layers
 }
 
 func clampQuality(q int) int {

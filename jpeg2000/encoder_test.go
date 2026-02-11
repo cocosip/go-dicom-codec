@@ -364,7 +364,7 @@ func TestEncoderPixelDataConversion(t *testing.T) {
 		// Create RGB pixel data (interleaved)
 		pixelData := make([]byte, numPixels*3)
 		for i := 0; i < numPixels; i++ {
-			pixelData[i*3] = byte(i % 256)       // R
+			pixelData[i*3] = byte(i % 256)         // R
 			pixelData[i*3+1] = byte((i + 1) % 256) // G
 			pixelData[i*3+2] = byte((i + 2) % 256) // B
 		}
@@ -525,4 +525,40 @@ func TestEncoderHelperFunctions(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestLossyQuality100QCDHasExplicitSteps(t *testing.T) {
+	width, height := 64, 64
+	data := make([][]int32, 1)
+	data[0] = make([]int32, width*height)
+	for i := range data[0] {
+		data[0][i] = int32(i % 256)
+	}
+
+	params := DefaultEncodeParams(width, height, 1, 8, false)
+	params.Lossless = false
+	params.Quality = 100
+
+	encoder := NewEncoder(params)
+	encoded, err := encoder.EncodeComponents(data)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	cs, err := codestream.NewParser(encoded).Parse()
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if cs.COD == nil || cs.QCD == nil {
+		t.Fatalf("missing COD/QCD segments")
+	}
+	if got := cs.QCD.QuantizationType(); got != 2 {
+		t.Fatalf("expected scalar expounded quantization (2), got %d", got)
+	}
+
+	expectedSubbands := 3*int(cs.COD.NumberOfDecompositionLevels) + 1
+	expectedBytes := expectedSubbands * 2
+	if got := len(cs.QCD.SPqcd); got != expectedBytes {
+		t.Fatalf("unexpected SPqcd length: got %d, want %d", got, expectedBytes)
+	}
 }

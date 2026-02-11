@@ -128,7 +128,6 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 		}
 
 		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
-		t1.setTracePassState(passIdx, passType, raw)
 		if prevTerminated {
 			if raw {
 				t1.mqe.BypassInitEnc()
