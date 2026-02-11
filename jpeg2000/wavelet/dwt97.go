@@ -379,12 +379,7 @@ func ForwardMultilevel97WithParity(data []float64, width, height, levels int, x0
 
 		Forward97_2DWithParity(data, curWidth, curHeight, originalStride, evenRow, evenCol)
 
-		lowW, _ := splitLengths(curWidth, evenRow)
-		lowH, _ := splitLengths(curHeight, evenCol)
-		curWidth = lowW
-		curHeight = lowH
-		curX0 = nextCoord(curX0)
-		curY0 = nextCoord(curY0)
+		curWidth, curHeight, curX0, curY0 = nextLowpassWindow(curWidth, curHeight, curX0, curY0)
 	}
 }
 
@@ -407,14 +402,9 @@ func InverseMultilevel97WithParity(data []float64, width, height, levels int, x0
 	levelY0[0] = y0
 
 	for i := 1; i <= levels; i++ {
-		evenRow := isEven(levelX0[i-1])
-		evenCol := isEven(levelY0[i-1])
-		lowW, _ := splitLengths(levelWidths[i-1], evenRow)
-		lowH, _ := splitLengths(levelHeights[i-1], evenCol)
-		levelWidths[i] = lowW
-		levelHeights[i] = lowH
-		levelX0[i] = nextCoord(levelX0[i-1])
-		levelY0[i] = nextCoord(levelY0[i-1])
+		levelWidths[i], levelHeights[i], levelX0[i], levelY0[i] = nextLowpassWindow(
+			levelWidths[i-1], levelHeights[i-1], levelX0[i-1], levelY0[i-1],
+		)
 	}
 
 	for level := levels - 1; level >= 0; level-- {
