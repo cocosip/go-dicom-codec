@@ -80,6 +80,16 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 					losslessParams.AllowMCT = b
 				}
 			}
+			if v := parameters.GetParameter("rate"); v != nil {
+				if r, ok := v.(int); ok && r > 0 {
+					losslessParams.Rate = r
+				}
+			}
+			if v := parameters.GetParameter("rateLevels"); v != nil {
+				if arr, ok := v.([]int); ok && len(arr) > 0 {
+					losslessParams.RateLevels = arr
+				}
+			}
 			if v := parameters.GetParameter("progressionOrder"); v != nil {
 				switch x := v.(type) {
 				case int:
@@ -137,11 +147,18 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	encParams.NumLevels = losslessParams.NumLevels
 	encParams.ProgressionOrder = losslessParams.ProgressionOrder
 	encParams.NumLayers = losslessParams.NumLayers
-	encParams.TargetRatio = losslessParams.TargetRatio
-	encParams.UsePCRDOpt = losslessParams.UsePCRDOpt
+	targetRatio := losslessParams.TargetRatio
+	if targetRatio <= 0 && losslessParams.Rate > 0 {
+		targetRatio = rateToTargetRatio(losslessParams.Rate, int(frameInfo.BitsStored), int(frameInfo.BitsAllocated))
+	}
+	encParams.TargetRatio = targetRatio
+	encParams.UsePCRDOpt = losslessParams.UsePCRDOpt || targetRatio > 0
 	encParams.EnableMCT = losslessParams.AllowMCT
 	encParams.AppendLosslessLayer = losslessParams.AppendLosslessLayer
-	if losslessParams.TargetRatio > 0 && encParams.NumLayers < 2 && losslessParams.AppendLosslessLayer {
+	if targetRatio > 0 && encParams.NumLayers <= 1 {
+		encParams.NumLayers = layersFromRateLevels(losslessParams.Rate, losslessParams.RateLevels)
+	}
+	if targetRatio > 0 && encParams.NumLayers < 2 && losslessParams.AppendLosslessLayer {
 		// Mirror OpenJPEG: when a target rate is specified in lossless mode, add a final lossless layer.
 		encParams.NumLayers = 2
 	}
@@ -280,12 +297,41 @@ func RegisterJPEG2000LosslessCodec() {
 
 // RegisterJPEG2000MCLosslessCodec registers JPEG 2000 Part 2 Multi-component lossless codec.
 func RegisterJPEG2000MCLosslessCodec() {
-    registry := codec.GetGlobalRegistry()
-    j2kCodec := NewPart2MultiComponentLosslessCodec()
-    registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
+	registry := codec.GetGlobalRegistry()
+	j2kCodec := NewPart2MultiComponentLosslessCodec()
+	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponentLosslessOnly, j2kCodec)
 }
 
 func init() {
 	RegisterJPEG2000LosslessCodec()
 	RegisterJPEG2000MCLosslessCodec()
+}
+
+func rateToTargetRatio(rate, bitsStored, bitsAllocated int) float64 {
+	if rate <= 0 {
+		return 0
+	}
+	if bitsAllocated <= 0 {
+		bitsAllocated = bitsStored
+	}
+	if bitsStored <= 0 || bitsAllocated <= 0 {
+		return float64(rate)
+	}
+	return float64(rate) * float64(bitsStored) / float64(bitsAllocated)
+}
+
+func layersFromRateLevels(rate int, levels []int) int {
+	if rate <= 0 || len(levels) == 0 {
+		return 1
+	}
+	layers := 1
+	for _, v := range levels {
+		if v > rate {
+			layers++
+		}
+	}
+	if layers < 1 {
+		return 1
+	}
+	return layers
 }

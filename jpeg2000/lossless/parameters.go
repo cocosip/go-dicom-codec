@@ -26,6 +26,14 @@ type JPEG2000LosslessParameters struct {
 	// OpenJPEG enables MCT for RGB only when AllowMCT is true.
 	AllowMCT bool
 
+	// Rate is the fo-dicom/OpenJPEG style target rate parameter (optional).
+	// Effective target ratio ~= Rate * BitsStored / BitsAllocated. Default: 0 (disabled).
+	Rate int
+
+	// RateLevels is the fo-dicom/OpenJPEG layer ladder used with Rate.
+	// Default: [1280, 640, 320, 160, 80, 40, 20, 10, 5].
+	RateLevels []int
+
 	// ProgressionOrder mirrors the JPEG 2000 progression order (0=LRCP,1=RLCP,2=RPCL,3=PCRL,4=CPRL).
 	ProgressionOrder uint8
 
@@ -47,11 +55,17 @@ type JPEG2000LosslessParameters struct {
 	params map[string]interface{}
 }
 
+var defaultRateLevels = []int{1280, 640, 320, 160, 80, 40, 20, 10, 5}
+
 // NewLosslessParameters creates a new JPEG2000LosslessParameters with default values
 func NewLosslessParameters() *JPEG2000LosslessParameters {
+	levels := make([]int, len(defaultRateLevels))
+	copy(levels, defaultRateLevels)
 	return &JPEG2000LosslessParameters{
 		NumLevels:           5,  // Default 5 decomposition levels (recommended)
 		AllowMCT:            true,
+		Rate:                0,
+		RateLevels:          levels,
 		ProgressionOrder:    0,  // LRCP
 		NumLayers:           1,  // Single layer by default
 		TargetRatio:         0,  // No target ratio
@@ -68,6 +82,10 @@ func (p *JPEG2000LosslessParameters) GetParameter(name string) interface{} {
 		return p.NumLevels
 	case "allowMCT":
 		return p.AllowMCT
+	case "rate":
+		return p.Rate
+	case "rateLevels":
+		return p.RateLevels
 	case "progressionOrder":
 		return p.ProgressionOrder
 	case "numLayers":
@@ -94,6 +112,14 @@ func (p *JPEG2000LosslessParameters) SetParameter(name string, value interface{}
 	case "allowMCT":
 		if v, ok := value.(bool); ok {
 			p.AllowMCT = v
+		}
+	case "rate":
+		if v, ok := value.(int); ok {
+			p.Rate = v
+		}
+	case "rateLevels":
+		if v, ok := value.([]int); ok {
+			p.RateLevels = v
 		}
 	case "progressionOrder":
 		switch v := value.(type) {
@@ -140,6 +166,13 @@ func (p *JPEG2000LosslessParameters) Validate() error {
 	if p.NumLayers < 1 {
 		p.NumLayers = 1
 	}
+	if p.Rate < 0 {
+		p.Rate = 0
+	}
+	if p.Rate > 0 && len(p.RateLevels) == 0 {
+		p.RateLevels = make([]int, len(defaultRateLevels))
+		copy(p.RateLevels, defaultRateLevels)
+	}
 	if p.ProgressionOrder > 4 {
 		p.ProgressionOrder = 0
 	}
@@ -162,6 +195,18 @@ func (p *JPEG2000LosslessParameters) WithNumLevels(numLevels int) *JPEG2000Lossl
 // WithAllowMCT toggles default MCT (RCT/ICT or custom matrix application)
 func (p *JPEG2000LosslessParameters) WithAllowMCT(allow bool) *JPEG2000LosslessParameters {
 	p.AllowMCT = allow
+	return p
+}
+
+// WithRate sets fo-dicom/OpenJPEG style rate and returns the parameters for chaining.
+func (p *JPEG2000LosslessParameters) WithRate(rate int) *JPEG2000LosslessParameters {
+	p.Rate = rate
+	return p
+}
+
+// WithRateLevels sets fo-dicom/OpenJPEG style rate levels and returns the parameters for chaining.
+func (p *JPEG2000LosslessParameters) WithRateLevels(levels []int) *JPEG2000LosslessParameters {
+	p.RateLevels = levels
 	return p
 }
 
