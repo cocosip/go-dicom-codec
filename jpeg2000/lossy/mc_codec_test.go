@@ -27,10 +27,10 @@ func TestLossyCodecWithMCTBindingsWritesMarkers(t *testing.T) {
     pdOut := codecHelpers.NewTestPixelData(frameInfo)
 
     params := NewLossyParameters()
-    params.Quality = 90
+    params.Rate = 90
     b := jpeg2000.MCTBindingParams{ AssocType: 1, ComponentIDs: []uint16{0,1,2}, Matrix: [][]float64{{1,0,0},{0,1,0},{0,0,1}}, Inverse: [][]float64{{1,0,0},{0,1,0},{0,0,1}}, ElementType: 1, MCOPrecision: 0 }
     params.SetParameter("mctBindings", []jpeg2000.MCTBindingParams{b})
-    c := NewCodec(90)
+    c := NewCodecWithRate(90)
     if err := c.Encode(pdIn, pdOut, params); err != nil { t.Fatalf("encode failed: %v", err) }
 
     encodedData, _ := pdOut.GetFrame(0)

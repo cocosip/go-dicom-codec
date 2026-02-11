@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // ExampleCodec_Encode demonstrates basic lossy encoding
@@ -34,8 +34,8 @@ func ExampleCodec_Encode() {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	// Create codec with default quality (80)
-	c := lossy.NewCodec(80)
+	// Create codec with default rate (80)
+	c := lossy.NewCodecWithRate(80)
 
 	// Encode
 	dst := codecHelpers.NewTestPixelData(frameInfo)
@@ -51,8 +51,8 @@ func ExampleCodec_Encode() {
 	fmt.Printf("Compression ratio: %.2f:1\n", float64(len(srcData))/float64(len(dstData)))
 }
 
-// ExampleCodec_Encode_withQualityParameter demonstrates encoding with custom quality
-func ExampleCodec_Encode_withQualityParameter() {
+// ExampleCodec_Encode_withRateParameter demonstrates encoding with custom rate
+func ExampleCodec_Encode_withRateParameter() {
 	// Create test image
 	width := uint16(64)
 	height := uint16(64)
@@ -76,17 +76,17 @@ func ExampleCodec_Encode_withQualityParameter() {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	// Test different quality levels
+	// Test different rate levels
 	qualities := []int{100, 80, 50}
 
-	for _, quality := range qualities {
-		// Create codec with specific quality
-		c := lossy.NewCodec(quality)
+	for _, rate := range qualities {
+		// Create codec with specific rate
+		c := lossy.NewCodecWithRate(rate)
 
-		// Alternatively, you can override quality via parameters:
-		// c := lossy.NewCodec(80) // default
+		// Alternatively, you can override rate via parameters:
+		// c := lossy.NewCodecWithRate(80) // default
 		// params := codec.NewParameters()
-		// params.SetParameter("quality", quality)
+		// params.SetParameter("rate", rate)
 		// err := c.Encode(src, dst, params)
 
 		dst := codecHelpers.NewTestPixelData(frameInfo)
@@ -118,14 +118,14 @@ func ExampleCodec_Encode_withQualityParameter() {
 
 		dstData, _ := dst.GetFrame(0)
 		compressionRatio := float64(len(srcData)) / float64(len(dstData))
-		fmt.Printf("Quality %d: Compression %.2f:1, Max error: %d\n",
-			quality, compressionRatio, maxError)
+		fmt.Printf("Rate %d: Compression %.2f:1, Max error: %d\n",
+			rate, compressionRatio, maxError)
 	}
 
 	// Expected approximate results (may vary slightly):
-	// Quality 100: Compression ~3:1, Max error: ≤1
-	// Quality 80: Compression ~3-4:1, Max error: ≤3
-	// Quality 50: Compression ~5-6:1, Max error: ~12-15
+	// Rate 100: Compression ~3:1, Max error: ≤1
+	// Rate 80: Compression ~3-4:1, Max error: ≤3
+	// Rate 50: Compression ~5-6:1, Max error: ~12-15
 }
 
 // ExampleCodec_Decode demonstrates basic lossy decoding
@@ -155,7 +155,7 @@ func ExampleCodec_Decode() {
 	src.AddFrame(pixelData)
 
 	// Encode
-	c := lossy.NewCodec(80)
+	c := lossy.NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	_ = c.Encode(src, encoded, nil)
 

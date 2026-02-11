@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"math/rand"
+
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
@@ -53,12 +54,12 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 
 	// Create parameters with 5 quality layers
 	params := lossy.NewLossyParameters().
-		WithQuality(85).
+		WithRate(85).
 		WithNumLayers(5). // 5 progressive quality layers
 		WithNumLevels(5)
 
 	// Encode
-	encoder := lossy.NewCodec(85)
+	encoder := lossy.NewCodecWithRate(85)
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
@@ -74,7 +75,7 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 
 	fmt.Printf("   Image size: %dx%d\n", width, height)
 	fmt.Printf("   Number of layers: %d\n", params.NumLayers)
-	fmt.Printf("   Quality: %d\n", params.Quality)
+	fmt.Printf("   Quality: %d\n", params.Rate)
 	fmt.Printf("   Compressed size: %d bytes\n", len(dstData))
 	fmt.Printf("   Compression ratio: %.2fx\n", ratio)
 	fmt.Println()
@@ -121,7 +122,7 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 		WithNumLevels(5)
 
 	// Encode
-	encoder := lossy.NewCodec(80)
+	encoder := lossy.NewCodecWithRate(80)
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
@@ -169,11 +170,11 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 
 	// Encode with 5 layers
 	params := lossy.NewLossyParameters().
-		WithQuality(85).
+		WithRate(85).
 		WithNumLayers(5).
 		WithNumLevels(5)
 
-	encoder := lossy.NewCodec(85)
+	encoder := lossy.NewCodecWithRate(85)
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := encoder.Encode(src, dst, params)
@@ -192,11 +193,11 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 	dstData, _ := dst.GetFrame(0)
 	totalBytes := len(dstData)
 	layerSizes := []int{
-		totalBytes / 10,      // Layer 0: ~10% (fast preview)
-		totalBytes * 3 / 10,  // Layer 1: ~30% cumulative
-		totalBytes * 5 / 10,  // Layer 2: ~50% cumulative
-		totalBytes * 8 / 10,  // Layer 3: ~80% cumulative
-		totalBytes,           // Layer 4: 100% (full quality)
+		totalBytes / 10,     // Layer 0: ~10% (fast preview)
+		totalBytes * 3 / 10, // Layer 1: ~30% cumulative
+		totalBytes * 5 / 10, // Layer 2: ~50% cumulative
+		totalBytes * 8 / 10, // Layer 3: ~80% cumulative
+		totalBytes,          // Layer 4: 100% (full quality)
 	}
 
 	for i, bytes := range layerSizes {

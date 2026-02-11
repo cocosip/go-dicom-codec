@@ -12,41 +12,48 @@ import (
 
 var _ codec.Codec = (*Codec)(nil)
 
-const defaultQuality = 35
+const defaultRate = 20
 
 // Codec implements the JPEG 2000 Lossy codec
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.91
 type Codec struct {
 	transferSyntax *transfer.Syntax
-	quality        int // Default quality (1-100), aligned to fo-dicom/OpenJPEG defaults
+	defaultRate    int
 }
 
-// NewCodec creates a new JPEG 2000 Lossy codec
-// quality: 1-100, where 100 is near-lossless (default: 35, approx fo-dicom Rate=20)
-func NewCodec(quality int) *Codec {
-	return NewCodecWithTransferSyntax(transfer.JPEG2000, quality)
+// NewCodec creates a new JPEG 2000 Lossy codec with fo-dicom-aligned defaults.
+func NewCodec() *Codec {
+	return NewCodecWithRate(defaultRate)
+}
+
+// NewCodecWithRate creates a new JPEG 2000 Lossy codec with custom default rate.
+func NewCodecWithRate(rate ...int) *Codec {
+	r := defaultRate
+	if len(rate) > 0 {
+		r = rate[0]
+	}
+	return NewCodecWithTransferSyntax(transfer.JPEG2000, r)
 }
 
 // NewCodecWithTransferSyntax allows constructing the codec for alternate JPEG 2000 transfer syntaxes.
-func NewCodecWithTransferSyntax(ts *transfer.Syntax, quality int) *Codec {
-	if quality < 1 || quality > 100 {
-		quality = defaultQuality // default (approx fo-dicom/OpenJPEG Rate=20)
+func NewCodecWithTransferSyntax(ts *transfer.Syntax, rate int) *Codec {
+	if rate <= 0 {
+		rate = defaultRate
 	}
 	return &Codec{
-		transferSyntax: ts, // Lossy or Lossless
-		quality:        quality,
+		transferSyntax: ts,
+		defaultRate:    rate,
 	}
 }
 
-// NewPart2MultiComponentCodec creates a JPEG 2000 Part 2 Multi-component codec (UID .93)
-// quality: 1-100 (default 35 if out of range)
-func NewPart2MultiComponentCodec(quality int) *Codec {
-	return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, quality)
+// NewPart2MultiComponentCodec creates a JPEG 2000 Part 2 Multi-component codec (UID .93).
+func NewPart2MultiComponentCodec() *Codec {
+	return NewCodecWithTransferSyntax(transfer.JPEG2000Part2MultiComponent, defaultRate)
 }
 
 // Name returns the codec name
 func (c *Codec) Name() string {
-	return fmt.Sprintf("JPEG 2000 Lossy (Quality %d)", c.quality)
+	return fmt.Sprintf("JPEG 2000 Lossy (Rate %d)", c.defaultRate)
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
@@ -80,14 +87,24 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 		} else {
 			// Fallback: create from generic parameters
 			lossyParams = NewLossyParameters()
-			if q := parameters.GetParameter("quality"); q != nil {
-				if qInt, ok := q.(int); ok && qInt >= 1 && qInt <= 100 {
-					lossyParams.Quality = qInt
-				}
-			}
 			if nl := parameters.GetParameter("numLevels"); nl != nil {
 				if nlInt, ok := nl.(int); ok && nlInt >= 0 && nlInt <= 6 {
 					lossyParams.NumLevels = nlInt
+				}
+			}
+			if irr := parameters.GetParameter("irreversible"); irr != nil {
+				if irrBool, ok := irr.(bool); ok {
+					lossyParams.Irreversible = irrBool
+				}
+			}
+			if mct := parameters.GetParameter("allowMCT"); mct != nil {
+				if mctBool, ok := mct.(bool); ok {
+					lossyParams.AllowMCT = mctBool
+				}
+			}
+			if vb := parameters.GetParameter("isVerbose"); vb != nil {
+				if vbBool, ok := vb.(bool); ok {
+					lossyParams.IsVerbose = vbBool
 				}
 			}
 			if r := parameters.GetParameter("rate"); r != nil {
@@ -104,7 +121,7 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	} else {
 		// Use codec defaults
 		lossyParams = NewLossyParameters()
-		lossyParams.Quality = c.quality
+		lossyParams.Rate = c.defaultRate
 	}
 
 	// Validate parameters
@@ -192,14 +209,14 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 // RegisterJPEG2000LossyCodec registers the JPEG 2000 Lossy codec with the global registry
 func RegisterJPEG2000LossyCodec() {
 	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewCodec(defaultQuality) // Default quality: 35 (approx fo-dicom/OpenJPEG Rate=20)
+	j2kCodec := NewCodec()
 	registry.RegisterCodec(transfer.JPEG2000, j2kCodec)
 }
 
 // RegisterJPEG2000MultiComponentCodec registers JPEG 2000 Part 2 multi-component codec.
 func RegisterJPEG2000MultiComponentCodec() {
 	registry := codec.GetGlobalRegistry()
-	j2kCodec := NewPart2MultiComponentCodec(defaultQuality)
+	j2kCodec := NewPart2MultiComponentCodec()
 	registry.RegisterCodec(transfer.JPEG2000Part2MultiComponent, j2kCodec)
 }
 
@@ -211,11 +228,17 @@ func init() {
 // encodeFrameOnce performs a single encode using the provided parameters for a single frame.
 func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	encParams := *baseEncParams
-	encParams.Lossless = false
+	targetRatio := p.TargetRatio
+	if targetRatio <= 0 && p.Rate > 0 {
+		targetRatio = rateToTargetRatio(p.Rate, int(frameInfo.BitsStored), int(frameInfo.BitsAllocated))
+	}
+
+	encParams.Lossless = !p.Irreversible
 	encParams.NumLevels = clampNumLevels(p.NumLevels, int(frameInfo.Width), int(frameInfo.Height))
 	encParams.NumLayers = p.NumLayers
-	encParams.Quality = effectiveQuality(p)
-	if int(frameInfo.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
+	encParams.EnableMCT = p.AllowMCT
+	encParams.Quality = effectiveQuality(targetRatio, p.QuantStepScale)
+	if !encParams.Lossless && int(frameInfo.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
 		bump := 10
 		q := encParams.Quality + bump
 		if q > 100 {
@@ -234,23 +257,18 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInf
 			encParams.NumLevels = 1
 		}
 	}
-	if encParams.Lossless == false && minDim <= 48 {
+	if !encParams.Lossless && minDim <= 48 {
 		if encParams.NumLevels > 1 {
 			encParams.NumLevels = 1
 		}
 		if encParams.NumLayers > 2 {
 			encParams.NumLayers = 2
 		}
-		q := encParams.Quality
-		if q < 92 {
+		if encParams.Quality < 92 {
 			encParams.Quality = 92
 		}
 	}
-	targetRatio := p.TargetRatio
-	if targetRatio <= 0 && p.Rate > 0 && p.Quality == defaultQuality {
-		targetRatio = rateToTargetRatio(p.Rate, int(frameInfo.BitsStored), int(frameInfo.BitsAllocated))
-	}
-	if targetRatio > 0 {
+	if targetRatio > 0 && !encParams.Lossless {
 		encParams.TargetRatio = targetRatio
 		encParams.UsePCRDOpt = true
 		if encParams.NumLayers <= 1 {
@@ -352,19 +370,17 @@ func clampNumLevels(requested, width, height int) int {
 	return requested
 }
 
-// effectiveQuality derives the final quality value after considering target ratio and quantization scaling.
-func effectiveQuality(p *JPEG2000LossyParameters) int {
-	q := p.Quality
-
-	// If a target ratio is provided, estimate a quality value from it.
-	if p.TargetRatio > 0 {
-		q = qualityFromRatio(p.TargetRatio)
+// effectiveQuality derives the quantization quality baseline from target ratio
+// and quantization step scaling.
+func effectiveQuality(targetRatio, quantStepScale float64) int {
+	q := 80
+	if targetRatio > 0 {
+		q = qualityFromRatio(targetRatio)
 	}
 
-	// Apply quantization step scaling by adjusting quality in log2 domain.
-	if p.QuantStepScale > 0 && p.QuantStepScale != 1.0 {
+	if quantStepScale > 0 && quantStepScale != 1.0 {
 		// baseStep = 2^((100-quality)/12.5); scaling step by S is equivalent to reducing quality by 12.5*log2(S).
-		adjust := int(math.Round(12.5 * math.Log2(p.QuantStepScale)))
+		adjust := int(math.Round(12.5 * math.Log2(quantStepScale)))
 		q = clampQuality(q - adjust)
 	}
 

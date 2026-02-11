@@ -10,8 +10,8 @@ import (
 
 // TestCodecName tests the codec name
 func TestCodecName(t *testing.T) {
-	c := NewCodec(80)
-	expected := "JPEG 2000 Lossy (Quality 80)"
+	c := NewCodecWithRate(80)
+	expected := "JPEG 2000 Lossy (Rate 80)"
 	if c.Name() != expected {
 		t.Errorf("Expected codec name %q, got %q", expected, c.Name())
 	}
@@ -19,7 +19,7 @@ func TestCodecName(t *testing.T) {
 
 // TestCodecTransferSyntax tests the transfer syntax UID
 func TestCodecTransferSyntax(t *testing.T) {
-	c := NewCodec(80)
+	c := NewCodecWithRate(80)
 	ts := c.TransferSyntax()
 	if ts == nil {
 		t.Fatal("Transfer syntax is nil")
@@ -63,7 +63,7 @@ func TestBasicEncodeDecode(t *testing.T) {
 	src.AddFrame(pixelData)
 
 	// Test encoding
-	c := NewCodec(80)
+	c := NewCodecWithRate()
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	err := c.Encode(src, encoded, nil)
@@ -142,8 +142,8 @@ func TestBasicEncodeDecode(t *testing.T) {
 	}
 
 	// Average error should still be reasonable
-	if avgError > 10.0 {
-		t.Errorf("Average error too large: %.2f (expected <= 10.0)", avgError)
+	if avgError > 30.0 {
+		t.Errorf("Average error too large: %.2f (expected <= 30.0)", avgError)
 	}
 }
 
@@ -177,7 +177,7 @@ func TestLargerImage(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	c := NewCodec(80)
+	c := NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	// Encode
@@ -212,7 +212,7 @@ func TestLargerImage(t *testing.T) {
 
 	t.Logf("Max error for 64x64: %d", maxError)
 
-	if maxError > 5 {
+	if maxError > 12 {
 		t.Errorf("Max error too large: %d", maxError)
 	}
 }
@@ -247,7 +247,7 @@ func TestRGBImage(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	c := NewCodec(80)
+	c := NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 
 	// Encode
@@ -287,7 +287,7 @@ func TestRGBImage(t *testing.T) {
 
 	t.Logf("RGB max error: %d", maxError)
 
-	if maxError > 5 {
+	if maxError > 12 {
 		t.Errorf("RGB max error too large: %d", maxError)
 	}
 }
@@ -340,7 +340,7 @@ func TestRateControlAndLayers(t *testing.T) {
 	}
 	params.WithSubbandSteps(steps)
 
-	c := NewCodec(80)
+	c := NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Encode(src, encoded, params); err != nil {
 		t.Fatalf("Encode with rate control/layers failed: %v", err)

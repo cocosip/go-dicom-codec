@@ -11,23 +11,23 @@ import (
 )
 
 func main() {
-    fmt.Println("=== JPEG 2000 Part 2 Multi-component Example ===")
+	fmt.Println("=== JPEG 2000 Part 2 Multi-component Example ===")
 
-    // Build a binding: components {0,1}, identity matrix, offsets {+5,-5}
-    b := j2k.NewMCTBinding().
-        Assoc(2). // Matrix then Offset
-        Components([]uint16{0, 1}).
-        Matrix([][]float64{{1, 0}, {0, 1}}).
-        Inverse([][]float64{{1, 0}, {0, 1}}).
-        Offsets([]int32{5, -5}).
-        ElementType(1). // float32
-        MCOPrecision(1). // reversible flag
-        Build()
+	// Build a binding: components {0,1}, identity matrix, offsets {+5,-5}
+	b := j2k.NewMCTBinding().
+		Assoc(2). // Matrix then Offset
+		Components([]uint16{0, 1}).
+		Matrix([][]float64{{1, 0}, {0, 1}}).
+		Inverse([][]float64{{1, 0}, {0, 1}}).
+		Offsets([]int32{5, -5}).
+		ElementType(1).  // float32
+		MCOPrecision(1). // reversible flag
+		Build()
 
 	// Lossy path
 	{
-		p := lossy.NewLossyParameters().WithQuality(90).WithMCTBindings([]j2k.MCTBindingParams{b})
-		enc := lossy.NewCodec(90)
+		p := lossy.NewLossyParameters().WithRate(90).WithMCTBindings([]j2k.MCTBindingParams{b})
+		enc := lossy.NewCodecWithRate(90)
 
 		// Prepare dummy PixelData (RGB 8x8)
 		w, h, comps := 8, 8, 3
@@ -84,4 +84,3 @@ func main() {
 		fmt.Println("Lossless encode with Part 2 bindings completed (markers written)")
 	}
 }
-

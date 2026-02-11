@@ -34,8 +34,8 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 	src.AddFrame(pixelData)
 
 	// Test with type-safe parameters
-	c := NewCodec(80)
-	params := NewLossyParameters().WithQuality(95).WithNumLevels(5)
+	c := NewCodecWithRate(80)
+	params := NewLossyParameters().WithRate(95).WithNumLevels(5)
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, encoded, params)
@@ -50,7 +50,7 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 	}
 
 	t.Logf("Encoded size: %d bytes", len(encodedData))
-	t.Logf("Quality used: %d", params.Quality)
+	t.Logf("Rate used: %d", params.Rate)
 	t.Logf("Levels used: %d", params.NumLevels)
 
 	// Decode
@@ -88,11 +88,11 @@ func TestBackwardCompatibility(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	c := NewCodec(80)
+	c := NewCodecWithRate(80)
 
 	// Use string-based parameters (old way)
 	params := NewLossyParameters()
-	params.SetParameter("quality", 90)
+	params.SetParameter("rate", 90)
 	params.SetParameter("numLevels", 3)
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -102,11 +102,11 @@ func TestBackwardCompatibility(t *testing.T) {
 	}
 
 	// Verify the parameters were actually used
-	usedQuality := params.GetParameter("quality").(int)
+	usedRate := params.GetParameter("rate").(int)
 	usedLevels := params.GetParameter("numLevels").(int)
 
-	if usedQuality != 90 {
-		t.Errorf("Quality = %d, want 90", usedQuality)
+	if usedRate != 90 {
+		t.Errorf("Rate = %d, want 90", usedRate)
 	}
 
 	if usedLevels != 3 {
@@ -119,12 +119,12 @@ func TestParametersMixedUsage(t *testing.T) {
 	params := NewLossyParameters()
 
 	// Set via direct access
-	params.Quality = 85
+	params.Rate = 85
 
 	// Read via GetParameter
-	quality := params.GetParameter("quality")
-	if quality != 85 {
-		t.Errorf("GetParameter(quality) = %v, want 85", quality)
+	rate := params.GetParameter("rate")
+	if rate != 85 {
+		t.Errorf("GetParameter(rate) = %v, want 85", rate)
 	}
 
 	// Set via SetParameter
@@ -144,19 +144,19 @@ func TestGenericParametersInterface(t *testing.T) {
 	genericParams = NewLossyParameters()
 
 	// Can use generic methods
-	genericParams.SetParameter("quality", 95)
-	quality := genericParams.GetParameter("quality")
+	genericParams.SetParameter("rate", 95)
+	rate := genericParams.GetParameter("rate")
 
-	if quality != 95 {
-		t.Errorf("Generic quality = %v, want 95", quality)
+	if rate != 95 {
+		t.Errorf("Generic rate = %v, want 95", rate)
 	}
 
 	// Can type assert back
 	if typedParams, ok := genericParams.(*JPEG2000LossyParameters); ok {
 		// Can use typed features
-		typedParams.WithQuality(90)
-		if typedParams.Quality != 90 {
-			t.Errorf("Typed quality = %d, want 90", typedParams.Quality)
+		typedParams.WithRate(90)
+		if typedParams.Rate != 90 {
+			t.Errorf("Typed rate = %d, want 90", typedParams.Rate)
 		}
 	} else {
 		t.Fatal("Failed to type assert to *JPEG2000LossyParameters")
@@ -184,7 +184,7 @@ func TestNilParameters(t *testing.T) {
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	src.AddFrame(pixelData)
 
-	c := NewCodec(85) // Codec default quality
+	c := NewCodecWithRate(85) // Codec default rate
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, encoded, nil) // nil parameters
@@ -192,7 +192,7 @@ func TestNilParameters(t *testing.T) {
 		t.Fatalf("Encode with nil parameters failed: %v", err)
 	}
 
-	// Should use codec's default quality (85)
+	// Should use codec's default rate (85)
 	encodedData, _ := encoded.GetFrame(0)
 	if len(encodedData) == 0 {
 		t.Fatal("Encoded data is empty")
@@ -204,9 +204,9 @@ func BenchmarkTypeSafeVsStringBased(b *testing.B) {
 	b.Run("TypeSafe", func(b *testing.B) {
 		params := NewLossyParameters()
 		for i := 0; i < b.N; i++ {
-			params.Quality = 95
+			params.Rate = 95
 			params.NumLevels = 5
-			_ = params.Quality
+			_ = params.Rate
 			_ = params.NumLevels
 		}
 	})
@@ -214,9 +214,9 @@ func BenchmarkTypeSafeVsStringBased(b *testing.B) {
 	b.Run("StringBased", func(b *testing.B) {
 		params := NewLossyParameters()
 		for i := 0; i < b.N; i++ {
-			params.SetParameter("quality", 95)
+			params.SetParameter("rate", 95)
 			params.SetParameter("numLevels", 5)
-			_ = params.GetParameter("quality")
+			_ = params.GetParameter("rate")
 			_ = params.GetParameter("numLevels")
 		}
 	})

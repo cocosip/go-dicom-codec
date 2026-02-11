@@ -111,11 +111,11 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 	for _, quality := range qualities {
 		// Create parameters
 		params := lossy.NewLossyParameters().
-			WithQuality(quality).
+			WithRate(quality).
 			WithNumLevels(5)
 
 		// Create codec and encode
-		encoder := lossy.NewCodec(quality)
+		encoder := lossy.NewCodecWithRate(quality)
 		dst := codecHelpers.NewTestPixelData(frameInfo)
 
 		err := encoder.Encode(src, dst, params)
@@ -170,7 +170,7 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 			WithNumLevels(5)
 
 		// Create codec
-		encoder := lossy.NewCodec(80) // Default quality
+		encoder := lossy.NewCodecWithRate(80) // Default quality
 		dst := codecHelpers.NewTestPixelData(frameInfo)
 
 		err := encoder.Encode(src, dst, params)
