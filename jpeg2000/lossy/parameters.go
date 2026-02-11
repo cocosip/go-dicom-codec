@@ -14,8 +14,8 @@ type JPEG2000LossyParameters struct {
 	// true = irreversible 9/7 (lossy), false = reversible 5/3.
 	Irreversible bool
 
-	// Rate is the fo-dicom/OpenJPEG style target rate parameter (higher means better quality).
-	// Effective target ratio ~= Rate * BitsStored / BitsAllocated. Default: 20.
+	// Rate is a quality-like setting (1-100, higher = better quality). Default: 20.
+	// When TargetRatio > 0, PCRD rate control is used; Rate sets the base quantization quality.
 	Rate int
 
 	// RateLevels is the fo-dicom/OpenJPEG layer ladder used with Rate.

@@ -229,15 +229,18 @@ func init() {
 func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	encParams := *baseEncParams
 	targetRatio := p.TargetRatio
-	if targetRatio <= 0 && p.Rate > 0 {
-		targetRatio = rateToTargetRatio(p.Rate, int(frameInfo.BitsStored), int(frameInfo.BitsAllocated))
+	baseQuality := 80
+	if p.Rate > 0 {
+		baseQuality = clampQuality(p.Rate)
+	} else if targetRatio > 0 {
+		baseQuality = qualityFromRatio(targetRatio)
 	}
 
 	encParams.Lossless = !p.Irreversible
 	encParams.NumLevels = clampNumLevels(p.NumLevels, int(frameInfo.Width), int(frameInfo.Height))
 	encParams.NumLayers = p.NumLayers
 	encParams.EnableMCT = p.AllowMCT
-	encParams.Quality = effectiveQuality(targetRatio, p.QuantStepScale)
+	encParams.Quality = effectiveQuality(baseQuality, p.QuantStepScale)
 	if !encParams.Lossless && int(frameInfo.SamplesPerPixel) >= 3 && encParams.Quality < 100 {
 		bump := 10
 		q := encParams.Quality + bump
@@ -370,13 +373,10 @@ func clampNumLevels(requested, width, height int) int {
 	return requested
 }
 
-// effectiveQuality derives the quantization quality baseline from target ratio
+// effectiveQuality derives the quantization quality baseline from a base quality
 // and quantization step scaling.
-func effectiveQuality(targetRatio, quantStepScale float64) int {
-	q := 80
-	if targetRatio > 0 {
-		q = qualityFromRatio(targetRatio)
-	}
+func effectiveQuality(baseQuality int, quantStepScale float64) int {
+	q := clampQuality(baseQuality)
 
 	if quantStepScale > 0 && quantStepScale != 1.0 {
 		// baseStep = 2^((100-quality)/12.5); scaling step by S is equivalent to reducing quality by 12.5*log2(S).

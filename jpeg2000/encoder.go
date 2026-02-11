@@ -1918,7 +1918,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 			wavelet.ForwardMultilevel97WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
 
 			// Apply quantization per subband using float coefficients
-			transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, quantParams.StepSizes)
+			transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, x0, y0, quantParams.StepSizes)
 		}
 		return transformed, nil
 	}
@@ -1928,7 +1928,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 // coeffs: wavelet coefficients in subband layout (float domain)
 // width, height: dimensions of the full image
 // stepSizes: quantization step sizes for each subband (LL, HL1, LH1, HH1, HL2, ...)
-func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, height int, stepSizes []float64) []int32 {
+func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, height, x0, y0 int, stepSizes []float64) []int32 {
 	if len(stepSizes) == 0 || e.params.NumLevels == 0 {
 		// No quantization
 		out := make([]int32, len(coeffs))
@@ -1940,46 +1940,28 @@ func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, heigh
 
 	quantized := make([]int32, len(coeffs))
 
-	// Calculate subband dimensions for each level
-	// After multilevel DWT, subbands are arranged as:
-	// [LL_n] [HL_n] [LH_n] [HH_n] ... [HL_1] [LH_1] [HH_1]
-	// where n = numLevels
-
-	currentWidth := width
-	currentHeight := height
 	numLevels := e.params.NumLevels
-
-	// Track which subband we're processing
 	subbandIdx := 0
 
-	// Process from coarsest to finest level
-	for level := numLevels; level >= 1; level-- {
-		// Calculate dimensions at this level
-		levelWidth := (currentWidth + (1 << level) - 1) >> level
-		levelHeight := (currentHeight + (1 << level) - 1) >> level
+	// LL subband (resolution 0)
+	_, _, _, _, bands := bandInfosForResolution(width, height, x0, y0, numLevels, 0)
+	if len(bands) > 0 && subbandIdx < len(stepSizes) {
+		b := bands[0]
+		if b.width > 0 && b.height > 0 {
+			e.quantizeSubbandFloat(coeffs, quantized, b.offsetX, b.offsetY, b.width, b.height, width, stepSizes[subbandIdx])
+		}
+	}
+	subbandIdx++
 
-		// At the coarsest level, we also have LL subband
-		if level == numLevels {
-			// LL subband (low-pass both directions)
-			stepSize := stepSizes[subbandIdx]
-			e.quantizeSubbandFloat(coeffs, quantized, 0, 0, levelWidth, levelHeight, currentWidth, stepSize)
+	// HL/LH/HH subbands from low to high resolution
+	for res := 1; res <= numLevels; res++ {
+		_, _, _, _, bands = bandInfosForResolution(width, height, x0, y0, numLevels, res)
+		for _, b := range bands {
+			if subbandIdx < len(stepSizes) && b.width > 0 && b.height > 0 {
+				e.quantizeSubbandFloat(coeffs, quantized, b.offsetX, b.offsetY, b.width, b.height, width, stepSizes[subbandIdx])
+			}
 			subbandIdx++
 		}
-
-		// HL subband (high-pass horizontal, low-pass vertical)
-		stepSize := stepSizes[subbandIdx]
-		e.quantizeSubbandFloat(coeffs, quantized, levelWidth, 0, levelWidth, levelHeight, currentWidth, stepSize)
-		subbandIdx++
-
-		// LH subband (low-pass horizontal, high-pass vertical)
-		stepSize = stepSizes[subbandIdx]
-		e.quantizeSubbandFloat(coeffs, quantized, 0, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
-		subbandIdx++
-
-		// HH subband (high-pass both directions)
-		stepSize = stepSizes[subbandIdx]
-		e.quantizeSubbandFloat(coeffs, quantized, levelWidth, levelHeight, levelWidth, levelHeight, currentWidth, stepSize)
-		subbandIdx++
 	}
 
 	return quantized
@@ -2005,6 +1987,71 @@ func (e *Encoder) quantizeSubbandFloat(coeffs []float64, out []int32, x0, y0, w,
 			}
 		}
 	}
+}
+
+type bandInfo struct {
+	band             int
+	width, height    int
+	offsetX, offsetY int
+}
+
+func splitLengths(n int, even bool) (low, high int) {
+	if even {
+		low = (n + 1) / 2
+	} else {
+		low = n / 2
+	}
+	high = n - low
+	return
+}
+
+func isEven(value int) bool {
+	return value&1 == 0
+}
+
+func nextCoord(value int) int {
+	return (value + 1) >> 1
+}
+
+func resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res int) (resW, resH, resX0, resY0 int) {
+	levelNo := numLevels - res
+	if levelNo < 0 {
+		levelNo = 0
+	}
+	resW = width
+	resH = height
+	resX0 = x0
+	resY0 = y0
+	for i := 0; i < levelNo; i++ {
+		lowW, _ := splitLengths(resW, isEven(resX0))
+		lowH, _ := splitLengths(resH, isEven(resY0))
+		resW = lowW
+		resH = lowH
+		resX0 = nextCoord(resX0)
+		resY0 = nextCoord(resY0)
+	}
+	return
+}
+
+func bandInfosForResolution(width, height, x0, y0, numLevels, res int) (resW, resH, resX0, resY0 int, bands []bandInfo) {
+	resW, resH, resX0, resY0 = resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res)
+	if res == 0 {
+		bands = []bandInfo{{
+			band:   0,
+			width:  resW,
+			height: resH,
+		}}
+		return
+	}
+	lowW, lowH, _, _ := resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res-1)
+	highW := resW - lowW
+	highH := resH - lowH
+	bands = []bandInfo{
+		{band: 1, width: highW, height: lowH, offsetX: lowW, offsetY: 0},
+		{band: 2, width: lowW, height: highH, offsetX: 0, offsetY: lowH},
+		{band: 3, width: highW, height: highH, offsetX: lowW, offsetY: lowH},
+	}
+	return
 }
 
 func (e *Encoder) buildTilePacketEncoder(tileData [][]int32, width, height int) (*t2.PacketEncoder, []*t2.PrecinctCodeBlock) {
