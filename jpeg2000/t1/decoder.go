@@ -431,6 +431,9 @@ func (t1 *T1Decoder) decodeSigPropPass(raw bool) error {
 					bit = t1.mqc.Decode(int(ctx))
 				}
 
+				// Mark as visited in SPP regardless of significance result (OpenJPEG PI flag behavior).
+				t1.flags[idx] |= T1_VISIT
+
 				if bit != 0 {
 					// Coefficient becomes significant
 					// Decode sign bit
@@ -457,8 +460,8 @@ func (t1 *T1Decoder) decodeSigPropPass(raw bool) error {
 						t1.data[idx] = val
 					}
 
-					// Mark as significant
-					t1.flags[idx] |= T1_SIG | T1_VISIT
+					// Mark as significant (VISIT already set for this SPP sample).
+					t1.flags[idx] |= T1_SIG
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(x, y, idx)
@@ -506,8 +509,8 @@ func (t1 *T1Decoder) decodeMagRefPass(raw bool) error {
 					}
 				}
 
-				// Mark as refined and visited (so CP won't refine again)
-				t1.flags[idx] |= T1_REFINE | T1_VISIT
+				// Mark as refined (OpenJPEG MU flag behavior).
+				t1.flags[idx] |= T1_REFINE
 			}
 		}
 	}
@@ -570,6 +573,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 						flags := t1.flags[idx]
 
 						if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
+							t1.flags[idx] &^= T1_VISIT
 							continue
 						}
 
@@ -600,12 +604,15 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 								t1.data[idx] = val
 							}
 
-							// Mark as significant
-							t1.flags[idx] |= T1_SIG | T1_VISIT
+							// Mark as significant. Cleanup pass does not keep PI/VISIT set.
+							t1.flags[idx] |= T1_SIG
 
 							// Update neighbor flags
 							t1.updateNeighborFlags(i, y, idx)
 						}
+
+						// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
+						t1.flags[idx] &^= T1_VISIT
 					}
 
 					continue // RL decoding handled this column, move to next
@@ -619,6 +626,7 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 				flags := t1.flags[idx]
 
 				if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
+					t1.flags[idx] &^= T1_VISIT
 					continue
 				}
 
@@ -644,12 +652,15 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 						t1.data[idx] = val
 					}
 
-					// Mark as significant
-					t1.flags[idx] |= T1_SIG | T1_VISIT
+					// Mark as significant. Cleanup pass does not keep PI/VISIT set.
+					t1.flags[idx] |= T1_SIG
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(i, y, idx)
 				}
+
+				// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
+				t1.flags[idx] &^= T1_VISIT
 			}
 		}
 	}

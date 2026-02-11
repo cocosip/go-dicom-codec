@@ -38,6 +38,12 @@ type T1Encoder struct {
 	termall      bool // Terminate all passes
 	segmentation bool // Use segmentation symbols
 
+	// Optional per-event tracer used for block-level debugging.
+	eventTracer     EventTracer
+	traceBlockLabel string
+	tracePassIndex  int
+	tracePassType   int
+	traceRaw        bool
 }
 
 func isLazyRawPass(bitplane int, maxBitplane int, passType int, cblkstyle int) bool {
@@ -163,6 +169,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 		}
 
 		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
+		t1.setTracePassState(passIdx, passType, raw)
 		if prevTerminated {
 			if raw {
 				t1.mqe.BypassInitEnc()
@@ -293,11 +300,15 @@ func (t1 *T1Encoder) encodeSigPropPass(raw bool) error {
 
 				// Encode significance bit
 				ctx := getZeroCodingContext(flags, t1.orientation)
+				t1.traceBitEvent("sig", x, y, dy, int(ctx), int(isSig))
 				if raw {
 					t1.mqe.BypassEncode(int(isSig))
 				} else {
 					t1.mqe.Encode(int(isSig), int(ctx))
 				}
+
+				// Mark as visited in SPP regardless of significance result (OpenJPEG PI flag behavior).
+				t1.flags[idx] |= T1_VISIT
 
 				if isSig != 0 {
 					// Coefficient becomes significant
@@ -309,15 +320,18 @@ func (t1 *T1Encoder) encodeSigPropPass(raw bool) error {
 					}
 
 					if raw {
+						t1.traceBitEvent("sign", x, y, dy, -1, signBit)
 						t1.mqe.BypassEncode(signBit)
 					} else {
 						signCtx := getSignCodingContext(flags)
 						signPred := getSignPrediction(flags)
-						t1.mqe.Encode(signBit^signPred, int(signCtx))
+						encodedSign := signBit ^ signPred
+						t1.traceBitEvent("sign", x, y, dy, int(signCtx), encodedSign)
+						t1.mqe.Encode(encodedSign, int(signCtx))
 					}
 
-					// Mark as significant and visited (prevent MRP from processing)
-					t1.flags[idx] |= T1_SIG | T1_VISIT
+					// Mark as significant (VISIT already set for this SPP sample).
+					t1.flags[idx] |= T1_SIG
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(x, y, idx)
@@ -357,14 +371,15 @@ func (t1 *T1Encoder) encodeMagRefPass(raw bool) error {
 
 				// Encode refinement bit
 				ctx := getMagRefinementContext(flags)
+				t1.traceBitEvent("ref", x, y, dy, int(ctx), int(refBit))
 				if raw {
 					t1.mqe.BypassEncode(int(refBit))
 				} else {
 					t1.mqe.Encode(int(refBit), int(ctx))
 				}
 
-				// Mark as refined and visited (so CP won't refine again)
-				t1.flags[idx] |= T1_REFINE | T1_VISIT
+				// Mark as refined (OpenJPEG MU flag behavior).
+				t1.flags[idx] |= T1_REFINE
 			}
 		}
 	}
@@ -423,6 +438,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					if rlSigPos >= 0 {
 						rlBit = 1
 					}
+					t1.traceBitEvent("rl", i, k, -1, CTX_RL, rlBit)
 					t1.mqe.Encode(rlBit, CTX_RL)
 
 					if rlBit == 0 {
@@ -430,8 +446,12 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					}
 
 					// Encode runlen index with uniform context
-					t1.mqe.Encode((rlSigPos>>1)&1, CTX_UNI)
-					t1.mqe.Encode(rlSigPos&1, CTX_UNI)
+					runlenMSB := (rlSigPos >> 1) & 1
+					runlenLSB := rlSigPos & 1
+					t1.traceBitEvent("runlen-msb", i, k, -1, CTX_UNI, runlenMSB)
+					t1.mqe.Encode(runlenMSB, CTX_UNI)
+					t1.traceBitEvent("runlen-lsb", i, k, -1, CTX_UNI, runlenLSB)
+					t1.mqe.Encode(runlenLSB, CTX_UNI)
 
 					// In RL path, the first sample at runlen is implicitly significant
 					partial := true
@@ -441,6 +461,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 						flags := t1.flags[idx]
 
 						if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
+							t1.flags[idx] &^= T1_VISIT
 							continue
 						}
 
@@ -457,6 +478,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 
 							// Encode significance bit
 							ctx := getZeroCodingContext(flags, t1.orientation)
+							t1.traceBitEvent("sig", i, y, dy, int(ctx), isSig)
 							t1.mqe.Encode(isSig, int(ctx))
 						}
 
@@ -469,14 +491,19 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 							}
 							signCtx := getSignCodingContext(flags)
 							signPred := getSignPrediction(flags)
-							t1.mqe.Encode(signBit^signPred, int(signCtx))
+							encodedSign := signBit ^ signPred
+							t1.traceBitEvent("sign", i, y, dy, int(signCtx), encodedSign)
+							t1.mqe.Encode(encodedSign, int(signCtx))
 
-							// Mark as significant
-							t1.flags[idx] |= T1_SIG | T1_VISIT
+							// Mark as significant. Cleanup pass does not keep PI/VISIT set.
+							t1.flags[idx] |= T1_SIG
 
 							// Update neighbor flags
 							t1.updateNeighborFlags(i, y, idx)
 						}
+
+						// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
+						t1.flags[idx] &^= T1_VISIT
 					}
 
 					continue // RL encoding handled this column, move to next
@@ -490,6 +517,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 				flags := t1.flags[idx]
 
 				if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
+					t1.flags[idx] &^= T1_VISIT
 					continue
 				}
 
@@ -502,6 +530,7 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 
 				// Encode significance bit
 				ctx := getZeroCodingContext(flags, t1.orientation)
+				t1.traceBitEvent("sig", i, y, dy, int(ctx), isSig)
 				t1.mqe.Encode(isSig, int(ctx))
 
 				if isSig != 0 {
@@ -513,14 +542,19 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 					}
 					signCtx := getSignCodingContext(flags)
 					signPred := getSignPrediction(flags)
-					t1.mqe.Encode(signBit^signPred, int(signCtx))
+					encodedSign := signBit ^ signPred
+					t1.traceBitEvent("sign", i, y, dy, int(signCtx), encodedSign)
+					t1.mqe.Encode(encodedSign, int(signCtx))
 
-					// Mark as significant
-					t1.flags[idx] |= T1_SIG | T1_VISIT
+					// Mark as significant. Cleanup pass does not keep PI/VISIT set.
+					t1.flags[idx] |= T1_SIG
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(i, y, idx)
 				}
+
+				// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
+				t1.flags[idx] &^= T1_VISIT
 			}
 		}
 	}

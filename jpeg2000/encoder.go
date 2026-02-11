@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"math"
+	"os"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
@@ -89,6 +91,34 @@ type EncodeParams struct {
 	// Block encoder factory (for HTJ2K support)
 	// If nil, defaults to EBCOT T1 encoder
 	BlockEncoderFactory func(width, height int) BlockEncoder
+
+	// T1EventTrace optionally enables per-bit Tier-1 trace for a selected code-block.
+	// Fields in T1EventTraceConfig use -1 as wildcard.
+	T1EventTrace *T1EventTraceConfig
+}
+
+// T1EventTraceConfig selects one Tier-1 code-block and emits per-bit events.
+// Use -1 for wildcard matching on any selector field.
+type T1EventTraceConfig struct {
+	Component       int
+	Resolution      int
+	Band            int
+	GlobalCodeBlock int
+	CBX             int
+	CBY             int
+	Writer          io.Writer
+}
+
+// NewT1EventTraceConfig creates a trace config with wildcard selectors.
+func NewT1EventTraceConfig() *T1EventTraceConfig {
+	return &T1EventTraceConfig{
+		Component:       -1,
+		Resolution:      -1,
+		Band:            -1,
+		GlobalCodeBlock: -1,
+		CBX:             -1,
+		CBY:             -1,
+	}
 }
 
 // BlockEncoder is an interface for T1 block encoders (EBCOT or HTJ2K)
@@ -2795,6 +2825,55 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 	return codeBlocks
 }
 
+func traceSelectorMatch(selector, value int) bool {
+	return selector < 0 || selector == value
+}
+
+func (cfg *T1EventTraceConfig) matches(comp, res, band, cbx, cby, globalCB int) bool {
+	if cfg == nil {
+		return false
+	}
+	return traceSelectorMatch(cfg.Component, comp) &&
+		traceSelectorMatch(cfg.Resolution, res) &&
+		traceSelectorMatch(cfg.Band, band) &&
+		traceSelectorMatch(cfg.CBX, cbx) &&
+		traceSelectorMatch(cfg.CBY, cby) &&
+		traceSelectorMatch(cfg.GlobalCodeBlock, globalCB)
+}
+
+func (cfg *T1EventTraceConfig) outputWriter() io.Writer {
+	if cfg != nil && cfg.Writer != nil {
+		return cfg.Writer
+	}
+	return os.Stdout
+}
+
+func (e *Encoder) attachT1EventTrace(t1Enc *t1.T1Encoder, cb codeBlockInfo, cbIdx int) {
+	if t1Enc == nil || e == nil || e.params == nil || e.params.T1EventTrace == nil {
+		return
+	}
+	cfg := e.params.T1EventTrace
+	if !cfg.matches(cb.compIdx, cb.resLevel, cb.band, cb.cbx, cb.cby, cbIdx) {
+		return
+	}
+	label := fmt.Sprintf(
+		"comp=%d,res=%d,band=%d,global_cb=%d,cbx=%d,cby=%d,x0=%d,y0=%d,w=%d,h=%d",
+		cb.compIdx,
+		cb.resLevel,
+		cb.band,
+		cbIdx,
+		cb.cbx,
+		cb.cby,
+		cb.globalX0,
+		cb.globalY0,
+		cb.width,
+		cb.height,
+	)
+	writer := cfg.outputWriter()
+	fmt.Fprintf(writer, "T1TRACE start %s\n", label)
+	t1Enc.SetEventTracer(t1.NewTextEventTracer(writer), label)
+}
+
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder
 func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeBlock {
 	// Use provided dimensions
@@ -2850,6 +2929,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	} else {
 		t1Enc := t1.NewT1Encoder(actualWidth, actualHeight, 0)
 		t1Enc.SetOrientation(cb.band)
+		e.attachT1EventTrace(t1Enc, cb, cbIdx)
 		blockEnc = t1Enc
 	}
 
