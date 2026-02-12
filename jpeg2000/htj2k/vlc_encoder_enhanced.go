@@ -252,174 +252,125 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 	isFirstRow := (qy == 0)
 	hasSecondQuad := (qx+1 < qw)
 
-	type quadStats struct {
-		samples  [4]int32
-		rho      uint8
-		sigCount int
-		maxE     int
-		eps0     uint8
-		uOff     uint8
-		tableEK  uint8
-		Uq       int
-		uq       int
+	s1, err := encodeQuadStats(qx, qy, data, width, isFirstRow, context, vlcEnc, melEnc, expPred)
+	if err != nil {
+		return err
 	}
+	var s2 qpQuadStats
+	if hasSecondQuad {
+		s2, err = encodeQuadStats(qx+1, qy, data, width, isFirstRow, context, vlcEnc, melEnc, expPred)
+		if err != nil {
+			return err
+		}
+	}
+	if err := encodeQPUVLCPair(qx, qy, isFirstRow, hasSecondQuad, s1, s2, melEnc, uvlcEnc); err != nil {
+		return err
+	}
+	encodeQPMagSgn(s1, msEnc)
+	if hasSecondQuad {
+		encodeQPMagSgn(s2, msEnc)
+	}
+	return nil
+}
 
-	// computeBasicStats extracts rho, maxE, sigCount from samples.
-	// eps0/uOff are NOT set here — they depend on Kq which is computed later.
-	computeBasicStats := func(qxi int) quadStats {
-		var s quadStats
-		s.samples = ExtractQuadSamples(data, width, qxi, qy)
-		s.rho = ComputeQuadRho(s.samples)
-		for i := 0; i < 4; i++ {
-			if (s.rho>>i)&1 != 0 {
-				s.sigCount++
-				val := s.samples[i]
-				mag := uint32(val)
-				if val < 0 {
-					mag = uint32(-val)
-				}
-				eQ := 0
-				if mag > 0 {
-					eQ = bits.Len32(mag)
-				}
-				if eQ > s.maxE {
-					s.maxE = eQ
-				}
+type qpQuadStats struct {
+	samples  [4]int32
+	rho      uint8
+	sigCount int
+	maxE     int
+	eps0     uint8
+	uOff     uint8
+	tableEK  uint8
+	Uq       int
+	uq       int
+}
+
+func encodeQuadStats(qxi, qy int, data []int32, width int, isFirstRow bool,
+	context *ContextComputer, vlcEnc *VLCEncoder, melEnc *MELEncoder, expPred *ExponentPredictorComputer) (qpQuadStats, error) {
+
+	var s qpQuadStats
+	s.samples = ExtractQuadSamples(data, width, qxi, qy)
+	s.rho = ComputeQuadRho(s.samples)
+	for i := 0; i < 4; i++ {
+		if (s.rho>>i)&1 != 0 {
+			s.sigCount++
+			val := s.samples[i]
+			mag := uint32(val)
+			if val < 0 {
+				mag = uint32(-val)
+			}
+			eQ := 0
+			if mag > 0 {
+				eQ = bits.Len32(mag)
+			}
+			if eQ > s.maxE {
+				s.maxE = eQ
 			}
 		}
-		return s
 	}
-
-	// computeEps0AndUOff sets eps0 and uOff based on Kq prediction.
-	// Per OpenJPH: eps0 is only computed when uq > 0 (Uq > Kq).
-	// When uq == 0, eps0=0 and uOff=0 (all exponents ≤ Kq, no offset needed).
-	computeEps0AndUOff := func(s *quadStats, Kq int) {
-		if s.rho == 0 {
-			return
-		}
-		s.Uq = s.maxE
-		if Kq > s.Uq {
-			s.Uq = Kq
-		}
-		s.uq = s.Uq - Kq
-
-		if s.uq > 0 {
-			// eps0: which significant samples have exp == maxE (== Uq when uq > 0)
-			for i := 0; i < 4; i++ {
-				if (s.rho>>i)&1 != 0 {
-					mag := uint32(s.samples[i])
-					if s.samples[i] < 0 {
-						mag = uint32(-s.samples[i])
-					}
-					eQ := 0
-					if mag > 0 {
-						eQ = bits.Len32(mag)
-					}
-					if eQ == s.maxE {
-						s.eps0 |= (1 << i)
-					}
-				}
-			}
-			if s.eps0 > 0 {
-				s.uOff = 1
-			}
-		}
-		// When uq == 0: eps0=0, uOff=0 (default zero values)
-	}
-
-	s1 := computeBasicStats(qx)
-
-	// --- Step 1: Compute Kq1 BEFORE VLC encoding (predictor uses neighbors, not current quad) ---
-	Kq1 := 0
+	Kq := 0
 	if expPred != nil {
-		Kq1 = expPred.ComputePredictor(qx, qy)
+		Kq = expPred.ComputePredictor(qxi, qy)
 	}
-	computeEps0AndUOff(&s1, Kq1)
-
-	// --- Step 2: MEL + VLC for first quad ---
-	ctx1 := context.ComputeContext(qx, qy, isFirstRow)
-
-	if ctx1 == 0 {
-		if s1.rho == 0 {
+	computeQPEps0AndUOff(&s, Kq)
+	ctx := context.ComputeContext(qxi, qy, isFirstRow)
+	if ctx == 0 {
+		if s.rho == 0 {
 			melEnc.EncodeBit(0)
 		} else {
 			melEnc.EncodeBit(1)
 		}
 	}
-
-	// Encode VLC for quad 1
-	// For context=0, only encode VLC if rho!=0 (MEL bit=1)
-	// For context!=0, always encode VLC (even if rho=0)
-	shouldEncodeVLC1 := (ctx1 != 0) || (s1.rho != 0)
-
-	if shouldEncodeVLC1 {
-		_, tableEK1, err := vlcEnc.EncodeQuadVLCByEMB(ctx1, s1.rho, s1.uOff, s1.eps0, isFirstRow)
+	shouldEncodeVLC := (ctx != 0) || (s.rho != 0)
+	if shouldEncodeVLC {
+		_, tableEK, err := vlcEnc.EncodeQuadVLCByEMB(ctx, s.rho, s.uOff, s.eps0, isFirstRow)
 		if err != nil {
-			return fmt.Errorf("VLC encode quad (%d,%d): %w", qx, qy, err)
+			return s, fmt.Errorf("VLC encode quad (%d,%d): %w", qxi, qy, err)
 		}
-		s1.tableEK = tableEK1
+		s.tableEK = tableEK
 	}
-
-	// Update context significance for quad 1 (only if rho != 0)
-	if s1.rho != 0 {
-		context.UpdateQuadSignificance(qx, qy, s1.rho)
+	if s.rho != 0 {
+		context.UpdateQuadSignificance(qxi, qy, s.rho)
 	}
-
-	// Store exponents AFTER processing Q1, so Q2's predictor can use Q1's values
 	if expPred != nil {
-		expPred.SetQuadExponents(qx, qy, s1.maxE, s1.sigCount)
+		expPred.SetQuadExponents(qxi, qy, s.maxE, s.sigCount)
 	}
+	return s, nil
+}
 
-	// --- Step 3: MEL + VLC for second quad (if exists) ---
-	var s2 quadStats
-	if hasSecondQuad {
-		s2 = computeBasicStats(qx + 1)
-
-		Kq2 := 0
-		if expPred != nil {
-			Kq2 = expPred.ComputePredictor(qx+1, qy)
-		}
-		computeEps0AndUOff(&s2, Kq2)
-
-		ctx2 := context.ComputeContext(qx+1, qy, isFirstRow)
-
-		if ctx2 == 0 {
-			if s2.rho == 0 {
-				melEnc.EncodeBit(0)
-			} else {
-				melEnc.EncodeBit(1)
+func computeQPEps0AndUOff(s *qpQuadStats, Kq int) {
+	if s.rho == 0 {
+		return
+	}
+	s.Uq = s.maxE
+	if Kq > s.Uq {
+		s.Uq = Kq
+	}
+	s.uq = s.Uq - Kq
+	if s.uq > 0 {
+		for i := 0; i < 4; i++ {
+			if (s.rho>>i)&1 != 0 {
+				mag := uint32(s.samples[i])
+				if s.samples[i] < 0 {
+					mag = uint32(-s.samples[i])
+				}
+				eQ := 0
+				if mag > 0 {
+					eQ = bits.Len32(mag)
+				}
+				if eQ == s.maxE {
+					s.eps0 |= (1 << i)
+				}
 			}
 		}
-
-		// Encode VLC for quad 2
-		// For context=0, only encode VLC if rho!=0 (MEL bit=1)
-		// For context!=0, always encode VLC (even if rho=0)
-		shouldEncodeVLC := (ctx2 != 0) || (s2.rho != 0)
-
-		if shouldEncodeVLC {
-			_, tableEK2, err := vlcEnc.EncodeQuadVLCByEMB(ctx2, s2.rho, s2.uOff, s2.eps0, isFirstRow)
-			if err != nil {
-				return fmt.Errorf("VLC encode quad (%d,%d): %w", qx+1, qy, err)
-			}
-			s2.tableEK = tableEK2
-		}
-
-		// Update context significance for quad 2 (only if rho != 0)
-		if s2.rho != 0 {
-			context.UpdateQuadSignificance(qx+1, qy, s2.rho)
-		}
-
-		if expPred != nil {
-			expPred.SetQuadExponents(qx+1, qy, s2.maxE, s2.sigCount)
+		if s.eps0 > 0 {
+			s.uOff = 1
 		}
 	}
+}
 
-	// --- Step 4: MEL event + UVLC encoding (after both VLCs) ---
-	// For initial pairs with both uOff=1, choose melEvent (0=mode3, 1=mode4).
-	// Mode 3 has limited range for u1 when u0 is large. Mode 4 adds +2 bias.
-	// Try mode=3 first; if no table entry matches, use mode=4.
+func encodeQPUVLCPair(qx, qy int, isFirstRow, hasSecondQuad bool, s1, s2 qpQuadStats, melEnc *MELEncoder, uvlcEnc *UVLCEncoder) error {
 	bothUOff := hasSecondQuad && s1.uOff == 1 && s2.uOff == 1
-
 	if uvlcEnc != nil {
 		uOff0 := s1.uOff
 		uOff1 := uint8(0)
@@ -431,7 +382,6 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 		if hasSecondQuad {
 			u1 = s2.uq
 		}
-
 		melEvent := 0
 		if isFirstRow && bothUOff {
 			if !uvlcEnc.HasTableEntry(uOff0, uOff1, u0, u1, true, 0) {
@@ -439,56 +389,35 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 			}
 			melEnc.EncodeBit(melEvent)
 		}
-
 		if err := uvlcEnc.EncodePair(uOff0, uOff1, u0, u1, isFirstRow, melEvent); err != nil {
 			return fmt.Errorf("UVLC encode pair (%d,%d): %w", qx, qy, err)
 		}
 	} else if isFirstRow && bothUOff {
 		melEnc.EncodeBit(0)
 	}
-
-	// --- Step 5: MagSgn encoding ---
-	if s1.rho != 0 {
-		for i := 0; i < 4; i++ {
-			if (s1.rho>>i)&1 != 0 {
-				val := s1.samples[i]
-				mag := uint32(val)
-				sign := 0
-				if val < 0 {
-					mag = uint32(-val)
-					sign = 1
-				}
-				ekBit := int((s1.tableEK >> i) & 1)
-				mn := s1.Uq - ekBit
-				if mn < 0 {
-					mn = 0
-				}
-				magLower := mag & ((1 << mn) - 1)
-				msEnc.EncodeMagSgn(magLower, sign, mn)
-			}
-		}
-	}
-
-	if hasSecondQuad && s2.rho != 0 {
-		for i := 0; i < 4; i++ {
-			if (s2.rho>>i)&1 != 0 {
-				val := s2.samples[i]
-				mag := uint32(val)
-				sign := 0
-				if val < 0 {
-					mag = uint32(-val)
-					sign = 1
-				}
-				ekBit := int((s2.tableEK >> i) & 1)
-				mn := s2.Uq - ekBit
-				if mn < 0 {
-					mn = 0
-				}
-				magLower := mag & ((1 << mn) - 1)
-				msEnc.EncodeMagSgn(magLower, sign, mn)
-			}
-		}
-	}
-
 	return nil
+}
+
+func encodeQPMagSgn(s qpQuadStats, msEnc *MagSgnEncoder) {
+	if s.rho == 0 {
+		return
+	}
+	for i := 0; i < 4; i++ {
+		if (s.rho>>i)&1 != 0 {
+			val := s.samples[i]
+			mag := uint32(val)
+			sign := 0
+			if val < 0 {
+				mag = uint32(-val)
+				sign = 1
+			}
+			ekBit := int((s.tableEK >> i) & 1)
+			mn := s.Uq - ekBit
+			if mn < 0 {
+				mn = 0
+			}
+			magLower := mag & ((1 << mn) - 1)
+			msEnc.EncodeMagSgn(magLower, sign, mn)
+		}
+	}
 }

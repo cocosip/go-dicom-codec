@@ -209,22 +209,22 @@ func TestEBCOTCoefficientState(t *testing.T) {
 		name string
 		flag uint32
 	}{
-		{"T1_SIG", T1_SIG},
-		{"T1_REFINE", T1_REFINE},
-		{"T1_VISIT", T1_VISIT},
-		{"T1_SIG_N", T1_SIG_N},
-		{"T1_SIG_S", T1_SIG_S},
-		{"T1_SIG_W", T1_SIG_W},
-		{"T1_SIG_E", T1_SIG_E},
-		{"T1_SIG_NW", T1_SIG_NW},
-		{"T1_SIG_NE", T1_SIG_NE},
-		{"T1_SIG_SW", T1_SIG_SW},
-		{"T1_SIG_SE", T1_SIG_SE},
-		{"T1_SIGN", T1_SIGN},
-		{"T1_SIGN_N", T1_SIGN_N},
-		{"T1_SIGN_S", T1_SIGN_S},
-		{"T1_SIGN_W", T1_SIGN_W},
-		{"T1_SIGN_E", T1_SIGN_E},
+		{"T1Sig", T1Sig},
+		{"T1Refine", T1Refine},
+		{"T1Visit", T1Visit},
+		{"T1SigN", T1SigN},
+		{"T1SigS", T1SigS},
+		{"T1SigW", T1SigW},
+		{"T1SigE", T1SigE},
+		{"T1SigNW", T1SigNW},
+		{"T1SigNE", T1SigNE},
+		{"T1SigSW", T1SigSW},
+		{"T1SigSE", T1SigSE},
+		{"T1Sign", T1Sign},
+		{"T1SignN", T1SignN},
+		{"T1SignS", T1SignS},
+		{"T1SignW", T1SignW},
+		{"T1SignE", T1SignE},
 	}
 
 	// Check all flags are non-zero
@@ -234,13 +234,13 @@ func TestEBCOTCoefficientState(t *testing.T) {
 		}
 	}
 
-	// Check T1_SIG_NEIGHBORS mask
-	expectedMask := T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E |
-		T1_SIG_NW | T1_SIG_NE | T1_SIG_SW | T1_SIG_SE
+	// Check T1SigNeighbors mask
+	expectedMask := T1SigN | T1SigS | T1SigW | T1SigE |
+		T1SigNW | T1SigNE | T1SigSW | T1SigSE
 
-	if T1_SIG_NEIGHBORS != expectedMask {
-		t.Errorf("T1_SIG_NEIGHBORS mask incorrect: expected 0x%x, got 0x%x",
-			expectedMask, T1_SIG_NEIGHBORS)
+	if T1SigNeighbors != expectedMask {
+		t.Errorf("T1SigNeighbors mask incorrect: expected 0x%x, got 0x%x",
+			expectedMask, T1SigNeighbors)
 	}
 
 	t.Log("Coefficient state: All flags defined correctly")

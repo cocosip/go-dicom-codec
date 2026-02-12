@@ -21,7 +21,7 @@ type Decoder struct {
 	roi       *ROIParams
 	roiConfig *ROIConfig
 	roiShifts []int
-	roiRects  [][]roiRect // per-component rectangles
+	RoiRects  [][]RoiRect // per-component rectangles
 	roiSrgn   []byte      // per-component ROI style (Srgn)
 	roiMasks  []*roiMask  // per-component ROI mask
 
@@ -478,7 +478,7 @@ func sameUint16Slice(a, b []uint16) bool {
 
 // resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal rectangles.
 func (d *Decoder) resolveROI() error {
-	d.roiRects = nil
+	d.RoiRects = nil
 
 	// ROIConfig takes priority when present
 	if d.roiConfig != nil && !d.roiConfig.IsEmpty() {
@@ -490,7 +490,7 @@ func (d *Decoder) resolveROI() error {
 			return err
 		}
 		d.roiShifts = shifts
-		d.roiRects = rects
+		d.RoiRects = rects
 		d.roiMasks = buildMasksFromConfig(d.width, d.height, d.components, rects, d.roiConfig)
 		if len(shifts) > 0 {
 			d.roiSrgn = make([]byte, len(shifts))
@@ -508,12 +508,12 @@ func (d *Decoder) resolveROI() error {
 		}
 		d.roiShifts = make([]int, d.components)
 		d.roiSrgn = make([]byte, d.components)
-		d.roiRects = make([][]roiRect, d.components)
+		d.RoiRects = make([][]RoiRect, d.components)
 		d.roiMasks = make([]*roiMask, d.components)
 		for c := 0; c < d.components; c++ {
 			d.roiShifts[c] = d.roi.Shift
 			d.roiSrgn[c] = 0
-			d.roiRects[c] = []roiRect{{
+			d.RoiRects[c] = []RoiRect{{
 				x0: d.roi.X0,
 				y0: d.roi.Y0,
 				x1: d.roi.X0 + d.roi.Width,
@@ -532,192 +532,206 @@ func (d *Decoder) decodeTiles() error {
 	if len(d.cs.Tiles) == 0 {
 		return fmt.Errorf("no tiles found in codestream")
 	}
-
-	// Create tile assembler
 	assembler := NewTileAssembler(d.cs.SIZ)
+	roiInfo := d.buildDecoderROIInfo()
+	if err := d.decodeAllTiles(assembler, roiInfo); err != nil {
+		return err
+	}
+	d.data = assembler.GetImageData()
+	d.applyInverseTransforms()
+	d.applyInverseDCLevelShift()
+	return nil
+}
 
-	// Build ROI info for tile decoders
-	var roiInfo *t2.ROIInfo
-	if len(d.roiShifts) == d.components && d.components > 0 {
-		roiInfo = &t2.ROIInfo{
-			Shifts: d.roiShifts,
-			Styles: d.roiSrgn,
-		}
-		if len(d.roiRects) > 0 {
-			rectsByComp := make([][]t2.ROIRect, len(d.roiRects))
-			for comp := range d.roiRects {
-				rects := d.roiRects[comp]
-				rectsByComp[comp] = make([]t2.ROIRect, len(rects))
-				for i, r := range rects {
-					rectsByComp[comp][i] = t2.ROIRect{
-						X0: r.x0,
-						Y0: r.y0,
-						X1: r.x1,
-						Y1: r.y1,
-					}
+func (d *Decoder) buildDecoderROIInfo() *t2.ROIInfo {
+	if len(d.roiShifts) != d.components || d.components == 0 {
+		return nil
+	}
+	roiInfo := &t2.ROIInfo{
+		Shifts: d.roiShifts,
+		Styles: d.roiSrgn,
+	}
+	if len(d.RoiRects) > 0 {
+		rectsByComp := make([][]t2.ROIRect, len(d.RoiRects))
+		for comp := range d.RoiRects {
+			rects := d.RoiRects[comp]
+			rectsByComp[comp] = make([]t2.ROIRect, len(rects))
+			for i, r := range rects {
+				rectsByComp[comp][i] = t2.ROIRect{
+					X0: r.x0,
+					Y0: r.y0,
+					X1: r.x1,
+					Y1: r.y1,
 				}
 			}
-			roiInfo.RectsByComponent = rectsByComp
 		}
-		if len(d.roiMasks) > 0 {
-			roiInfo.Masks = make([]*t2.ROIMask, len(d.roiMasks))
-			for i := range d.roiMasks {
-				if d.roiMasks[i] != nil {
-					roiInfo.Masks[i] = &t2.ROIMask{
-						Width:  d.roiMasks[i].width,
-						Height: d.roiMasks[i].height,
-						Data:   d.roiMasks[i].data,
-					}
+		roiInfo.RectsByComponent = rectsByComp
+	}
+	if len(d.roiMasks) > 0 {
+		roiInfo.Masks = make([]*t2.ROIMask, len(d.roiMasks))
+		for i := range d.roiMasks {
+			if d.roiMasks[i] != nil {
+				roiInfo.Masks[i] = &t2.ROIMask{
+					Width:  d.roiMasks[i].width,
+					Height: d.roiMasks[i].height,
+					Data:   d.roiMasks[i].data,
 				}
 			}
 		}
 	}
+	return roiInfo
+}
 
-	// Decode all tiles
+func (d *Decoder) decodeAllTiles(assembler *TileAssembler, roiInfo *t2.ROIInfo) error {
 	for tileIdx, tile := range d.cs.Tiles {
-		// Create tile decoder
-		// Check if HTJ2K mode is enabled (bit 6 of Scod, 0x40)
-		cod := d.cs.TileCOD(tile)
-		qcd := d.cs.TileQCD(tile)
-		if d.components == 1 {
-			if resolved := d.cs.ComponentCOD(tile, 0); resolved != nil {
-				cod = resolved
-			}
-			if resolved := d.cs.ComponentQCD(tile, 0); resolved != nil {
-				qcd = resolved
-			}
-		}
-		isHTJ2K := false
-		if cod != nil {
-			isHTJ2K = (cod.Scod & 0x40) != 0
-		}
-		// Use injected blockDecoderFactory if HTJ2K is enabled
+		cod, qcd := d.resolveTileCODQCD(tile)
+		isHTJ2K := cod != nil && (cod.Scod&0x40) != 0
 		var blockDecoderFactory t2.BlockDecoderFactory
 		if isHTJ2K && d.blockDecoderFactory != nil {
 			blockDecoderFactory = d.blockDecoderFactory
 		}
 		tileDecoder := t2.NewTileDecoder(tile, d.cs.SIZ, cod, qcd, roiInfo, isHTJ2K, blockDecoderFactory)
-
-		// Decode tile
 		tileData, err := tileDecoder.Decode()
 		if err != nil {
 			return fmt.Errorf("failed to decode tile %d: %w", tileIdx, err)
 		}
-
-		// Assemble tile into image
 		err = assembler.AssembleTile(tileIdx, tileData)
 		if err != nil {
 			return fmt.Errorf("failed to assemble tile %d: %w", tileIdx, err)
 		}
 	}
+	return nil
+}
 
-	d.data = assembler.GetImageData()
+func (d *Decoder) resolveTileCODQCD(tile *codestream.Tile) (*codestream.CODSegment, *codestream.QCDSegment) {
+	cod := d.cs.TileCOD(tile)
+	qcd := d.cs.TileQCD(tile)
+	if d.components == 1 {
+		if resolved := d.cs.ComponentCOD(tile, 0); resolved != nil {
+			cod = resolved
+		}
+		if resolved := d.cs.ComponentQCD(tile, 0); resolved != nil {
+			qcd = resolved
+		}
+	}
+	return cod, qcd
+}
+
+func (d *Decoder) applyInverseTransforms() {
 	if len(d.bindings) > 0 {
-		width := d.width
-		height := d.height
-		n := width * height
-		for _, b := range d.bindings {
-			if len(b.compIDs) == 0 {
-				continue
-			}
-			useInt := false
-			if b.reversible && b.matrixI != nil && len(b.matrixI) == len(b.compIDs) {
-				useInt = true
-			}
-			if useInt {
-				r := len(b.matrixI)
-				c := len(b.matrixI[0])
-				for i := 0; i < n; i++ {
-					out := make([]int32, r)
-					for rr := 0; rr < r; rr++ {
-						var sum int64
-						for kk := 0; kk < c; kk++ {
-							sum += int64(b.matrixI[rr][kk]) * int64(d.data[b.compIDs[kk]][i])
-						}
-						out[rr] = int32(sum)
-					}
-					for rr := 0; rr < r; rr++ {
-						d.data[b.compIDs[rr]][i] = out[rr]
-					}
-				}
-			} else if b.matrixF != nil && len(b.matrixF) == len(b.compIDs) {
-				m := b.matrixF
-				r := len(m)
-				c := len(m[0])
-				for i := 0; i < n; i++ {
-					out := make([]int32, r)
-					for rr := 0; rr < r; rr++ {
-						sum := 0.0
-						for kk := 0; kk < c; kk++ {
-							sum += m[rr][kk] * float64(d.data[b.compIDs[kk]][i])
-						}
-						out[rr] = int32(math.Round(sum))
-					}
-					for rr := 0; rr < r; rr++ {
-						d.data[b.compIDs[rr]][i] = out[rr]
-					}
-				}
-			}
-			if b.offsets != nil && len(b.offsets) == len(b.compIDs) {
-				for idx, cid := range b.compIDs {
-					off := b.offsets[idx]
-					if off != 0 {
-						for i := 0; i < n; i++ {
-							d.data[cid][i] += off
-						}
-					}
-				}
-			}
-		}
+		d.applyDecoderMCTBindings()
 	} else if d.mctInverse != nil && len(d.mctInverse) == d.components {
-		// Apply inverse custom MCT
-		width := d.width
-		height := d.height
-		n := width * height
-		comps := d.components
-		out := make([][]int32, comps)
-		for c := 0; c < comps; c++ {
-			out[c] = make([]int32, n)
-		}
-		for i := 0; i < n; i++ {
-			for r := 0; r < comps; r++ {
-				sum := 0.0
-				for k := 0; k < comps; k++ {
-					sum += d.mctInverse[r][k] * float64(d.data[k][i])
-				}
-				out[r][i] = int32(math.Round(sum))
-			}
-		}
-		d.data = out
-		if d.mctOffsets != nil && len(d.mctOffsets) == d.components {
-			for c := 0; c < comps; c++ {
-				off := d.mctOffsets[c]
-				if off != 0 {
-					for i := 0; i < n; i++ {
-						d.data[c][i] += off
-					}
-				}
-			}
-		}
+		d.applyDecoderInverseCustomMCT()
 	} else if d.cs != nil && d.cs.COD != nil && d.components == 3 {
-		if d.cs.COD.MultipleComponentTransform == 1 {
-			// OpenJPEG: use RCT for reversible (5/3), ICT for irreversible (9/7).
-			if d.cs.COD.Transformation == 1 {
-				r, g, b := colorspace.ApplyInverseRCTToComponents(d.data[0], d.data[1], d.data[2])
-				d.data[0], d.data[1], d.data[2] = r, g, b
-			} else {
-				r, g, b := colorspace.ApplyInverseICTToComponents(d.data[0], d.data[1], d.data[2])
-				d.data[0], d.data[1], d.data[2] = r, g, b
+		d.applyDecoderStandardInverseMCT()
+	}
+}
+
+func (d *Decoder) applyDecoderMCTBindings() {
+	n := d.width * d.height
+	for _, b := range d.bindings {
+		if len(b.compIDs) == 0 {
+			continue
+		}
+		useInt := b.reversible && b.matrixI != nil && len(b.matrixI) == len(b.compIDs)
+		if useInt {
+			d.applyIntegerMatrixTransform(&b, n)
+		} else if b.matrixF != nil && len(b.matrixF) == len(b.compIDs) {
+			d.applyFloatMatrixTransform(&b, n)
+		}
+		d.applyBindingOffsets(&b, n)
+	}
+}
+
+func (d *Decoder) applyIntegerMatrixTransform(b *mctBinding, n int) {
+	r := len(b.matrixI)
+	c := len(b.matrixI[0])
+	for i := 0; i < n; i++ {
+		out := make([]int32, r)
+		for rr := 0; rr < r; rr++ {
+			var sum int64
+			for kk := 0; kk < c; kk++ {
+				sum += int64(b.matrixI[rr][kk]) * int64(d.data[b.compIDs[kk]][i])
+			}
+			out[rr] = int32(sum)
+		}
+		for rr := 0; rr < r; rr++ {
+			d.data[b.compIDs[rr]][i] = out[rr]
+		}
+	}
+}
+
+func (d *Decoder) applyFloatMatrixTransform(b *mctBinding, n int) {
+	m := b.matrixF
+	r := len(m)
+	c := len(m[0])
+	for i := 0; i < n; i++ {
+		out := make([]int32, r)
+		for rr := 0; rr < r; rr++ {
+			sum := 0.0
+			for kk := 0; kk < c; kk++ {
+				sum += m[rr][kk] * float64(d.data[b.compIDs[kk]][i])
+			}
+			out[rr] = int32(math.Round(sum))
+		}
+		for rr := 0; rr < r; rr++ {
+			d.data[b.compIDs[rr]][i] = out[rr]
+		}
+	}
+}
+
+func (d *Decoder) applyBindingOffsets(b *mctBinding, n int) {
+	if b.offsets != nil && len(b.offsets) == len(b.compIDs) {
+		for idx, cid := range b.compIDs {
+			off := b.offsets[idx]
+			if off != 0 {
+				for i := 0; i < n; i++ {
+					d.data[cid][i] += off
+				}
 			}
 		}
 	}
+}
 
-	// Apply inverse DC level shift AFTER inverse MCT (to match OpenJPEG order)
-	// OpenJPEG decode: T1^-1 -> DWT^-1 -> MCT^-1 -> DC shift^-1
-	// This is the exact reverse of encode: DC shift -> MCT -> DWT -> T1
-	d.applyInverseDCLevelShift()
+func (d *Decoder) applyDecoderInverseCustomMCT() {
+	n := d.width * d.height
+	comps := d.components
+	out := make([][]int32, comps)
+	for c := 0; c < comps; c++ {
+		out[c] = make([]int32, n)
+	}
+	for i := 0; i < n; i++ {
+		for r := 0; r < comps; r++ {
+			sum := 0.0
+			for k := 0; k < comps; k++ {
+				sum += d.mctInverse[r][k] * float64(d.data[k][i])
+			}
+			out[r][i] = int32(math.Round(sum))
+		}
+	}
+	d.data = out
+	if d.mctOffsets != nil && len(d.mctOffsets) == d.components {
+		for c := 0; c < comps; c++ {
+			off := d.mctOffsets[c]
+			if off != 0 {
+				for i := 0; i < n; i++ {
+					d.data[c][i] += off
+				}
+			}
+		}
+	}
+}
 
-	return nil
+func (d *Decoder) applyDecoderStandardInverseMCT() {
+	if d.cs.COD.MultipleComponentTransform == 1 {
+		if d.cs.COD.Transformation == 1 {
+			r, g, b := colorspace.ApplyInverseRCTToComponents(d.data[0], d.data[1], d.data[2])
+			d.data[0], d.data[1], d.data[2] = r, g, b
+		} else {
+			r, g, b := colorspace.ApplyInverseICTToComponents(d.data[0], d.data[1], d.data[2])
+			d.data[0], d.data[1], d.data[2] = r, g, b
+		}
+	}
 }
 
 // GetImageData returns the decoded image data for all components

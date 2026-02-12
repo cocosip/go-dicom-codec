@@ -39,14 +39,14 @@ func TestZeroCodingContextLogic(t *testing.T) {
 		expected uint8
 	}{
 		{name: "NoNeighbors", flags: 0, expected: 0},
-		{name: "WestOnly", flags: T1_SIG_W, expected: 5},
-		{name: "NorthOnly", flags: T1_SIG_N, expected: 3},
-		{name: "WestEast", flags: T1_SIG_W | T1_SIG_E, expected: 8},
-		{name: "NorthSouth", flags: T1_SIG_N | T1_SIG_S, expected: 4},
-		{name: "CardinalFour", flags: T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E, expected: 8},
+		{name: "WestOnly", flags: T1SigW, expected: 5},
+		{name: "NorthOnly", flags: T1SigN, expected: 3},
+		{name: "WestEast", flags: T1SigW | T1SigE, expected: 8},
+		{name: "NorthSouth", flags: T1SigN | T1SigS, expected: 4},
+		{name: "CardinalFour", flags: T1SigN | T1SigS | T1SigW | T1SigE, expected: 8},
 		{
 			name:     "AllNeighbors",
-			flags:    T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E | T1_SIG_NW | T1_SIG_NE | T1_SIG_SW | T1_SIG_SE,
+			flags:    T1SigN | T1SigS | T1SigW | T1SigE | T1SigNW | T1SigNE | T1SigSW | T1SigSE,
 			expected: 8,
 		},
 	}
@@ -67,9 +67,9 @@ func TestMagnitudeRefinementContext(t *testing.T) {
 		expected uint8
 	}{
 		{name: "NoNeighbors", flags: 0, expected: 14},
-		{name: "AnyNeighbor", flags: T1_SIG_W, expected: 15},
-		{name: "RefinedNoNeighbors", flags: T1_REFINE, expected: 16},
-		{name: "RefinedWithNeighbors", flags: T1_REFINE | T1_SIG_W, expected: 16},
+		{name: "AnyNeighbor", flags: T1SigW, expected: 15},
+		{name: "RefinedNoNeighbors", flags: T1Refine, expected: 16},
+		{name: "RefinedWithNeighbors", flags: T1Refine | T1SigW, expected: 16},
 	}
 
 	for _, tc := range testCases {
@@ -89,12 +89,12 @@ func TestSignCodingContextExtraction(t *testing.T) {
 	}{
 		{
 			name:     "AllPositive",
-			flags:    T1_SIG_E | T1_SIG_W | T1_SIG_N | T1_SIG_S,
+			flags:    T1SigE | T1SigW | T1SigN | T1SigS,
 			expected: 0xD,
 		},
 		{
 			name:     "EastWestNegative",
-			flags:    T1_SIG_E | T1_SIG_W | T1_SIGN_E | T1_SIGN_W,
+			flags:    T1SigE | T1SigW | T1SignE | T1SignW,
 			expected: 0xC,
 		},
 	}
@@ -140,28 +140,28 @@ func TestContextConstants(t *testing.T) {
 }
 
 func TestStateFlagDefinitions(t *testing.T) {
-	if T1_SIG != 0x0001 {
-		t.Fatalf("T1_SIG = 0x%04X, want 0x0001", T1_SIG)
+	if T1Sig != 0x0001 {
+		t.Fatalf("T1Sig = 0x%04X, want 0x0001", T1Sig)
 	}
-	if T1_REFINE != 0x0002 {
-		t.Fatalf("T1_REFINE = 0x%04X, want 0x0002", T1_REFINE)
+	if T1Refine != 0x0002 {
+		t.Fatalf("T1Refine = 0x%04X, want 0x0002", T1Refine)
 	}
-	if T1_VISIT != 0x0004 {
-		t.Fatalf("T1_VISIT = 0x%04X, want 0x0004", T1_VISIT)
+	if T1Visit != 0x0004 {
+		t.Fatalf("T1Visit = 0x%04X, want 0x0004", T1Visit)
 	}
 
 	expected := []struct {
 		flag uint32
 		name string
 	}{
-		{T1_SIG_N, "T1_SIG_N"},
-		{T1_SIG_S, "T1_SIG_S"},
-		{T1_SIG_W, "T1_SIG_W"},
-		{T1_SIG_E, "T1_SIG_E"},
-		{T1_SIG_NW, "T1_SIG_NW"},
-		{T1_SIG_NE, "T1_SIG_NE"},
-		{T1_SIG_SW, "T1_SIG_SW"},
-		{T1_SIG_SE, "T1_SIG_SE"},
+		{T1SigN, "T1SigN"},
+		{T1SigS, "T1SigS"},
+		{T1SigW, "T1SigW"},
+		{T1SigE, "T1SigE"},
+		{T1SigNW, "T1SigNW"},
+		{T1SigNE, "T1SigNE"},
+		{T1SigSW, "T1SigSW"},
+		{T1SigSE, "T1SigSE"},
 	}
 
 	var mask uint32
@@ -175,8 +175,8 @@ func TestStateFlagDefinitions(t *testing.T) {
 		mask |= n.flag
 	}
 
-	if T1_SIG_NEIGHBORS != mask {
-		t.Fatalf("T1_SIG_NEIGHBORS = 0x%X, want 0x%X", T1_SIG_NEIGHBORS, mask)
+	if T1SigNeighbors != mask {
+		t.Fatalf("T1SigNeighbors = 0x%X, want 0x%X", T1SigNeighbors, mask)
 	}
 }
 

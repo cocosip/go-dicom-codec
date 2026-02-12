@@ -24,8 +24,8 @@ const (
 	ROIShapeMask
 )
 
-// roiRect is an internal axis-aligned rectangle helper.
-type roiRect struct {
+// RoiRect is an axis-aligned rectangle helper for ROI regions.
+type RoiRect struct {
 	x0, y0 int
 	x1, y1 int
 }
@@ -158,7 +158,7 @@ func (cfg *ROIConfig) Validate(imgWidth, imgHeight int) error {
 
 // ResolveRectangles returns Srgn style, per-component MaxShift/Scaling values, and rectangle lists.
 // MVP: supports Srgn 0 (MaxShift) or 1 (General Scaling) with rectangular geometry.
-func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (byte, []int, [][]roiRect, error) {
+func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (byte, []int, [][]RoiRect, error) {
 	if cfg == nil || len(cfg.ROIs) == 0 {
 		return 0, nil, nil, nil
 	}
@@ -172,98 +172,136 @@ func (cfg *ROIConfig) ResolveRectangles(imgWidth, imgHeight, components int) (by
 	}
 
 	shifts := make([]int, components)
-	rectsByComp := make([][]roiRect, components)
+	rectsByComp := make([][]RoiRect, components)
 	srgn := byte(0) // default MaxShift
 	styleSet := false
 
 	for i := range cfg.ROIs {
 		roi := cfg.ROIs[i]
-		hasPolygon := len(roi.Polygon) >= 3
-		hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
 
-		style := roi.Style
-		if style == ROIStyle(0) {
-			style = cfg.DefaultStyle
-		}
-		if style == ROIStyle(0) {
-			style = ROIStyleMaxShift
-		}
-		if style != ROIStyleMaxShift && style != ROIStyleGeneralScaling {
-			return 0, nil, nil, fmt.Errorf("ROI[%d]: unsupported style %v", i, style)
+		_, err := cfg.resolveROIStyleForRect(&roi, i, &srgn, &styleSet)
+		if err != nil {
+			return 0, nil, nil, err
 		}
 
-		if hasMask {
-			// Mask ROI: force General Scaling with shift>0.
-			style = ROIStyleGeneralScaling
+		roiShift, err := cfg.resolveROIShiftForRect(&roi, i)
+		if err != nil {
+			return 0, nil, nil, err
 		}
 
-		if !styleSet {
-			srgn = byte(style)
-			styleSet = true
-		} else if srgn != byte(style) {
-			return 0, nil, nil, fmt.Errorf("ROI[%d]: mixed ROI styles not supported (got %d vs %d)", i, style, srgn)
+		rect, err := cfg.resolveROIRectGeometry(&roi, i, imgWidth, imgHeight)
+		if err != nil {
+			return 0, nil, nil, err
 		}
 
-		roiShift := roi.Shift
-		if roi.Scale > 0 {
-			roiShift = roi.Scale
-		}
-		if roiShift <= 0 && roi.Rect != nil {
-			roiShift = roi.Rect.Shift
-		}
-		if roiShift <= 0 {
-			roiShift = cfg.DefaultShift
-		}
-		if roiShift <= 0 {
-			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", i)
-		}
-		if roiShift > 255 {
-			return 0, nil, nil, fmt.Errorf("ROI[%d]: shift %d exceeds 255", i, roiShift)
-		}
+		targetComponents := cfg.resolveTargetComponentList(&roi, components)
 
-		rect := roi.Rect
-		if rect == nil && hasPolygon {
-			b := boundingRect(roi.Polygon)
-			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
-		} else if rect == nil && hasMask {
-			if b, ok := boundingRectFromMask(roi.MaskWidth, roi.MaskHeight, roi.MaskData); ok {
-				rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
-			} else {
-				rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
-			}
-		}
-		if rect == nil {
-			return 0, nil, nil, fmt.Errorf("ROI[%d]: missing ROI geometry", i)
-		}
-
-		targetComponents := roi.Components
-		if len(targetComponents) == 0 {
-			targetComponents = make([]int, components)
-			for c := 0; c < components; c++ {
-				targetComponents[c] = c
-			}
-		}
-
-		for _, comp := range targetComponents {
-			if comp < 0 || comp >= components {
-				return 0, nil, nil, fmt.Errorf("ROI[%d]: component index %d out of range", i, comp)
-			}
-			// Use the maximum shift per component when multiple ROI regions exist.
-			if roiShift > shifts[comp] {
-				shifts[comp] = roiShift
-			}
-			rectsByComp[comp] = append(rectsByComp[comp], roiRect{
-				x0: roi.Rect.X0,
-				y0: roi.Rect.Y0,
-				x1: roi.Rect.X0 + roi.Rect.Width,
-				y1: roi.Rect.Y0 + roi.Rect.Height,
-			})
+		if err := cfg.applyROIToComponentsForRect(&roi, targetComponents, roiShift, components, shifts, rectsByComp, i, rect); err != nil {
+			return 0, nil, nil, err
 		}
 	}
 
 	return srgn, shifts, rectsByComp, nil
 }
 
-func (r roiRect) intersects(x0, y0, x1, y1 int) bool {
+func (cfg *ROIConfig) resolveROIStyleForRect(roi *ROIRegion, roiIndex int, srgn *byte, styleSet *bool) (ROIStyle, error) {
+	hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+
+	style := roi.Style
+	if style == ROIStyle(0) {
+		style = cfg.DefaultStyle
+	}
+	if style == ROIStyle(0) {
+		style = ROIStyleMaxShift
+	}
+	if style != ROIStyleMaxShift && style != ROIStyleGeneralScaling {
+		return 0, fmt.Errorf("ROI[%d]: unsupported style %v", roiIndex, style)
+	}
+
+	if hasMask {
+		style = ROIStyleGeneralScaling
+	}
+
+	if !*styleSet {
+		*srgn = byte(style)
+		*styleSet = true
+	} else if *srgn != byte(style) {
+		return 0, fmt.Errorf("ROI[%d]: mixed ROI styles not supported (got %d vs %d)", roiIndex, style, *srgn)
+	}
+
+	return style, nil
+}
+
+func (cfg *ROIConfig) resolveROIShiftForRect(roi *ROIRegion, roiIndex int) (int, error) {
+	roiShift := roi.Shift
+	if roi.Scale > 0 {
+		roiShift = roi.Scale
+	}
+	if roiShift <= 0 && roi.Rect != nil {
+		roiShift = roi.Rect.Shift
+	}
+	if roiShift <= 0 {
+		roiShift = cfg.DefaultShift
+	}
+	if roiShift <= 0 {
+		return 0, fmt.Errorf("ROI[%d]: missing ROI shift/scaling value after defaults", roiIndex)
+	}
+	if roiShift > 255 {
+		return 0, fmt.Errorf("ROI[%d]: shift %d exceeds 255", roiIndex, roiShift)
+	}
+	return roiShift, nil
+}
+
+func (cfg *ROIConfig) resolveROIRectGeometry(roi *ROIRegion, roiIndex, imgWidth, imgHeight int) (*ROIParams, error) {
+	hasPolygon := len(roi.Polygon) >= 3
+	hasMask := len(roi.MaskData) > 0 && roi.MaskWidth > 0 && roi.MaskHeight > 0
+
+	rect := roi.Rect
+	if rect == nil && hasPolygon {
+		b := boundingRect(roi.Polygon)
+		rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+	} else if rect == nil && hasMask {
+		if b, ok := boundingRectFromMask(roi.MaskWidth, roi.MaskHeight, roi.MaskData); ok {
+			rect = &ROIParams{X0: b.x0, Y0: b.y0, Width: b.x1 - b.x0, Height: b.y1 - b.y0}
+		} else {
+			rect = &ROIParams{X0: 0, Y0: 0, Width: imgWidth, Height: imgHeight}
+		}
+	}
+	if rect == nil {
+		return nil, fmt.Errorf("ROI[%d]: missing ROI geometry", roiIndex)
+	}
+	return rect, nil
+}
+
+func (cfg *ROIConfig) resolveTargetComponentList(roi *ROIRegion, components int) []int {
+	targetComponents := roi.Components
+	if len(targetComponents) == 0 {
+		targetComponents = make([]int, components)
+		for c := 0; c < components; c++ {
+			targetComponents[c] = c
+		}
+	}
+	return targetComponents
+}
+
+func (cfg *ROIConfig) applyROIToComponentsForRect(_ *ROIRegion, targetComponents []int, roiShift, components int, shifts []int, rectsByComp [][]RoiRect, roiIndex int, rect *ROIParams) error {
+	for _, comp := range targetComponents {
+		if comp < 0 || comp >= components {
+			return fmt.Errorf("ROI[%d]: component index %d out of range", roiIndex, comp)
+		}
+		if roiShift > shifts[comp] {
+			shifts[comp] = roiShift
+		}
+		rectsByComp[comp] = append(rectsByComp[comp], RoiRect{
+			x0: rect.X0,
+			y0: rect.Y0,
+			x1: rect.X0 + rect.Width,
+			y1: rect.Y0 + rect.Height,
+		})
+	}
+	return nil
+}
+
+func (r RoiRect) intersects(x0, y0, x1, y1 int) bool {
 	return r.x0 < x1 && x0 < r.x1 && r.y0 < y1 && y0 < r.y1
 }

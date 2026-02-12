@@ -232,13 +232,31 @@ func init() {
 func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInfo, p *JPEG2000LossyParameters, baseEncParams *jpeg2000.EncodeParams) ([]byte, error) {
 	encParams := *baseEncParams
 	targetRatio := p.TargetRatio
+	baseQuality := c.initializeBaseQuality(p, targetRatio)
+	c.configureBasicEncodeParams(&encParams, frameInfo, p, baseQuality)
+	c.adjustForSmallImages(&encParams, frameInfo)
+	c.configureTargetRatio(&encParams, p, targetRatio)
+	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
+	c.extractMCTParameters(&encParams, p)
+	encoder := jpeg2000.NewEncoder(&encParams)
+	encoded, err := encoder.Encode(frameData)
+	if err != nil {
+		return nil, fmt.Errorf("JPEG 2000 encode failed: %w", err)
+	}
+	return encoded, nil
+}
+
+func (c *Codec) initializeBaseQuality(p *JPEG2000LossyParameters, targetRatio float64) int {
 	baseQuality := 80
 	if p.Rate > 0 {
 		baseQuality = clampQuality(p.Rate)
 	} else if targetRatio > 0 {
 		baseQuality = qualityFromRatio(targetRatio)
 	}
+	return baseQuality
+}
 
+func (c *Codec) configureBasicEncodeParams(encParams *jpeg2000.EncodeParams, frameInfo *imagetypes.FrameInfo, p *JPEG2000LossyParameters, baseQuality int) {
 	encParams.Lossless = !p.Irreversible
 	encParams.NumLevels = clampNumLevels(p.NumLevels, int(frameInfo.Width), int(frameInfo.Height))
 	encParams.NumLayers = p.NumLayers
@@ -252,7 +270,9 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInf
 		}
 		encParams.Quality = q
 	}
+}
 
+func (c *Codec) adjustForSmallImages(encParams *jpeg2000.EncodeParams, frameInfo *imagetypes.FrameInfo) {
 	minDim := int(frameInfo.Width)
 	if int(frameInfo.Height) < minDim {
 		minDim = int(frameInfo.Height)
@@ -274,6 +294,9 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInf
 			encParams.Quality = 92
 		}
 	}
+}
+
+func (c *Codec) configureTargetRatio(encParams *jpeg2000.EncodeParams, p *JPEG2000LossyParameters, targetRatio float64) {
 	if targetRatio > 0 && !encParams.Lossless {
 		encParams.TargetRatio = targetRatio
 		encParams.UsePCRDOpt = true
@@ -281,65 +304,60 @@ func (c *Codec) encodeFrameOnce(frameData []byte, frameInfo *imagetypes.FrameInf
 			encParams.NumLayers = layersFromRateLevels(p.Rate, p.RateLevels)
 		}
 	}
-	encParams.CustomQuantSteps = customQuantSteps(p, encParams.NumLevels)
+}
 
-	if p != nil {
-		if v := p.GetParameter("mctMatrix"); v != nil {
-			if m, ok := v.([][]float64); ok {
-				encParams.MCTMatrix = m
-			}
-		}
-		if v := p.GetParameter("inverseMctMatrix"); v != nil {
-			if m, ok := v.([][]float64); ok {
-				encParams.InverseMCTMatrix = m
-			}
-		}
-		if v := p.GetParameter("mctOffsets"); v != nil {
-			if m, ok := v.([]int32); ok {
-				encParams.MCTOffsets = m
-			}
-		}
-		if v := p.GetParameter("mctNormScale"); v != nil {
-			switch x := v.(type) {
-			case float64:
-				encParams.MCTNormScale = x
-			case float32:
-				encParams.MCTNormScale = float64(x)
-			}
-		}
-		if v := p.GetParameter("mctAssocType"); v != nil {
-			if t, ok := v.(uint8); ok {
-				encParams.MCTAssocType = t
-			}
-		}
-		if v := p.GetParameter("mctMatrixElementType"); v != nil {
-			if t, ok := v.(uint8); ok {
-				encParams.MCTMatrixElementType = t
-			}
-		}
-		if v := p.GetParameter("mcoPrecision"); v != nil {
-			if t, ok := v.(uint8); ok {
-				encParams.MCOPrecision = t
-			}
-		}
-		if v := p.GetParameter("mcoRecordOrder"); v != nil {
-			if arr, ok := v.([]uint8); ok {
-				encParams.MCORecordOrder = arr
-			}
-		}
-		if v := p.GetParameter("mctBindings"); v != nil {
-			if arr, ok := v.([]jpeg2000.MCTBindingParams); ok {
-				encParams.MCTBindings = arr
-			}
+func (c *Codec) extractMCTParameters(encParams *jpeg2000.EncodeParams, p *JPEG2000LossyParameters) {
+	if p == nil {
+		return
+	}
+	if v := p.GetParameter("mctMatrix"); v != nil {
+		if m, ok := v.([][]float64); ok {
+			encParams.MCTMatrix = m
 		}
 	}
-
-	encoder := jpeg2000.NewEncoder(&encParams)
-	encoded, err := encoder.Encode(frameData)
-	if err != nil {
-		return nil, fmt.Errorf("JPEG 2000 encode failed: %w", err)
+	if v := p.GetParameter("inverseMctMatrix"); v != nil {
+		if m, ok := v.([][]float64); ok {
+			encParams.InverseMCTMatrix = m
+		}
 	}
-	return encoded, nil
+	if v := p.GetParameter("mctOffsets"); v != nil {
+		if m, ok := v.([]int32); ok {
+			encParams.MCTOffsets = m
+		}
+	}
+	if v := p.GetParameter("mctNormScale"); v != nil {
+		switch x := v.(type) {
+		case float64:
+			encParams.MCTNormScale = x
+		case float32:
+			encParams.MCTNormScale = float64(x)
+		}
+	}
+	if v := p.GetParameter("mctAssocType"); v != nil {
+		if t, ok := v.(uint8); ok {
+			encParams.MCTAssocType = t
+		}
+	}
+	if v := p.GetParameter("mctMatrixElementType"); v != nil {
+		if t, ok := v.(uint8); ok {
+			encParams.MCTMatrixElementType = t
+		}
+	}
+	if v := p.GetParameter("mcoPrecision"); v != nil {
+		if t, ok := v.(uint8); ok {
+			encParams.MCOPrecision = t
+		}
+	}
+	if v := p.GetParameter("mcoRecordOrder"); v != nil {
+		if arr, ok := v.([]uint8); ok {
+			encParams.MCORecordOrder = arr
+		}
+	}
+	if v := p.GetParameter("mctBindings"); v != nil {
+		if arr, ok := v.([]jpeg2000.MCTBindingParams); ok {
+			encParams.MCTBindings = arr
+		}
+	}
 }
 
 // encodeFrameWithTargetRatio performs rate control on quality to reach target ratio for a single frame.

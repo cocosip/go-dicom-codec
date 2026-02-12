@@ -49,36 +49,36 @@ const (
 // Each coefficient in a code-block has associated state flags
 const (
 	// Significance flag - coefficient is significant (non-zero)
-	T1_SIG = 0x0001
+	T1Sig = 0x0001
 
 	// Refinement flag - coefficient has been refined
-	T1_REFINE = 0x0002
+	T1Refine = 0x0002
 
 	// Visit flag - coefficient has been visited in current pass
-	T1_VISIT = 0x0004
+	T1Visit = 0x0004
 
 	// Neighbor significance flags (8 directions)
-	T1_SIG_N  = 0x0010 // North (above)
-	T1_SIG_S  = 0x0020 // South (below)
-	T1_SIG_W  = 0x0040 // West (left)
-	T1_SIG_E  = 0x0080 // East (right)
-	T1_SIG_NW = 0x0100 // Northwest
-	T1_SIG_NE = 0x0200 // Northeast
-	T1_SIG_SW = 0x0400 // Southwest
-	T1_SIG_SE = 0x0800 // Southeast
+	T1SigN  = 0x0010 // North (above)
+	T1SigS  = 0x0020 // South (below)
+	T1SigW  = 0x0040 // West (left)
+	T1SigE  = 0x0080 // East (right)
+	T1SigNW = 0x0100 // Northwest
+	T1SigNE = 0x0200 // Northeast
+	T1SigSW = 0x0400 // Southwest
+	T1SigSE = 0x0800 // Southeast
 
 	// Mask for all neighbor significance flags
-	T1_SIG_NEIGHBORS = T1_SIG_N | T1_SIG_S | T1_SIG_W | T1_SIG_E |
-		T1_SIG_NW | T1_SIG_NE | T1_SIG_SW | T1_SIG_SE
+	T1SigNeighbors = T1SigN | T1SigS | T1SigW | T1SigE |
+		T1SigNW | T1SigNE | T1SigSW | T1SigSE
 
 	// Sign flag - coefficient sign (0 = positive, 1 = negative)
-	T1_SIGN = 0x1000
+	T1Sign = 0x1000
 
 	// Neighbor sign flags
-	T1_SIGN_N = 0x2000
-	T1_SIGN_S = 0x4000
-	T1_SIGN_W = 0x8000
-	T1_SIGN_E = 0x10000
+	T1SignN = 0x2000
+	T1SignS = 0x4000
+	T1SignW = 0x8000
+	T1SignE = 0x10000
 )
 
 // Context lookup tables
@@ -237,33 +237,33 @@ func getSignCodingContext(flags uint32) uint8 {
 	idx := uint8(0)
 
 	// West neighbor: Bit 0 (sign), Bit 3 (significance)
-	if flags&T1_SIG_W != 0 {
+	if flags&T1SigW != 0 {
 		idx |= (1 << 3) // West is significant
-		if flags&T1_SIGN_W != 0 {
+		if flags&T1SignW != 0 {
 			idx |= (1 << 0) // West sign (negative)
 		}
 	}
 
 	// North neighbor: Bit 4 (sign), Bit 1 (significance)
-	if flags&T1_SIG_N != 0 {
+	if flags&T1SigN != 0 {
 		idx |= (1 << 1) // North is significant
-		if flags&T1_SIGN_N != 0 {
+		if flags&T1SignN != 0 {
 			idx |= (1 << 4) // North sign (negative)
 		}
 	}
 
 	// East neighbor: Bit 2 (sign), Bit 5 (significance)
-	if flags&T1_SIG_E != 0 {
+	if flags&T1SigE != 0 {
 		idx |= (1 << 5) // East is significant
-		if flags&T1_SIGN_E != 0 {
+		if flags&T1SignE != 0 {
 			idx |= (1 << 2) // East sign (negative)
 		}
 	}
 
 	// South neighbor: Bit 6 (sign), Bit 7 (significance)
-	if flags&T1_SIG_S != 0 {
+	if flags&T1SigS != 0 {
 		idx |= (1 << 7) // South is significant
-		if flags&T1_SIGN_S != 0 {
+		if flags&T1SignS != 0 {
 			idx |= (1 << 6) // South sign (negative)
 		}
 	}
@@ -281,29 +281,29 @@ func getZeroCodingContext(flags uint32, orient int) uint8 {
 	// Build 9-bit index according to OpenJPEG layout
 	idx := uint16(0)
 
-	if flags&T1_SIG_NW != 0 {
+	if flags&T1SigNW != 0 {
 		idx |= (1 << 0)
 	}
-	if flags&T1_SIG_N != 0 {
+	if flags&T1SigN != 0 {
 		idx |= (1 << 1)
 	}
-	if flags&T1_SIG_NE != 0 {
+	if flags&T1SigNE != 0 {
 		idx |= (1 << 2)
 	}
-	if flags&T1_SIG_W != 0 {
+	if flags&T1SigW != 0 {
 		idx |= (1 << 3)
 	}
 	// Bit 4 is unused (current position)
-	if flags&T1_SIG_E != 0 {
+	if flags&T1SigE != 0 {
 		idx |= (1 << 5)
 	}
-	if flags&T1_SIG_SW != 0 {
+	if flags&T1SigSW != 0 {
 		idx |= (1 << 6)
 	}
-	if flags&T1_SIG_S != 0 {
+	if flags&T1SigS != 0 {
 		idx |= (1 << 7)
 	}
-	if flags&T1_SIG_SE != 0 {
+	if flags&T1SigSE != 0 {
 		idx |= (1 << 8)
 	}
 
@@ -318,10 +318,10 @@ func getZeroCodingContext(flags uint32, orient int) uint8 {
 // OpenJPEG logic: neighbor significance selects ctx 14/15, and MU/REFINE selects ctx 16.
 func getMagRefinementContext(flags uint32) uint8 {
 	ctx := uint8(CTXMRSTART)
-	if flags&T1_SIG_NEIGHBORS != 0 {
+	if flags&T1SigNeighbors != 0 {
 		ctx = CTXMRSTART + 1
 	}
-	if flags&T1_REFINE != 0 {
+	if flags&T1Refine != 0 {
 		ctx = CTXMRSTART + 2
 	}
 	return ctx
@@ -333,33 +333,33 @@ func getSignPrediction(flags uint32) int {
 	idx := uint8(0)
 
 	// West neighbor: Bit 0 (sign), Bit 3 (significance)
-	if flags&T1_SIG_W != 0 {
+	if flags&T1SigW != 0 {
 		idx |= (1 << 3) // West is significant
-		if flags&T1_SIGN_W != 0 {
+		if flags&T1SignW != 0 {
 			idx |= (1 << 0) // West sign (negative)
 		}
 	}
 
 	// North neighbor: Bit 4 (sign), Bit 1 (significance)
-	if flags&T1_SIG_N != 0 {
+	if flags&T1SigN != 0 {
 		idx |= (1 << 1) // North is significant
-		if flags&T1_SIGN_N != 0 {
+		if flags&T1SignN != 0 {
 			idx |= (1 << 4) // North sign (negative)
 		}
 	}
 
 	// East neighbor: Bit 2 (sign), Bit 5 (significance)
-	if flags&T1_SIG_E != 0 {
+	if flags&T1SigE != 0 {
 		idx |= (1 << 5) // East is significant
-		if flags&T1_SIGN_E != 0 {
+		if flags&T1SignE != 0 {
 			idx |= (1 << 2) // East sign (negative)
 		}
 	}
 
 	// South neighbor: Bit 6 (sign), Bit 7 (significance)
-	if flags&T1_SIG_S != 0 {
+	if flags&T1SigS != 0 {
 		idx |= (1 << 7) // South is significant
-		if flags&T1_SIGN_S != 0 {
+		if flags&T1SignS != 0 {
 			idx |= (1 << 6) // South sign (negative)
 		}
 	}

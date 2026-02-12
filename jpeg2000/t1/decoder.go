@@ -122,7 +122,7 @@ func (t1 *Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBitp
 			paddedWidth := t1.width + 2
 			paddedHeight := t1.height + 2
 			for i := 0; i < paddedWidth*paddedHeight; i++ {
-				t1.flags[i] &^= T1_VISIT
+				t1.flags[i] &^= T1Visit
 			}
 
 			if t1.roishift > 0 && t1.bitplane >= t1.roishift {
@@ -215,7 +215,7 @@ func (t1 *Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane int
 			paddedWidth := t1.width + 2
 			paddedHeight := t1.height + 2
 			for i := 0; i < paddedWidth*paddedHeight; i++ {
-				t1.flags[i] &^= T1_VISIT
+				t1.flags[i] &^= T1Visit
 			}
 
 			// Check if this bit-plane needs decoding
@@ -315,7 +315,7 @@ func (t1 *Decoder) Decode(data []byte, numPasses int, roishift int) error {
 			paddedWidth := t1.width + 2
 			paddedHeight := t1.height + 2
 			for i := 0; i < paddedWidth*paddedHeight; i++ {
-				t1.flags[i] &^= T1_VISIT
+				t1.flags[i] &^= T1Visit
 			}
 
 			// Check if this bit-plane needs decoding
@@ -395,12 +395,12 @@ func (t1 *Decoder) decodeSigPropPass(raw bool) {
 				flags := t1.flags[idx]
 
 				// Skip if already significant
-				if flags&T1_SIG != 0 {
+				if flags&T1Sig != 0 {
 					continue
 				}
 
 				// Check if has significant neighbor
-				if flags&T1_SIG_NEIGHBORS == 0 {
+				if flags&T1SigNeighbors == 0 {
 					continue
 				}
 
@@ -414,7 +414,7 @@ func (t1 *Decoder) decodeSigPropPass(raw bool) {
 				}
 
 				// Mark as visited in SPP regardless of significance result (OpenJPEG PI flag behavior).
-				t1.flags[idx] |= T1_VISIT
+				t1.flags[idx] |= T1Visit
 
 				if bit != 0 {
 					// Coefficient becomes significant
@@ -433,17 +433,17 @@ func (t1 *Decoder) decodeSigPropPass(raw bool) {
 					// Note: This is the first time this coefficient becomes significant
 					val := int32(1) << uint(t1.bitplane)
 					if sign != 0 {
-						t1.flags[idx] |= T1_SIGN
+						t1.flags[idx] |= T1Sign
 					}
 					// Apply sign to value
-					if t1.flags[idx]&T1_SIGN != 0 {
+					if t1.flags[idx]&T1Sign != 0 {
 						t1.data[idx] = -val
 					} else {
 						t1.data[idx] = val
 					}
 
 					// Mark as significant (VISIT already set for this SPP sample).
-					t1.flags[idx] |= T1_SIG
+					t1.flags[idx] |= T1Sig
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(x, y, idx)
@@ -468,7 +468,7 @@ func (t1 *Decoder) decodeMagRefPass(raw bool) {
 				flags := t1.flags[idx]
 
 				// Only refine significant coefficients not visited in this bit-plane
-				if (flags&T1_SIG) == 0 || (flags&T1_VISIT) != 0 {
+				if (flags&T1Sig) == 0 || (flags&T1Visit) != 0 {
 					continue
 				}
 
@@ -491,7 +491,7 @@ func (t1 *Decoder) decodeMagRefPass(raw bool) {
 				}
 
 				// Mark as refined (OpenJPEG MU flag behavior).
-				t1.flags[idx] |= T1_REFINE
+				t1.flags[idx] |= T1Refine
 			}
 		}
 	}
@@ -518,13 +518,13 @@ func (t1 *Decoder) decodeCleanupPass() {
 					idx := (y+1)*paddedWidth + (i + 1)
 
 					// Skip if already visited
-					if (t1.flags[idx] & T1_VISIT) != 0 {
+					if (t1.flags[idx] & T1Visit) != 0 {
 						canUseRL = false
 						break
 					}
 
 					// Check if coefficient or neighbors are already significant
-					if (t1.flags[idx]&T1_SIG) != 0 || (t1.flags[idx]&T1_SIG_NEIGHBORS) != 0 {
+					if (t1.flags[idx]&T1Sig) != 0 || (t1.flags[idx]&T1SigNeighbors) != 0 {
 						canUseRL = false
 						break
 					}
@@ -552,8 +552,8 @@ func (t1 *Decoder) decodeCleanupPass() {
 						idx := (y+1)*paddedWidth + (i + 1)
 						flags := t1.flags[idx]
 
-						if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
-							t1.flags[idx] &^= T1_VISIT
+						if (flags&T1Visit) != 0 || (flags&T1Sig) != 0 {
+							t1.flags[idx] &^= T1Visit
 							continue
 						}
 
@@ -576,23 +576,23 @@ func (t1 *Decoder) decodeCleanupPass() {
 							// Set coefficient value (2^bitplane) and sign
 							val := int32(1) << uint(t1.bitplane)
 							if sign != 0 {
-								t1.flags[idx] |= T1_SIGN
+								t1.flags[idx] |= T1Sign
 							}
-							if t1.flags[idx]&T1_SIGN != 0 {
+							if t1.flags[idx]&T1Sign != 0 {
 								t1.data[idx] = -val
 							} else {
 								t1.data[idx] = val
 							}
 
 							// Mark as significant. Cleanup pass does not keep PI/VISIT set.
-							t1.flags[idx] |= T1_SIG
+							t1.flags[idx] |= T1Sig
 
 							// Update neighbor flags
 							t1.updateNeighborFlags(i, y, idx)
 						}
 
 						// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
-						t1.flags[idx] &^= T1_VISIT
+						t1.flags[idx] &^= T1Visit
 					}
 
 					continue // RL decoding handled this column, move to next
@@ -605,8 +605,8 @@ func (t1 *Decoder) decodeCleanupPass() {
 				idx := (y+1)*paddedWidth + (i + 1)
 				flags := t1.flags[idx]
 
-				if (flags&T1_VISIT) != 0 || (flags&T1_SIG) != 0 {
-					t1.flags[idx] &^= T1_VISIT
+				if (flags&T1Visit) != 0 || (flags&T1Sig) != 0 {
+					t1.flags[idx] &^= T1Visit
 					continue
 				}
 
@@ -624,23 +624,23 @@ func (t1 *Decoder) decodeCleanupPass() {
 					// Set coefficient value (2^bitplane) and sign
 					val := int32(1) << uint(t1.bitplane)
 					if sign != 0 {
-						t1.flags[idx] |= T1_SIGN
+						t1.flags[idx] |= T1Sign
 					}
-					if t1.flags[idx]&T1_SIGN != 0 {
+					if t1.flags[idx]&T1Sign != 0 {
 						t1.data[idx] = -val
 					} else {
 						t1.data[idx] = val
 					}
 
 					// Mark as significant. Cleanup pass does not keep PI/VISIT set.
-					t1.flags[idx] |= T1_SIG
+					t1.flags[idx] |= T1Sig
 
 					// Update neighbor flags
 					t1.updateNeighborFlags(i, y, idx)
 				}
 
 				// Match OpenJPEG PI behavior: cleanup pass clears PI/VISIT after handling a sample.
-				t1.flags[idx] &^= T1_VISIT
+				t1.flags[idx] &^= T1Visit
 			}
 		}
 	}
@@ -651,48 +651,48 @@ func (t1 *Decoder) decodeCleanupPass() {
 // when a coefficient becomes significant
 func (t1 *Decoder) updateNeighborFlags(x, y, idx int) {
 	paddedWidth := t1.width + 2
-	sign := t1.flags[idx] & T1_SIGN
+	sign := t1.flags[idx] & T1Sign
 
 	// Update 8 neighbors
 	// Padding ensures all neighbors are valid, no boundary checks needed
 
 	// North
 	nIdx := (y)*paddedWidth + (x + 1)
-	t1.flags[nIdx] |= T1_SIG_S
+	t1.flags[nIdx] |= T1SigS
 	if sign != 0 {
-		t1.flags[nIdx] |= T1_SIGN_S
+		t1.flags[nIdx] |= T1SignS
 	}
 
 	// South
 	sIdx := (y+2)*paddedWidth + (x + 1)
-	t1.flags[sIdx] |= T1_SIG_N
+	t1.flags[sIdx] |= T1SigN
 	if sign != 0 {
-		t1.flags[sIdx] |= T1_SIGN_N
+		t1.flags[sIdx] |= T1SignN
 	}
 
 	// West
 	wIdx := (y+1)*paddedWidth + x
-	t1.flags[wIdx] |= T1_SIG_E
+	t1.flags[wIdx] |= T1SigE
 	if sign != 0 {
-		t1.flags[wIdx] |= T1_SIGN_E
+		t1.flags[wIdx] |= T1SignE
 	}
 
 	// East
 	eIdx := (y+1)*paddedWidth + (x + 2)
-	t1.flags[eIdx] |= T1_SIG_W
+	t1.flags[eIdx] |= T1SigW
 	if sign != 0 {
-		t1.flags[eIdx] |= T1_SIGN_W
+		t1.flags[eIdx] |= T1SignW
 	}
 
 	// Northwest
-	t1.flags[(y)*paddedWidth+x] |= T1_SIG_SE
+	t1.flags[(y)*paddedWidth+x] |= T1SigSE
 
 	// Northeast
-	t1.flags[(y)*paddedWidth+(x+2)] |= T1_SIG_SW
+	t1.flags[(y)*paddedWidth+(x+2)] |= T1SigSW
 
 	// Southwest
-	t1.flags[(y+2)*paddedWidth+x] |= T1_SIG_NE
+	t1.flags[(y+2)*paddedWidth+x] |= T1SigNE
 
 	// Southeast
-	t1.flags[(y+2)*paddedWidth+(x+2)] |= T1_SIG_NW
+	t1.flags[(y+2)*paddedWidth+(x+2)] |= T1SigNW
 }

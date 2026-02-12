@@ -115,7 +115,7 @@ func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, laye
 			paddedWidth := t1.width + 2
 			paddedHeight := t1.height + 2
 			for i := 0; i < paddedWidth*paddedHeight; i++ {
-				t1.flags[i] &^= T1_VISIT
+				t1.flags[i] &^= T1Visit
 			}
 
 			// Check if this bit-plane needs encoding

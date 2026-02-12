@@ -144,7 +144,7 @@ type Encoder struct {
 	params    *EncodeParams
 	data      [][]int32 // [component][pixel]
 	roiShifts []int
-	roiRects  [][]roiRect // per-component rectangles
+	RoiRects  [][]RoiRect // per-component rectangles
 	roiStyles []byte      // per-component Srgn value: 0=MaxShift, 1=GeneralScaling
 	roiMasks  []*roiMask  // per-component ROI mask (full-res)
 	qcdReady  bool
@@ -483,102 +483,132 @@ func (e *Encoder) applyMCTBindings() {
 	if len(p.MCTBindings) == 0 {
 		return
 	}
-	width := p.Width
-	height := p.Height
-	n := width * height
-	bindings := p.MCTBindings
+	order := e.determineMCTBindingOrder(p.MCTBindings, p.MCORecordOrder, p.Components)
+	n := p.Width * p.Height
+	for _, idx := range order {
+		e.applyMCTBinding(p.MCTBindings[idx], n, p.Components)
+	}
+}
+
+func (e *Encoder) determineMCTBindingOrder(bindings []MCTBindingParams, mcoOrder []byte, components int) []int {
 	order := make([]int, len(bindings))
 	for i := range bindings {
 		order[i] = i
 	}
-	if len(p.MCORecordOrder) > 0 {
-		allowed := mccIndicesForBindings(bindings, p.Components)
-		if validMCOOrder(p.MCORecordOrder, allowed) {
-			if mapped := bindingOrderForMCO(bindings, p.Components, p.MCORecordOrder); len(mapped) == len(bindings) {
+	if len(mcoOrder) > 0 {
+		allowed := mccIndicesForBindings(bindings, components)
+		if validMCOOrder(mcoOrder, allowed) {
+			if mapped := bindingOrderForMCO(bindings, components, mcoOrder); len(mapped) == len(bindings) {
 				order = mapped
 			}
 		}
 	}
-	for _, idx := range order {
-		b := bindings[idx]
-		compIDs := b.ComponentIDs
-		if len(compIDs) == 0 && p.Components > 0 {
-			compIDs = make([]uint16, p.Components)
-			for i := range compIDs {
-				compIDs[i] = uint16(i)
-			}
+	return order
+}
+
+func (e *Encoder) applyMCTBinding(b MCTBindingParams, n, components int) {
+	compIdx := e.prepareComponentIndices(b.ComponentIDs, components)
+	if len(compIdx) == 0 {
+		return
+	}
+	e.applyMCTOffsets(b.Offsets, compIdx, n)
+	matrix := e.prepareTransformMatrix(b.Matrix, len(compIdx))
+	if b.ElementType == 0 {
+		e.applyIntegerMatrixTransform(matrix, compIdx, n)
+	} else {
+		e.applyFixedPointMatrixTransform(matrix, compIdx, n)
+	}
+}
+
+func (e *Encoder) prepareComponentIndices(componentIDs []uint16, components int) []int {
+	compIDs := componentIDs
+	if len(compIDs) == 0 && components > 0 {
+		compIDs = make([]uint16, components)
+		for i := range compIDs {
+			compIDs[i] = uint16(i)
 		}
-		if len(compIDs) == 0 {
+	}
+	if len(compIDs) == 0 {
+		return nil
+	}
+	compIdx := make([]int, len(compIDs))
+	for i := range compIDs {
+		compIdx[i] = int(compIDs[i])
+	}
+	return compIdx
+}
+
+func (e *Encoder) applyMCTOffsets(offsets []int32, compIdx []int, n int) {
+	if offsets == nil || len(offsets) != len(compIdx) {
+		return
+	}
+	for idx, cid := range compIdx {
+		off := offsets[idx]
+		if off == 0 {
 			continue
 		}
-		compIdx := make([]int, len(compIDs))
-		for i := range compIDs {
-			compIdx[i] = int(compIDs[i])
+		for i := 0; i < n; i++ {
+			e.data[cid][i] -= off
 		}
-		if b.Offsets != nil && len(b.Offsets) == len(compIdx) {
-			for idx, cid := range compIdx {
-				off := b.Offsets[idx]
-				if off == 0 {
-					continue
-				}
-				for i := 0; i < n; i++ {
-					e.data[cid][i] -= off
-				}
-			}
+	}
+}
+
+func (e *Encoder) prepareTransformMatrix(matrix [][]float64, size int) [][]float64 {
+	if matrix != nil && len(matrix) == size {
+		return matrix
+	}
+	result := make([][]float64, size)
+	for r := range result {
+		result[r] = make([]float64, size)
+		if r < size {
+			result[r][r] = 1
 		}
-		matrix := b.Matrix
-		if matrix == nil || len(matrix) != len(compIdx) {
-			matrix = make([][]float64, len(compIdx))
-			for r := range matrix {
-				matrix[r] = make([]float64, len(compIdx))
-				if r < len(compIdx) {
-					matrix[r][r] = 1
-				}
-			}
+	}
+	return result
+}
+
+func (e *Encoder) applyIntegerMatrixTransform(matrix [][]float64, compIdx []int, n int) {
+	im := make([][]int32, len(compIdx))
+	for r := range matrix {
+		im[r] = make([]int32, len(compIdx))
+		for k := range matrix[r] {
+			im[r][k] = int32(matrix[r][k])
 		}
-		useInt := b.ElementType == 0
-		if useInt {
-			im := make([][]int32, len(compIdx))
-			for r := range matrix {
-				im[r] = make([]int32, len(compIdx))
-				for k := range matrix[r] {
-					im[r][k] = int32(matrix[r][k])
-				}
+	}
+	for i := 0; i < n; i++ {
+		out := make([]int32, len(compIdx))
+		for r := range im {
+			var sum int64
+			for k := range im[r] {
+				sum += int64(im[r][k]) * int64(e.data[compIdx[k]][i])
 			}
-			for i := 0; i < n; i++ {
-				out := make([]int32, len(compIdx))
-				for r := range im {
-					var sum int64
-					for k := range im[r] {
-						sum += int64(im[r][k]) * int64(e.data[compIdx[k]][i])
-					}
-					out[r] = int32(sum)
-				}
-				for r := range out {
-					e.data[compIdx[r]][i] = out[r]
-				}
+			out[r] = int32(sum)
+		}
+		for r := range out {
+			e.data[compIdx[r]][i] = out[r]
+		}
+	}
+}
+
+func (e *Encoder) applyFixedPointMatrixTransform(matrix [][]float64, compIdx []int, n int) {
+	fixed := make([][]int32, len(compIdx))
+	for r := range matrix {
+		fixed[r] = make([]int32, len(compIdx))
+		for k := range matrix[r] {
+			fixed[r][k] = int32(matrix[r][k] * float64(1<<13))
+		}
+	}
+	for i := 0; i < n; i++ {
+		out := make([]int32, len(compIdx))
+		for r := range fixed {
+			var sum int32
+			for k := range fixed[r] {
+				sum += mctFixedMul(fixed[r][k], e.data[compIdx[k]][i])
 			}
-		} else {
-			fixed := make([][]int32, len(compIdx))
-			for r := range matrix {
-				fixed[r] = make([]int32, len(compIdx))
-				for k := range matrix[r] {
-					fixed[r][k] = int32(matrix[r][k] * float64(1<<13))
-				}
-			}
-			for i := 0; i < n; i++ {
-				out := make([]int32, len(compIdx))
-				for r := range fixed {
-					var sum int32
-					for k := range fixed[r] {
-						sum += mctFixedMul(fixed[r][k], e.data[compIdx[k]][i])
-					}
-					out[r] = sum
-				}
-				for r := range out {
-					e.data[compIdx[r]][i] = out[r]
-				}
-			}
+			out[r] = sum
+		}
+		for r := range out {
+			e.data[compIdx[r]][i] = out[r]
 		}
 	}
 }
@@ -970,7 +1000,7 @@ func bindingOrderForMCO(bindings []MCTBindingParams, components int, order []uin
 // resolveROI normalizes ROI inputs (legacy ROI or ROIConfig) into internal slices.
 func (e *Encoder) resolveROI() error {
 	e.roiShifts = nil
-	e.roiRects = nil
+	e.RoiRects = nil
 	e.roiStyles = nil
 	e.roiMasks = nil
 
@@ -981,7 +1011,7 @@ func (e *Encoder) resolveROI() error {
 			return err
 		}
 		e.roiShifts = shifts
-		e.roiRects = rectsByComp
+		e.RoiRects = rectsByComp
 		e.roiMasks = buildMasksFromConfig(e.params.Width, e.params.Height, e.params.Components, rectsByComp, e.params.ROIConfig)
 		if len(shifts) > 0 {
 			e.roiStyles = make([]byte, len(shifts))
@@ -998,13 +1028,13 @@ func (e *Encoder) resolveROI() error {
 			return fmt.Errorf("invalid ROI parameters: %+v", *e.params.ROI)
 		}
 		e.roiShifts = make([]int, e.params.Components)
-		e.roiRects = make([][]roiRect, e.params.Components)
+		e.RoiRects = make([][]RoiRect, e.params.Components)
 		e.roiStyles = make([]byte, e.params.Components)
 		e.roiMasks = make([]*roiMask, e.params.Components)
 		for c := 0; c < e.params.Components; c++ {
 			e.roiShifts[c] = e.params.ROI.Shift
 			e.roiStyles[c] = 0
-			e.roiRects[c] = []roiRect{{
+			e.RoiRects[c] = []RoiRect{{
 				x0: e.params.ROI.X0,
 				y0: e.params.ROI.Y0,
 				x1: e.params.ROI.X0 + e.params.ROI.Width,
@@ -2388,6 +2418,16 @@ func (e *Encoder) applyRateDistortionGlobal(blocks []*t2.PrecinctCodeBlock, pack
 
 // applyRateDistortionWithBudget performs allocation using a target total packet-data budget in bytes.
 func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, targetBudget float64) {
+	numLayers, appendLossless := e.initRDLayerConfig()
+	passesPerBlock, totalRate := e.collectRDPassesAndRate(blocks)
+	budget := e.computeRDBudget(targetBudget, totalRate)
+	alloc := e.computeRDLayerAllocation(passesPerBlock, numLayers, budget)
+	for idx, cb := range blocks {
+		e.finalizeRDCodeBlockLayers(cb, idx, numLayers, alloc, appendLossless)
+	}
+}
+
+func (e *Encoder) initRDLayerConfig() (int, bool) {
 	numLayers := e.params.NumLayers
 	if numLayers <= 0 {
 		numLayers = 1
@@ -2396,6 +2436,10 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 	if e.params.Lossless && numLayers > 1 {
 		appendLossless = true
 	}
+	return numLayers, appendLossless
+}
+
+func (e *Encoder) collectRDPassesAndRate(blocks []*t2.PrecinctCodeBlock) ([][]t1.PassData, float64) {
 	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
 	totalRate := 0.0
 	for _, cb := range blocks {
@@ -2409,93 +2453,110 @@ func (e *Encoder) applyRateDistortionWithBudget(blocks []*t2.PrecinctCodeBlock, 
 			totalRate += float64(bytes)
 		}
 	}
+	return passesPerBlock, totalRate
+}
+
+func (e *Encoder) computeRDBudget(targetBudget, totalRate float64) float64 {
 	budget := targetBudget
 	if budget <= 0 || budget > totalRate {
 		budget = totalRate
 	}
-	var alloc *LayerAllocation
+	return budget
+}
+
+func (e *Encoder) computeRDLayerAllocation(passesPerBlock [][]t1.PassData, numLayers int, budget float64) *LayerAllocation {
 	if e.params.UsePCRDOpt && e.params.TargetRatio > 8.0 {
 		layerBudgets := ComputeLayerBudgets(budget, numLayers, e.params.LayerBudgetStrategy)
-		alloc = AllocateLayersWithLambda(passesPerBlock, numLayers, layerBudgets, e.params.LambdaTolerance)
-	} else {
-		alloc = AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+		return AllocateLayersWithLambda(passesPerBlock, numLayers, layerBudgets, e.params.LambdaTolerance)
 	}
-	for idx, cb := range blocks {
-		if len(cb.Passes) == 0 || cb.CompleteData == nil {
-			continue
-		}
-		if len(cb.PassLengths) == 0 {
-			cb.PassLengths = make([]int, len(cb.Passes))
-			for i, p := range cb.Passes {
-				cb.PassLengths[i] = p.ActualBytes
-			}
-		}
-		cb.LayerPasses = make([]int, numLayers)
-		cb.LayerData = make([][]byte, numLayers)
-		prevEnd := 0
-		for layer := 0; layer < numLayers; layer++ {
-			passCount := alloc.GetPassesForLayer(idx, layer)
-			if passCount > len(cb.Passes) {
-				passCount = len(cb.Passes)
-			}
-			cb.LayerPasses[layer] = passCount
-			end := prevEnd
-			if passCount > 0 {
-				end = cb.Passes[passCount-1].ActualBytes
-				if end == 0 {
-					end = cb.Passes[passCount-1].Rate
-				}
-			}
-			if end < prevEnd {
-				end = prevEnd
-			}
-			if end > len(cb.CompleteData) {
-				end = len(cb.CompleteData)
-			}
-			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
-			prevEnd = end
-		}
-		if appendLossless && len(cb.Passes) > 0 {
-			last := numLayers - 1
-			prevPasses := 0
-			if last > 0 && (last-1) < len(cb.LayerPasses) {
-				prevPasses = cb.LayerPasses[last-1]
-			}
-			if prevPasses < 0 {
-				prevPasses = 0
-			}
-			if prevPasses > len(cb.Passes) {
-				prevPasses = len(cb.Passes)
-			}
+	return AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
+}
 
-			fullPasses := len(cb.Passes)
-			cb.LayerPasses[last] = fullPasses
+func (e *Encoder) finalizeRDCodeBlockLayers(cb *t2.PrecinctCodeBlock, idx, numLayers int, alloc *LayerAllocation, appendLossless bool) {
+	if len(cb.Passes) == 0 || cb.CompleteData == nil {
+		return
+	}
+	e.initRDPassLengths(cb)
+	cb.LayerPasses = make([]int, numLayers)
+	cb.LayerData = make([][]byte, numLayers)
+	e.allocateRDLayerData(cb, idx, numLayers, alloc)
+	if appendLossless && len(cb.Passes) > 0 {
+		e.appendRDLosslessLayer(cb, numLayers)
+	}
+	cb.Data = cb.CompleteData
+	cb.UseTERMALL = numLayers > 1
+}
 
-			start := 0
-			if prevPasses > 0 {
-				start = cb.Passes[prevPasses-1].ActualBytes
-				if start == 0 {
-					start = cb.Passes[prevPasses-1].Rate
-				}
-			}
-			end := cb.Passes[fullPasses-1].ActualBytes
+func (e *Encoder) initRDPassLengths(cb *t2.PrecinctCodeBlock) {
+	if len(cb.PassLengths) == 0 {
+		cb.PassLengths = make([]int, len(cb.Passes))
+		for i, p := range cb.Passes {
+			cb.PassLengths[i] = p.ActualBytes
+		}
+	}
+}
+
+func (e *Encoder) allocateRDLayerData(cb *t2.PrecinctCodeBlock, idx, numLayers int, alloc *LayerAllocation) {
+	prevEnd := 0
+	for layer := 0; layer < numLayers; layer++ {
+		passCount := alloc.GetPassesForLayer(idx, layer)
+		if passCount > len(cb.Passes) {
+			passCount = len(cb.Passes)
+		}
+		cb.LayerPasses[layer] = passCount
+		end := prevEnd
+		if passCount > 0 {
+			end = cb.Passes[passCount-1].ActualBytes
 			if end == 0 {
-				end = cb.Passes[fullPasses-1].Rate
+				end = cb.Passes[passCount-1].Rate
 			}
-			if start < 0 {
-				start = 0
-			}
-			if end < start {
-				end = start
-			}
-			if end > len(cb.CompleteData) {
-				end = len(cb.CompleteData)
-			}
-			cb.LayerData[last] = cb.CompleteData[start:end]
 		}
-		cb.Data = cb.CompleteData
-		cb.UseTERMALL = numLayers > 1 // Only use TERMALL for multi-layer
+		if end < prevEnd {
+			end = prevEnd
+		}
+		if end > len(cb.CompleteData) {
+			end = len(cb.CompleteData)
+		}
+		cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
+		prevEnd = end
 	}
+}
+
+func (e *Encoder) appendRDLosslessLayer(cb *t2.PrecinctCodeBlock, numLayers int) {
+	last := numLayers - 1
+	prevPasses := 0
+	if last > 0 && (last-1) < len(cb.LayerPasses) {
+		prevPasses = cb.LayerPasses[last-1]
+	}
+	if prevPasses < 0 {
+		prevPasses = 0
+	}
+	if prevPasses > len(cb.Passes) {
+		prevPasses = len(cb.Passes)
+	}
+	fullPasses := len(cb.Passes)
+	cb.LayerPasses[last] = fullPasses
+	start := 0
+	if prevPasses > 0 {
+		start = cb.Passes[prevPasses-1].ActualBytes
+		if start == 0 {
+			start = cb.Passes[prevPasses-1].Rate
+		}
+	}
+	end := cb.Passes[fullPasses-1].ActualBytes
+	if end == 0 {
+		end = cb.Passes[fullPasses-1].Rate
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end < start {
+		end = start
+	}
+	if end > len(cb.CompleteData) {
+		end = len(cb.CompleteData)
+	}
+	cb.LayerData[last] = cb.CompleteData[start:end]
 }
 
 // applyRateDistortion truncates/allocates passes across layers using PCRD-style allocation.
@@ -3130,7 +3191,7 @@ func (e *Encoder) roiContext(cb codeBlockInfo) (byte, int, bool) {
 	if hasMask {
 		inside = maskAnyTrue(cb.mask)
 	} else {
-		rects := e.roiRects[cb.compIdx]
+		rects := e.RoiRects[cb.compIdx]
 		for _, rect := range rects {
 			if rect.intersects(x0, y0, x1, y1) {
 				inside = true

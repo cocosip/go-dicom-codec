@@ -119,14 +119,14 @@ func TestT1EBCOTFeatures(t *testing.T) {
 			name string
 			flag uint32
 		}{
-			{"T1_SIG_N", t1.T1_SIG_N},
-			{"T1_SIG_S", t1.T1_SIG_S},
-			{"T1_SIG_E", t1.T1_SIG_E},
-			{"T1_SIG_W", t1.T1_SIG_W},
-			{"T1_SIG_NE", t1.T1_SIG_NE},
-			{"T1_SIG_NW", t1.T1_SIG_NW},
-			{"T1_SIG_SE", t1.T1_SIG_SE},
-			{"T1_SIG_SW", t1.T1_SIG_SW},
+			{"T1_SIG_N", t1.T1SigN},
+			{"T1_SIG_S", t1.T1SigS},
+			{"T1_SIG_E", t1.T1SigE},
+			{"T1_SIG_W", t1.T1SigW},
+			{"T1_SIG_NE", t1.T1SigNE},
+			{"T1_SIG_NW", t1.T1SigNW},
+			{"T1_SIG_SE", t1.T1SigSE},
+			{"T1_SIG_SW", t1.T1SigSW},
 		}
 
 		// All flags must be non-zero and unique
@@ -142,11 +142,11 @@ func TestT1EBCOTFeatures(t *testing.T) {
 		}
 
 		// Verify T1_SIG_NEIGHBORS mask
-		expectedMask := t1.T1_SIG_N | t1.T1_SIG_S | t1.T1_SIG_E | t1.T1_SIG_W |
-			t1.T1_SIG_NE | t1.T1_SIG_NW | t1.T1_SIG_SE | t1.T1_SIG_SW
+		expectedMask := t1.T1SigN | t1.T1SigS | t1.T1SigE | t1.T1SigW |
+			t1.T1SigNE | t1.T1SigNW | t1.T1SigSE | t1.T1SigSW
 
-		if t1.T1_SIG_NEIGHBORS != expectedMask {
-			t.Errorf("T1_SIG_NEIGHBORS = 0x%X, want 0x%X", t1.T1_SIG_NEIGHBORS, expectedMask)
+		if t1.T1SigNeighbors != expectedMask {
+			t.Errorf("T1_SIG_NEIGHBORS = 0x%X, want 0x%X", t1.T1SigNeighbors, expectedMask)
 		}
 
 		t.Log("✅ 8-neighborhood significance pattern verified")

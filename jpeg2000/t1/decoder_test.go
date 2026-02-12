@@ -60,10 +60,10 @@ func TestContextModeling(t *testing.T) {
 			flags uint32
 		}{
 			{"No significant neighbors", 0},
-			{"One horizontal neighbor", T1_SIG_E},
-			{"One vertical neighbor", T1_SIG_N},
-			{"One diagonal neighbor", T1_SIG_NE},
-			{"All neighbors significant", T1_SIG_N | T1_SIG_S | T1_SIG_E | T1_SIG_W | T1_SIG_NE | T1_SIG_NW | T1_SIG_SE | T1_SIG_SW},
+			{"One horizontal neighbor", T1SigE},
+			{"One vertical neighbor", T1SigN},
+			{"One diagonal neighbor", T1SigNE},
+			{"All neighbors significant", T1SigN | T1SigS | T1SigE | T1SigW | T1SigNE | T1SigNW | T1SigSE | T1SigSW},
 		}
 
 		for _, tt := range tests {
@@ -85,9 +85,9 @@ func TestContextModeling(t *testing.T) {
 			flags uint32
 		}{
 			{"No sign neighbors", 0},
-			{"Positive east", T1_SIG_E | T1_SIGN_E},
-			{"Negative east", T1_SIG_E},
-			{"Mixed signs", T1_SIG_E | T1_SIGN_E | T1_SIG_W},
+			{"Positive east", T1SigE | T1SignE},
+			{"Negative east", T1SigE},
+			{"Mixed signs", T1SigE | T1SignE | T1SigW},
 		}
 
 		for _, tt := range tests {
@@ -107,9 +107,9 @@ func TestContextModeling(t *testing.T) {
 			flags uint32
 		}{
 			{"No neighbors", 0},
-			{"One neighbor", T1_SIG_E},
-			{"Three neighbors", T1_SIG_E | T1_SIG_W | T1_SIG_N},
-			{"All neighbors", T1_SIG_N | T1_SIG_S | T1_SIG_E | T1_SIG_W | T1_SIG_NE | T1_SIG_NW | T1_SIG_SE | T1_SIG_SW},
+			{"One neighbor", T1SigE},
+			{"Three neighbors", T1SigE | T1SigW | T1SigN},
+			{"All neighbors", T1SigN | T1SigS | T1SigE | T1SigW | T1SigNE | T1SigNW | T1SigSE | T1SigSW},
 		}
 
 		for _, tt := range tests {
@@ -132,9 +132,9 @@ func TestSignPrediction(t *testing.T) {
 		flags uint32
 	}{
 		{"No neighbors", 0},
-		{"Positive neighbors", T1_SIG_E | T1_SIGN_E | T1_SIG_W | T1_SIGN_W},
-		{"Negative neighbors", T1_SIG_E | T1_SIG_W},
-		{"Mixed neighbors", T1_SIG_E | T1_SIGN_E | T1_SIG_W},
+		{"Positive neighbors", T1SigE | T1SignE | T1SigW | T1SignW},
+		{"Negative neighbors", T1SigE | T1SigW},
+		{"Mixed neighbors", T1SigE | T1SignE | T1SigW},
 	}
 
 	for _, tt := range tests {
@@ -200,42 +200,42 @@ func TestUpdateNeighborFlags(t *testing.T) {
 		// Set a coefficient as significant at position (4, 4)
 		x, y := 4, 4
 		idx := (y+1)*paddedWidth + (x + 1)
-		decoder.flags[idx] = T1_SIG | T1_SIGN
+		decoder.flags[idx] = T1Sig | T1Sign
 
 		// Update neighbor flags
 		decoder.updateNeighborFlags(x, y, idx)
 
 		// Check north neighbor
 		nIdx := (y)*paddedWidth + (x + 1)
-		if decoder.flags[nIdx]&T1_SIG_S == 0 {
-			t.Error("North neighbor should have T1_SIG_S flag")
+		if decoder.flags[nIdx]&T1SigS == 0 {
+			t.Error("North neighbor should have T1SigS flag")
 		}
-		if decoder.flags[nIdx]&T1_SIGN_S == 0 {
-			t.Error("North neighbor should have T1_SIGN_S flag")
+		if decoder.flags[nIdx]&T1SignS == 0 {
+			t.Error("North neighbor should have T1SignS flag")
 		}
 
 		// Check south neighbor
 		sIdx := (y+2)*paddedWidth + (x + 1)
-		if decoder.flags[sIdx]&T1_SIG_N == 0 {
-			t.Error("South neighbor should have T1_SIG_N flag")
+		if decoder.flags[sIdx]&T1SigN == 0 {
+			t.Error("South neighbor should have T1SigN flag")
 		}
 
 		// Check east neighbor
 		eIdx := (y+1)*paddedWidth + (x + 2)
-		if decoder.flags[eIdx]&T1_SIG_W == 0 {
-			t.Error("East neighbor should have T1_SIG_W flag")
+		if decoder.flags[eIdx]&T1SigW == 0 {
+			t.Error("East neighbor should have T1SigW flag")
 		}
 
 		// Check west neighbor
 		wIdx := (y+1)*paddedWidth + x
-		if decoder.flags[wIdx]&T1_SIG_E == 0 {
-			t.Error("West neighbor should have T1_SIG_E flag")
+		if decoder.flags[wIdx]&T1SigE == 0 {
+			t.Error("West neighbor should have T1SigE flag")
 		}
 
 		// Check diagonal neighbors
 		neIdx := (y)*paddedWidth + (x + 2)
-		if decoder.flags[neIdx]&T1_SIG_SW == 0 {
-			t.Error("Northeast neighbor should have T1_SIG_SW flag")
+		if decoder.flags[neIdx]&T1SigSW == 0 {
+			t.Error("Northeast neighbor should have T1SigSW flag")
 		}
 	})
 
@@ -246,18 +246,18 @@ func TestUpdateNeighborFlags(t *testing.T) {
 		x, y := 0, 0
 		paddedWidth := 8 + 2
 		idx := (y+1)*paddedWidth + (x + 1)
-		decoder.flags[idx] = T1_SIG
+		decoder.flags[idx] = T1Sig
 
 		decoder.updateNeighborFlags(x, y, idx)
 
 		// Only south and east neighbors should be updated
 		sIdx := (y+2)*paddedWidth + (x + 1)
-		if decoder.flags[sIdx]&T1_SIG_N == 0 {
+		if decoder.flags[sIdx]&T1SigN == 0 {
 			t.Error("South neighbor should be updated at corner")
 		}
 
 		eIdx := (y+1)*paddedWidth + (x + 2)
-		if decoder.flags[eIdx]&T1_SIG_W == 0 {
+		if decoder.flags[eIdx]&T1SigW == 0 {
 			t.Error("East neighbor should be updated at corner")
 		}
 	})
@@ -356,10 +356,10 @@ func TestConstants(t *testing.T) {
 	t.Run("Flag bits", func(t *testing.T) {
 		// Verify flags don't overlap (except for combined masks)
 		flags := []uint32{
-			T1_SIG, T1_REFINE, T1_VISIT,
-			T1_SIG_N, T1_SIG_S, T1_SIG_E, T1_SIG_W,
-			T1_SIG_NE, T1_SIG_NW, T1_SIG_SE, T1_SIG_SW,
-			T1_SIGN, T1_SIGN_N, T1_SIGN_S, T1_SIGN_E, T1_SIGN_W,
+			T1Sig, T1Refine, T1Visit,
+			T1SigN, T1SigS, T1SigE, T1SigW,
+			T1SigNE, T1SigNW, T1SigSE, T1SigSW,
+			T1Sign, T1SignN, T1SignS, T1SignE, T1SignW,
 		}
 
 		for i := 0; i < len(flags); i++ {

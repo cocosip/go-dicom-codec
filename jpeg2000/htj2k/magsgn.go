@@ -81,11 +81,7 @@ func (m *MagSgnEncoder) Flush() []byte {
 			m.tmp |= byte((0xFF & ((1 << remaining) - 1)) << m.usedBits)
 			m.usedBits += remaining
 		}
-		if m.tmp != 0xFF {
-			m.buffer = append(m.buffer, m.tmp)
-		}
-	} else if m.maxBits == 7 && len(m.buffer) > 0 {
-		m.buffer = m.buffer[:len(m.buffer)-1]
+		m.buffer = append(m.buffer, m.tmp)
 	}
 
 	m.tmp = 0

@@ -108,8 +108,8 @@ func (m *roiMask) downsample(x0, y0, x1, y1, step int) [][]bool {
 	return out
 }
 
-// buildRectMasks constructs per-component masks from roiRects.
-func buildRectMasks(width, height int, rects [][]roiRect) []*roiMask {
+// buildRectMasks constructs per-component masks from RoiRects.
+func buildRectMasks(width, height int, rects [][]RoiRect) []*roiMask {
 	if len(rects) == 0 {
 		return nil
 	}
@@ -139,9 +139,9 @@ func maskFromBitmap(width, height int, mw, mh int, data []bool) *roiMask {
 
 // boundingRectFromMask computes the bounding box of true pixels in a bitmap.
 // Returns rect and a boolean indicating whether any pixel was set.
-func boundingRectFromMask(mw, mh int, data []bool) (roiRect, bool) {
+func boundingRectFromMask(mw, mh int, data []bool) (RoiRect, bool) {
 	if mw <= 0 || mh <= 0 || len(data) != mw*mh {
-		return roiRect{}, false
+		return RoiRect{}, false
 	}
 	x0, y0 := mw, mh
 	x1, y1 := 0, 0
@@ -171,9 +171,9 @@ func boundingRectFromMask(mw, mh int, data []bool) (roiRect, bool) {
 		}
 	}
 	if !found {
-		return roiRect{}, false
+		return RoiRect{}, false
 	}
-	return roiRect{x0: x0, y0: y0, x1: x1, y1: y1}, true
+	return RoiRect{x0: x0, y0: y0, x1: x1, y1: y1}, true
 }
 
 // rasterizePolygon creates a mask from polygon points using even-odd rule.
@@ -236,7 +236,7 @@ func rasterizePolygon(width, height int, pts []Point) *roiMask {
 }
 
 // buildMasksFromConfig builds per-component masks from ROIConfig regions (rectangles + optional polygon/mask).
-func buildMasksFromConfig(width, height, components int, rects [][]roiRect, cfg *ROIConfig) []*roiMask {
+func buildMasksFromConfig(width, height, components int, rects [][]RoiRect, cfg *ROIConfig) []*roiMask {
 	if cfg == nil || len(cfg.ROIs) == 0 {
 		return buildRectMasks(width, height, rects)
 	}

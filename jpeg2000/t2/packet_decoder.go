@@ -556,6 +556,13 @@ func (pd *PacketDecoder) GetPackets() []Packet {
 	return pd.packets
 }
 
+// cbEntry represents a code-block entry for precinct ordering
+type cbEntry struct {
+	cbx    int
+	cby    int
+	global int
+}
+
 // buildPrecinctOrder builds the mapping from precinct index to code-block order
 // for each resolution, mirroring the encoder traversal.
 func (pd *PacketDecoder) buildPrecinctOrder() {
@@ -563,135 +570,168 @@ func (pd *PacketDecoder) buildPrecinctOrder() {
 		return
 	}
 
+	pd.initializePrecinctMaps()
+
+	cbw, cbh := pd.cbWidth, pd.cbHeight
+	for comp := 0; comp < pd.numComponents; comp++ {
+		pd.initializeComponentMaps(comp)
+		pd.buildComponentPrecinctOrder(comp, cbw, cbh)
+	}
+}
+
+func (pd *PacketDecoder) initializePrecinctMaps() {
 	if pd.cbPrecinctPositions == nil {
 		pd.cbPrecinctPositions = make(map[int]map[int]map[int]map[int][]cbPosition)
 	}
 	if pd.cbPrecinctDims == nil {
 		pd.cbPrecinctDims = make(map[int]map[int]map[int]map[int]cbGridDim)
 	}
+}
 
-	cbw, cbh := pd.cbWidth, pd.cbHeight
-	for comp := 0; comp < pd.numComponents; comp++ {
-		if pd.cbPrecinctOrder[comp] == nil {
-			pd.cbPrecinctOrder[comp] = make(map[int]map[int][]int)
-		}
-		if pd.cbPrecinctPositions[comp] == nil {
-			pd.cbPrecinctPositions[comp] = make(map[int]map[int]map[int][]cbPosition)
-		}
-		if pd.cbPrecinctDims[comp] == nil {
-			pd.cbPrecinctDims[comp] = make(map[int]map[int]map[int]cbGridDim)
-		}
+func (pd *PacketDecoder) initializeComponentMaps(comp int) {
+	if pd.cbPrecinctOrder[comp] == nil {
+		pd.cbPrecinctOrder[comp] = make(map[int]map[int][]int)
+	}
+	if pd.cbPrecinctPositions[comp] == nil {
+		pd.cbPrecinctPositions[comp] = make(map[int]map[int]map[int][]cbPosition)
+	}
+	if pd.cbPrecinctDims[comp] == nil {
+		pd.cbPrecinctDims[comp] = make(map[int]map[int]map[int]cbGridDim)
+	}
+}
 
-		b := pd.componentBoundsFor(comp)
-		compWidth := b.x1 - b.x0
-		compHeight := b.y1 - b.y0
-		if compWidth <= 0 || compHeight <= 0 {
+func (pd *PacketDecoder) buildComponentPrecinctOrder(comp, cbw, cbh int) {
+	b := pd.componentBoundsFor(comp)
+	compWidth := b.x1 - b.x0
+	compHeight := b.y1 - b.y0
+	if compWidth <= 0 || compHeight <= 0 {
+		return
+	}
+
+	globalCBIdx := 0
+	for res := 0; res < pd.numResolutions; res++ {
+		globalCBIdx = pd.buildResolutionPrecinctOrder(comp, res, b, compWidth, compHeight, cbw, cbh, globalCBIdx)
+	}
+}
+
+func (pd *PacketDecoder) buildResolutionPrecinctOrder(comp, res int, b componentBounds, compWidth, compHeight, cbw, cbh, globalCBIdx int) int {
+	pw, ph := pd.precinctSizeForResolution(res)
+	if pd.cbPrecinctOrder[comp][res] == nil {
+		pd.cbPrecinctOrder[comp][res] = make(map[int][]int)
+	}
+
+	precinctBands := make(map[int]map[int][]cbEntry)
+
+	resW, resH, resX0, resY0, bands := bandInfosForResolution(compWidth, compHeight, b.x0, b.y0, pd.numLevels, res)
+	if resW <= 0 || resH <= 0 {
+		return globalCBIdx
+	}
+
+	startX := floorDiv(resX0, pw) * pw
+	startY := floorDiv(resY0, ph) * ph
+	endX := ceilDiv(resX0+resW, pw) * pw
+	numPrecinctX := (endX - startX) / pw
+	if numPrecinctX < 1 {
+		numPrecinctX = 1
+	}
+
+	globalCBIdx = pd.collectCodeBlockEntries(bands, cbw, cbh, resX0, resY0, startX, startY, pw, ph, numPrecinctX, precinctBands, globalCBIdx)
+
+	bandOrder := pd.getBandOrder(res)
+	pd.storePrecinctBands(comp, res, precinctBands, bandOrder)
+
+	return globalCBIdx
+}
+
+func (pd *PacketDecoder) collectCodeBlockEntries(bands []bandInfo, cbw, cbh, resX0, resY0, startX, startY, pw, ph, numPrecinctX int, precinctBands map[int]map[int][]cbEntry, globalCBIdx int) int {
+	for _, bandInfo := range bands {
+		if bandInfo.width <= 0 || bandInfo.height <= 0 {
 			continue
 		}
+		numCBX := (bandInfo.width + cbw - 1) / cbw
+		numCBY := (bandInfo.height + cbh - 1) / cbh
+		for cby := 0; cby < numCBY; cby++ {
+			for cbx := 0; cbx < numCBX; cbx++ {
+				cbX0 := cbx * cbw
+				cbY0 := cby * cbh
+				absResX0 := resX0 + cbX0
+				absResY0 := resY0 + cbY0
+				px := (absResX0 - startX) / pw
+				py := (absResY0 - startY) / ph
+				pIdx := py*numPrecinctX + px
+				localX := absResX0 - (startX + px*pw)
+				localY := absResY0 - (startY + py*ph)
+				cbxLocal := localX / cbw
+				cbyLocal := localY / cbh
 
-		globalCBIdx := 0
-		for res := 0; res < pd.numResolutions; res++ {
-			pw, ph := pd.precinctSizeForResolution(res)
-			if pd.cbPrecinctOrder[comp][res] == nil {
-				pd.cbPrecinctOrder[comp][res] = make(map[int][]int)
-			}
-			type cbEntry struct {
-				cbx    int
-				cby    int
-				global int
-			}
-			precinctBands := make(map[int]map[int][]cbEntry)
-			addEntry := func(pIdx, band, cbxLocal, cbyLocal, global int) {
 				if precinctBands[pIdx] == nil {
 					precinctBands[pIdx] = make(map[int][]cbEntry)
 				}
-				precinctBands[pIdx][band] = append(precinctBands[pIdx][band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: global})
-			}
-
-			resW, resH, resX0, resY0, bands := bandInfosForResolution(compWidth, compHeight, b.x0, b.y0, pd.numLevels, res)
-			if resW <= 0 || resH <= 0 {
-				continue
-			}
-			startX := floorDiv(resX0, pw) * pw
-			startY := floorDiv(resY0, ph) * ph
-			endX := ceilDiv(resX0+resW, pw) * pw
-			numPrecinctX := (endX - startX) / pw
-			if numPrecinctX < 1 {
-				numPrecinctX = 1
-			}
-
-			for _, bandInfo := range bands {
-				if bandInfo.width <= 0 || bandInfo.height <= 0 {
-					continue
-				}
-				numCBX := (bandInfo.width + cbw - 1) / cbw
-				numCBY := (bandInfo.height + cbh - 1) / cbh
-				for cby := 0; cby < numCBY; cby++ {
-					for cbx := 0; cbx < numCBX; cbx++ {
-						cbX0 := cbx * cbw
-						cbY0 := cby * cbh
-						absResX0 := resX0 + cbX0
-						absResY0 := resY0 + cbY0
-						px := (absResX0 - startX) / pw
-						py := (absResY0 - startY) / ph
-						pIdx := py*numPrecinctX + px
-						localX := absResX0 - (startX + px*pw)
-						localY := absResY0 - (startY + py*ph)
-						cbxLocal := localX / cbw
-						cbyLocal := localY / cbh
-						addEntry(pIdx, bandInfo.band, cbxLocal, cbyLocal, globalCBIdx)
-						globalCBIdx++
-					}
-				}
-			}
-
-			bandOrder := []int{0}
-			if res > 0 {
-				bandOrder = []int{1, 2, 3}
-			}
-			for pIdx, bandMap := range precinctBands {
-				for _, band := range bandOrder {
-					entries := bandMap[band]
-					if len(entries) == 0 {
-						continue
-					}
-					sort.Slice(entries, func(i, j int) bool {
-						if entries[i].cby != entries[j].cby {
-							return entries[i].cby < entries[j].cby
-						}
-						return entries[i].cbx < entries[j].cbx
-					})
-
-					if pd.cbPrecinctPositions[comp][res] == nil {
-						pd.cbPrecinctPositions[comp][res] = make(map[int]map[int][]cbPosition)
-					}
-					if pd.cbPrecinctPositions[comp][res][pIdx] == nil {
-						pd.cbPrecinctPositions[comp][res][pIdx] = make(map[int][]cbPosition)
-					}
-					if pd.cbPrecinctDims[comp][res] == nil {
-						pd.cbPrecinctDims[comp][res] = make(map[int]map[int]cbGridDim)
-					}
-					if pd.cbPrecinctDims[comp][res][pIdx] == nil {
-						pd.cbPrecinctDims[comp][res][pIdx] = make(map[int]cbGridDim)
-					}
-
-					positions := make([]cbPosition, 0, len(entries))
-					maxX, maxY := 0, 0
-					for _, entry := range entries {
-						pd.cbPrecinctOrder[comp][res][pIdx] = append(pd.cbPrecinctOrder[comp][res][pIdx], entry.global)
-						positions = append(positions, cbPosition{X: entry.cbx, Y: entry.cby})
-						if entry.cbx+1 > maxX {
-							maxX = entry.cbx + 1
-						}
-						if entry.cby+1 > maxY {
-							maxY = entry.cby + 1
-						}
-					}
-					pd.cbPrecinctPositions[comp][res][pIdx][band] = positions
-					pd.cbPrecinctDims[comp][res][pIdx][band] = cbGridDim{numCBX: maxX, numCBY: maxY}
-				}
+				precinctBands[pIdx][bandInfo.band] = append(precinctBands[pIdx][bandInfo.band], cbEntry{cbx: cbxLocal, cby: cbyLocal, global: globalCBIdx})
+				globalCBIdx++
 			}
 		}
+	}
+	return globalCBIdx
+}
+
+func (pd *PacketDecoder) getBandOrder(res int) []int {
+	if res == 0 {
+		return []int{0}
+	}
+	return []int{1, 2, 3}
+}
+
+func (pd *PacketDecoder) storePrecinctBands(comp, res int, precinctBands map[int]map[int][]cbEntry, bandOrder []int) {
+	for pIdx, bandMap := range precinctBands {
+		for _, band := range bandOrder {
+			entries := bandMap[band]
+			if len(entries) == 0 {
+				continue
+			}
+			pd.sortAndStoreEntries(comp, res, pIdx, band, entries)
+		}
+	}
+}
+
+func (pd *PacketDecoder) sortAndStoreEntries(comp, res, pIdx, band int, entries []cbEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].cby != entries[j].cby {
+			return entries[i].cby < entries[j].cby
+		}
+		return entries[i].cbx < entries[j].cbx
+	})
+
+	pd.ensurePrecinctMapsInitialized(comp, res, pIdx)
+
+	positions := make([]cbPosition, 0, len(entries))
+	maxX, maxY := 0, 0
+	for _, entry := range entries {
+		pd.cbPrecinctOrder[comp][res][pIdx] = append(pd.cbPrecinctOrder[comp][res][pIdx], entry.global)
+		positions = append(positions, cbPosition{X: entry.cbx, Y: entry.cby})
+		if entry.cbx+1 > maxX {
+			maxX = entry.cbx + 1
+		}
+		if entry.cby+1 > maxY {
+			maxY = entry.cby + 1
+		}
+	}
+	pd.cbPrecinctPositions[comp][res][pIdx][band] = positions
+	pd.cbPrecinctDims[comp][res][pIdx][band] = cbGridDim{numCBX: maxX, numCBY: maxY}
+}
+
+func (pd *PacketDecoder) ensurePrecinctMapsInitialized(comp, res, pIdx int) {
+	if pd.cbPrecinctPositions[comp][res] == nil {
+		pd.cbPrecinctPositions[comp][res] = make(map[int]map[int][]cbPosition)
+	}
+	if pd.cbPrecinctPositions[comp][res][pIdx] == nil {
+		pd.cbPrecinctPositions[comp][res][pIdx] = make(map[int][]cbPosition)
+	}
+	if pd.cbPrecinctDims[comp][res] == nil {
+		pd.cbPrecinctDims[comp][res] = make(map[int]map[int]cbGridDim)
+	}
+	if pd.cbPrecinctDims[comp][res][pIdx] == nil {
+		pd.cbPrecinctDims[comp][res][pIdx] = make(map[int]cbGridDim)
 	}
 }
 
