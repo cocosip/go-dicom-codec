@@ -70,9 +70,9 @@ func TestContextModeling(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := getZeroCodingContext(tt.flags, 0)
 				// Context should be in valid range [0, 8]
-				if ctx < CTX_ZC_START || ctx > CTX_ZC_START+8 {
+				if ctx < CTXZCSTART || ctx > CTXZCSTART+8 {
 					t.Errorf("getZeroCodingContext() = %d, out of valid range [%d, %d]",
-						ctx, CTX_ZC_START, CTX_ZC_START+8)
+						ctx, CTXZCSTART, CTXZCSTART+8)
 				}
 			})
 		}
@@ -116,9 +116,9 @@ func TestContextModeling(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				ctx := getMagRefinementContext(tt.flags)
 				// Context should be in range [CTX_MR_START+0, CTX_MR_START+2] = [14, 16]
-				if ctx < CTX_MR_START || ctx > CTX_MR_START+2 {
+				if ctx < CTXMRSTART || ctx > CTXMRSTART+2 {
 					t.Errorf("getMagRefinementContext() = %d, out of valid range [%d, %d]",
-						ctx, CTX_MR_START, CTX_MR_START+2)
+						ctx, CTXMRSTART, CTXMRSTART+2)
 				}
 			})
 		}
@@ -268,16 +268,16 @@ func TestContextTables(t *testing.T) {
 	t.Run("Sign Context LUT", func(t *testing.T) {
 		// All values should be in valid absolute range [9, 13] (CTX_SC_START to CTX_SC_END)
 		// Updated: lut_ctxno_sc now stores absolute values from OpenJPEG
-		for i, v := range lut_ctxno_sc {
-			if v < CTX_SC_START || v > CTX_SC_END {
-				t.Errorf("lut_ctxno_sc[%d] = %d, out of range [%d, %d]", i, v, CTX_SC_START, CTX_SC_END)
+		for i, v := range lutCtxnoSc {
+			if v < CTXSCSTART || v > CTXSCEND {
+				t.Errorf("lut_ctxno_sc[%d] = %d, out of range [%d, %d]", i, v, CTXSCSTART, CTXSCEND)
 			}
 		}
 	})
 
 	t.Run("Sign Prediction LUT", func(t *testing.T) {
 		// All values should be 0 or 1
-		for i, v := range lut_spb {
+		for i, v := range lutSpb {
 			if v != 0 && v != 1 {
 				t.Errorf("lut_spb[%d] = %d, want 0 or 1", i, v)
 			}
@@ -333,23 +333,23 @@ func TestEmptyData(t *testing.T) {
 // TestConstants tests that all constants are properly defined
 func TestConstants(t *testing.T) {
 	t.Run("Context ranges", func(t *testing.T) {
-		if CTX_ZC_START != 0 {
-			t.Errorf("CTX_ZC_START = %d, want 0", CTX_ZC_START)
+		if CTXZCSTART != 0 {
+			t.Errorf("CTX_ZC_START = %d, want 0", CTXZCSTART)
 		}
-		if CTX_ZC_END != 8 {
-			t.Errorf("CTX_ZC_END = %d, want 8", CTX_ZC_END)
+		if CTXZCEND != 8 {
+			t.Errorf("CTX_ZC_END = %d, want 8", CTXZCEND)
 		}
-		if CTX_SC_START != 9 {
-			t.Errorf("CTX_SC_START = %d, want 9", CTX_SC_START)
+		if CTXSCSTART != 9 {
+			t.Errorf("CTX_SC_START = %d, want 9", CTXSCSTART)
 		}
-		if CTX_RL != 17 {
-			t.Errorf("CTX_RL = %d, want 17", CTX_RL)
+		if CTXRL != 17 {
+			t.Errorf("CTX_RL = %d, want 17", CTXRL)
 		}
-		if CTX_UNI != 18 {
-			t.Errorf("CTX_UNI = %d, want 18", CTX_UNI)
+		if CTXUNI != 18 {
+			t.Errorf("CTX_UNI = %d, want 18", CTXUNI)
 		}
-		if NUM_CONTEXTS != 19 {
-			t.Errorf("NUM_CONTEXTS = %d, want 19", NUM_CONTEXTS)
+		if NUMCONTEXTS != 19 {
+			t.Errorf("NUM_CONTEXTS = %d, want 19", NUMCONTEXTS)
 		}
 	})
 

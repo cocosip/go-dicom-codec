@@ -64,10 +64,10 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder0 := NewT1Decoder(width, height, 0)
 	passData0 := completeData[0:passLengths[0]]
 	t.Logf("\nPass 0 data: % 02x", passData0)
-	decoder0.mqc = mqc.NewMQDecoder(passData0, NUM_CONTEXTS)
+	decoder0.mqc = mqc.NewMQDecoder(passData0, NUMCONTEXTS)
 	// Set initial context states to match OpenJPEG
-	decoder0.mqc.SetContextState(CTX_UNI, 46)
-	decoder0.mqc.SetContextState(CTX_RL, 3)
+	decoder0.mqc.SetContextState(CTXUNI, 46)
+	decoder0.mqc.SetContextState(CTXRL, 3)
 	decoder0.mqc.SetContextState(0, 4)
 	decoder0.roishift = 0
 	decoder0.bitplane = maxBitplane

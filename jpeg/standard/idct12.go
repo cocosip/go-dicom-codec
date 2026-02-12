@@ -1,4 +1,4 @@
-package common
+package standard
 
 // IDCT12 performs Inverse Discrete Cosine Transform for 12-bit data
 // Input: 64 DCT coefficients

@@ -3,7 +3,7 @@ package lossless
 import (
 	"bytes"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 )
 
 // Encoder represents a JPEG Lossless encoder (supporting all 7 predictors)
@@ -14,8 +14,8 @@ type Encoder struct {
 	precision  int // Bit depth (2-16)
 	predictor  int // Predictor selection (1-7)
 
-	dcTables [2]*common.HuffmanTable
-	dcCodes  [2][]common.HuffmanCode
+	dcTables [2]*standard.HuffmanTable
+	dcCodes  [2][]standard.HuffmanCode
 }
 
 // Encode encodes pixel data to JPEG Lossless format
@@ -23,25 +23,25 @@ type Encoder struct {
 // bitDepth: 2-16 bits per sample
 func Encode(pixelData []byte, width, height, components, bitDepth, predictor int) ([]byte, error) {
 	if width <= 0 || height <= 0 {
-		return nil, common.ErrInvalidDimensions
+		return nil, standard.ErrInvalidDimensions
 	}
 
 	if components != 1 && components != 3 {
-		return nil, common.ErrInvalidComponents
+		return nil, standard.ErrInvalidComponents
 	}
 
 	if bitDepth < 2 || bitDepth > 16 {
-		return nil, common.ErrInvalidBitDepth
+		return nil, standard.ErrInvalidBitDepth
 	}
 
 	if predictor < 0 || predictor > 7 {
-		return nil, common.ErrInvalidPredictor
+		return nil, standard.ErrInvalidPredictor
 	}
 
 	bytesPerSample := (bitDepth + 7) / 8
 	expectedSize := width * height * components * bytesPerSample
 	if len(pixelData) < expectedSize {
-		return nil, common.ErrBufferTooSmall
+		return nil, standard.ErrBufferTooSmall
 	}
 
 	enc := &Encoder{
@@ -65,34 +65,34 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	// NOTE: The standard lossless table only has codes for categories: 0,1,2,3,4,5,6,7,8,11,12,15
 	// It's missing categories 9,10,13,14, so we need the Extended table if maxCat >= 9
 	if bitDepth >= 12 && maxCat >= 9 {
-		enc.dcTables[0] = common.BuildStandardHuffmanTable(
-			common.ExtendedDCLuminanceBits,
-			common.ExtendedDCLuminanceValues,
+		enc.dcTables[0] = standard.BuildStandardHuffmanTable(
+			standard.ExtendedDCLuminanceBits,
+			standard.ExtendedDCLuminanceValues,
 		)
-		enc.dcTables[1] = common.BuildStandardHuffmanTable(
-			common.ExtendedDCChrominanceBits,
-			common.ExtendedDCChrominanceValues,
+		enc.dcTables[1] = standard.BuildStandardHuffmanTable(
+			standard.ExtendedDCChrominanceBits,
+			standard.ExtendedDCChrominanceValues,
 		)
 	} else {
-		enc.dcTables[0] = common.BuildStandardHuffmanTable(
-			common.LosslessDCLuminanceBits,
-			common.LosslessDCLuminanceValues,
+		enc.dcTables[0] = standard.BuildStandardHuffmanTable(
+			standard.LosslessDCLuminanceBits,
+			standard.LosslessDCLuminanceValues,
 		)
-		enc.dcTables[1] = common.BuildStandardHuffmanTable(
-			common.LosslessDCChrominanceBits,
-			common.LosslessDCChrominanceValues,
+		enc.dcTables[1] = standard.BuildStandardHuffmanTable(
+			standard.LosslessDCChrominanceBits,
+			standard.LosslessDCChrominanceValues,
 		)
 	}
 
 	// Build Huffman codes
-	enc.dcCodes[0] = common.BuildHuffmanCodes(enc.dcTables[0])
-	enc.dcCodes[1] = common.BuildHuffmanCodes(enc.dcTables[1])
+	enc.dcCodes[0] = standard.BuildHuffmanCodes(enc.dcTables[0])
+	enc.dcCodes[1] = standard.BuildHuffmanCodes(enc.dcTables[1])
 
 	var buf bytes.Buffer
-	writer := common.NewWriter(&buf)
+	writer := standard.NewWriter(&buf)
 
 	// Write SOI
-	if err := writer.WriteMarker(common.MarkerSOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerSOI); err != nil {
 		return nil, err
 	}
 
@@ -117,7 +117,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 	}
 
 	// Write EOI
-	if err := writer.WriteMarker(common.MarkerEOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerEOI); err != nil {
 		return nil, err
 	}
 
@@ -125,7 +125,7 @@ func Encode(pixelData []byte, width, height, components, bitDepth, predictor int
 }
 
 // writeSOF3 writes Start of Frame (Lossless)
-func (enc *Encoder) writeSOF3(writer *common.Writer) error {
+func (enc *Encoder) writeSOF3(writer *standard.Writer) error {
 	data := make([]byte, 6+enc.components*3)
 
 	data[0] = byte(enc.precision)   // Precision
@@ -150,24 +150,24 @@ func (enc *Encoder) writeSOF3(writer *common.Writer) error {
 		}
 	}
 
-	return writer.WriteSegment(common.MarkerSOF3, data)
+	return writer.WriteSegment(standard.MarkerSOF3, data)
 }
 
 // writeAPP0 writes JFIF APP0 marker
-func (enc *Encoder) writeAPP0(writer *common.Writer) error {
+func (enc *Encoder) writeAPP0(writer *standard.Writer) error {
 	data := []byte{
 		'J', 'F', 'I', 'F', 0, // JFIF identifier
-		1, 1,    // Version 1.1
-		0,       // Density units (0 = no units)
-		0, 1,    // X density = 1
-		0, 1,    // Y density = 1
-		0, 0,    // Thumbnail width/height = 0
+		1, 1, // Version 1.1
+		0,    // Density units (0 = no units)
+		0, 1, // X density = 1
+		0, 1, // Y density = 1
+		0, 0, // Thumbnail width/height = 0
 	}
-	return writer.WriteSegment(common.MarkerAPP0, data)
+	return writer.WriteSegment(standard.MarkerAPP0, data)
 }
 
 // writeDHT writes Define Huffman Table segments
-func (enc *Encoder) writeDHT(writer *common.Writer) error {
+func (enc *Encoder) writeDHT(writer *standard.Writer) error {
 	numTables := 1
 	if enc.components == 3 {
 		numTables = 2
@@ -189,7 +189,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 
 		copy(data[17:], table.Values)
 
-		if err := writer.WriteSegment(common.MarkerDHT, data); err != nil {
+		if err := writer.WriteSegment(standard.MarkerDHT, data); err != nil {
 			return err
 		}
 	}
@@ -198,7 +198,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan and scan data
-func (enc *Encoder) writeSOS(writer *common.Writer, samples [][]int) error {
+func (enc *Encoder) writeSOS(writer *standard.Writer, samples [][]int) error {
 	// Write SOS header
 	data := make([]byte, 1+enc.components*2+3)
 	data[0] = byte(enc.components)
@@ -222,7 +222,7 @@ func (enc *Encoder) writeSOS(writer *common.Writer, samples [][]int) error {
 	data[2+enc.components*2] = 0                   // Se: not used
 	data[3+enc.components*2] = 0                   // Ah/Al: not used
 
-	if err := writer.WriteSegment(common.MarkerSOS, data); err != nil {
+	if err := writer.WriteSegment(standard.MarkerSOS, data); err != nil {
 		return err
 	}
 
@@ -231,9 +231,9 @@ func (enc *Encoder) writeSOS(writer *common.Writer, samples [][]int) error {
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, samples [][]int) error {
+func (enc *Encoder) encodeScan(writer *standard.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
-	huffEnc := common.NewHuffmanEncoder(&scanBuf)
+	huffEnc := standard.NewHuffmanEncoder(&scanBuf)
 
 	// Compute modulus for wrapping differences to signed P-bit range
 	modulus := 1 << uint(enc.precision)

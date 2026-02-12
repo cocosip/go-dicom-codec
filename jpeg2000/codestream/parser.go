@@ -76,178 +76,9 @@ func (p *Parser) Parse() (*Codestream, error) {
 
 // parseMainHeader parses the main header segments
 func (p *Parser) parseMainHeader(cs *Codestream) error {
-	seenSIZ := false
-	seenCOD := false
-	seenQCD := false
-
-	for {
-		marker, err := p.peekMarker()
-		if err != nil {
-			return err
-		}
-
-		// Main header ends when we hit SOT or EOC
-		if marker == MarkerSOT || marker == MarkerEOC {
-			break
-		}
-
-		// Read the marker
-		marker, err = p.readMarker()
-		if err != nil {
-			return err
-		}
-
-		// Parse segment based on marker type
-		switch marker {
-		case MarkerSIZ:
-			if seenSIZ {
-				return fmt.Errorf("duplicate SIZ segment")
-			}
-			siz, err := p.parseSIZ()
-			if err != nil {
-				return fmt.Errorf("failed to parse SIZ: %w", err)
-			}
-			cs.SIZ = siz
-			seenSIZ = true
-
-		case MarkerCOD:
-			if !seenSIZ {
-				return fmt.Errorf("COD encountered before SIZ")
-			}
-			if seenCOD {
-				return fmt.Errorf("duplicate COD segment")
-			}
-			cod, err := p.parseCOD()
-			if err != nil {
-				return fmt.Errorf("failed to parse COD: %w", err)
-			}
-			cs.COD = cod
-			seenCOD = true
-
-		case MarkerCOC:
-			if !seenSIZ {
-				return fmt.Errorf("COC encountered before SIZ")
-			}
-			if !seenCOD {
-				return fmt.Errorf("COC encountered before COD")
-			}
-			coc, err := p.parseCOC(cs.SIZ)
-			if err != nil {
-				return fmt.Errorf("failed to parse COC: %w", err)
-			}
-			if cs.COC == nil {
-				cs.COC = make(map[uint16]*COCSegment)
-			}
-			if existing, ok := cs.COC[coc.Component]; ok && !cocEqual(existing, coc) {
-				return fmt.Errorf("duplicate COC for component %d", coc.Component)
-			}
-			cs.COC[coc.Component] = coc
-
-		case MarkerQCD:
-			if !seenSIZ {
-				return fmt.Errorf("QCD encountered before SIZ")
-			}
-			if seenQCD {
-				return fmt.Errorf("duplicate QCD segment")
-			}
-			qcd, err := p.parseQCD()
-			if err != nil {
-				return fmt.Errorf("failed to parse QCD: %w", err)
-			}
-			cs.QCD = qcd
-			seenQCD = true
-
-		case MarkerQCC:
-			if !seenSIZ {
-				return fmt.Errorf("QCC encountered before SIZ")
-			}
-			if !seenQCD {
-				return fmt.Errorf("QCC encountered before QCD")
-			}
-			qcc, err := p.parseQCC(cs.SIZ)
-			if err != nil {
-				return fmt.Errorf("failed to parse QCC: %w", err)
-			}
-			if cs.QCC == nil {
-				cs.QCC = make(map[uint16]*QCCSegment)
-			}
-			if existing, ok := cs.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
-				return fmt.Errorf("duplicate QCC for component %d", qcc.Component)
-			}
-			cs.QCC[qcc.Component] = qcc
-
-		case MarkerPOC:
-			if !seenSIZ {
-				return fmt.Errorf("POC encountered before SIZ")
-			}
-			if !seenCOD {
-				return fmt.Errorf("POC encountered before COD")
-			}
-			poc, err := p.parsePOC(cs.SIZ)
-			if err != nil {
-				return fmt.Errorf("failed to parse POC: %w", err)
-			}
-			cs.POC = append(cs.POC, *poc)
-
-		case MarkerRGN:
-			if !seenSIZ {
-				return fmt.Errorf("RGN encountered before SIZ")
-			}
-			rgn, err := p.parseRGN(cs.SIZ)
-			if err != nil {
-				return fmt.Errorf("failed to parse RGN: %w", err)
-			}
-			cs.RGN = append(cs.RGN, *rgn)
-
-		case MarkerCOM:
-			if !seenSIZ {
-				return fmt.Errorf("COM encountered before SIZ")
-			}
-			com, err := p.parseCOM()
-			if err != nil {
-				return fmt.Errorf("failed to parse COM: %w", err)
-			}
-			cs.COM = append(cs.COM, *com)
-
-		case MarkerMCT:
-			if !seenSIZ {
-				return fmt.Errorf("MCT encountered before SIZ")
-			}
-			seg, err := p.parseMCT()
-			if err != nil {
-				return fmt.Errorf("failed to parse MCT: %w", err)
-			}
-			cs.MCT = append(cs.MCT, *seg)
-
-		case MarkerMCC:
-			if !seenSIZ {
-				return fmt.Errorf("MCC encountered before SIZ")
-			}
-			seg, err := p.parseMCC()
-			if err != nil {
-				return fmt.Errorf("failed to parse MCC: %w", err)
-			}
-			cs.MCC = append(cs.MCC, *seg)
-
-		case MarkerMCO:
-			if !seenSIZ {
-				return fmt.Errorf("MCO encountered before SIZ")
-			}
-			seg, err := p.parseMCO()
-			if err != nil {
-				return fmt.Errorf("failed to parse MCO: %w", err)
-			}
-			cs.MCO = append(cs.MCO, *seg)
-
-		default:
-			if !seenSIZ {
-				return fmt.Errorf("unexpected marker before SIZ: 0x%04X (%s)", marker, MarkerName(marker))
-			}
-			// Skip unknown segments
-			if err := p.skipSegment(); err != nil {
-				return fmt.Errorf("failed to skip segment 0x%04X: %w", marker, err)
-			}
-		}
+	state := &mainHeaderState{}
+	if err := p.consumeMainHeader(cs, state); err != nil {
+		return err
 	}
 
 	// Verify required segments
@@ -261,6 +92,215 @@ func (p *Parser) parseMainHeader(cs *Codestream) error {
 		return fmt.Errorf("missing required QCD segment")
 	}
 
+	return nil
+}
+
+type mainHeaderState struct {
+	seenSIZ bool
+	seenCOD bool
+	seenQCD bool
+}
+
+func (p *Parser) consumeMainHeader(cs *Codestream, st *mainHeaderState) error {
+	handlers := map[uint16]func() error{
+		MarkerSIZ: func() error { return p.mainSIZ(cs, st) },
+		MarkerCOD: func() error { return p.mainCOD(cs, st) },
+		MarkerCOC: func() error { return p.mainCOC(cs, st) },
+		MarkerQCD: func() error { return p.mainQCD(cs, st) },
+		MarkerQCC: func() error { return p.mainQCC(cs, st) },
+		MarkerPOC: func() error { return p.mainPOC(cs, st) },
+		MarkerRGN: func() error { return p.mainRGN(cs, st) },
+		MarkerCOM: func() error { return p.mainCOM(cs, st) },
+		MarkerMCT: func() error { return p.mainMCT(cs, st) },
+		MarkerMCC: func() error { return p.mainMCC(cs, st) },
+		MarkerMCO: func() error { return p.mainMCO(cs, st) },
+	}
+	for {
+		marker, err := p.peekMarker()
+		if err != nil {
+			return err
+		}
+		if marker == MarkerSOT || marker == MarkerEOC {
+			return nil
+		}
+		marker, err = p.readMarker()
+		if err != nil {
+			return err
+		}
+		if h, ok := handlers[marker]; ok {
+			if err := h(); err != nil {
+				return err
+			}
+		} else {
+			if !st.seenSIZ {
+				return fmt.Errorf("unexpected marker before SIZ: 0x%04X (%s)", marker, MarkerName(marker))
+			}
+			if err := p.skipSegment(); err != nil {
+				return fmt.Errorf("failed to skip segment 0x%04X: %w", marker, err)
+			}
+		}
+	}
+}
+
+func (p *Parser) mainSIZ(cs *Codestream, st *mainHeaderState) error {
+	if st.seenSIZ {
+		return fmt.Errorf("duplicate SIZ segment")
+	}
+	siz, err := p.parseSIZ()
+	if err != nil {
+		return fmt.Errorf("failed to parse SIZ: %w", err)
+	}
+	cs.SIZ = siz
+	st.seenSIZ = true
+	return nil
+}
+
+func (p *Parser) mainCOD(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("COD encountered before SIZ")
+	}
+	if st.seenCOD {
+		return fmt.Errorf("duplicate COD segment")
+	}
+	cod, err := p.parseCOD()
+	if err != nil {
+		return fmt.Errorf("failed to parse COD: %w", err)
+	}
+	cs.COD = cod
+	st.seenCOD = true
+	return nil
+}
+
+func (p *Parser) mainCOC(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("COC encountered before SIZ")
+	}
+	if !st.seenCOD {
+		return fmt.Errorf("COC encountered before COD")
+	}
+	coc, err := p.parseCOC(cs.SIZ)
+	if err != nil {
+		return fmt.Errorf("failed to parse COC: %w", err)
+	}
+	if cs.COC == nil {
+		cs.COC = make(map[uint16]*COCSegment)
+	}
+	if existing, ok := cs.COC[coc.Component]; ok && !cocEqual(existing, coc) {
+		return fmt.Errorf("duplicate COC for component %d", coc.Component)
+	}
+	cs.COC[coc.Component] = coc
+	return nil
+}
+
+func (p *Parser) mainQCD(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("QCD encountered before SIZ")
+	}
+	if st.seenQCD {
+		return fmt.Errorf("duplicate QCD segment")
+	}
+	qcd, err := p.parseQCD()
+	if err != nil {
+		return fmt.Errorf("failed to parse QCD: %w", err)
+	}
+	cs.QCD = qcd
+	st.seenQCD = true
+	return nil
+}
+
+func (p *Parser) mainQCC(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("QCC encountered before SIZ")
+	}
+	if !st.seenQCD {
+		return fmt.Errorf("QCC encountered before QCD")
+	}
+	qcc, err := p.parseQCC(cs.SIZ)
+	if err != nil {
+		return fmt.Errorf("failed to parse QCC: %w", err)
+	}
+	if cs.QCC == nil {
+		cs.QCC = make(map[uint16]*QCCSegment)
+	}
+	if existing, ok := cs.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
+		return fmt.Errorf("duplicate QCC for component %d", qcc.Component)
+	}
+	cs.QCC[qcc.Component] = qcc
+	return nil
+}
+
+func (p *Parser) mainPOC(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("POC encountered before SIZ")
+	}
+	if !st.seenCOD {
+		return fmt.Errorf("POC encountered before COD")
+	}
+	poc, err := p.parsePOC(cs.SIZ)
+	if err != nil {
+		return fmt.Errorf("failed to parse POC: %w", err)
+	}
+	cs.POC = append(cs.POC, *poc)
+	return nil
+}
+
+func (p *Parser) mainRGN(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("RGN encountered before SIZ")
+	}
+	rgn, err := p.parseRGN(cs.SIZ)
+	if err != nil {
+		return fmt.Errorf("failed to parse RGN: %w", err)
+	}
+	cs.RGN = append(cs.RGN, *rgn)
+	return nil
+}
+
+func (p *Parser) mainCOM(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("COM encountered before SIZ")
+	}
+	com, err := p.parseCOM()
+	if err != nil {
+		return fmt.Errorf("failed to parse COM: %w", err)
+	}
+	cs.COM = append(cs.COM, *com)
+	return nil
+}
+
+func (p *Parser) mainMCT(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("MCT encountered before SIZ")
+	}
+	seg, err := p.parseMCT()
+	if err != nil {
+		return fmt.Errorf("failed to parse MCT: %w", err)
+	}
+	cs.MCT = append(cs.MCT, *seg)
+	return nil
+}
+
+func (p *Parser) mainMCC(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("MCC encountered before SIZ")
+	}
+	seg, err := p.parseMCC()
+	if err != nil {
+		return fmt.Errorf("failed to parse MCC: %w", err)
+	}
+	cs.MCC = append(cs.MCC, *seg)
+	return nil
+}
+
+func (p *Parser) mainMCO(cs *Codestream, st *mainHeaderState) error {
+	if !st.seenSIZ {
+		return fmt.Errorf("MCO encountered before SIZ")
+	}
+	seg, err := p.parseMCO()
+	if err != nil {
+		return fmt.Errorf("failed to parse MCO: %w", err)
+	}
+	cs.MCO = append(cs.MCO, *seg)
 	return nil
 }
 
@@ -286,132 +326,165 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 		SOT:   sot,
 	}
 
-	// Parse tile-part header
-	for {
-		marker, err := p.peekMarker()
-		if err != nil {
-			return nil, err
-		}
-
-		if marker == MarkerSOD {
-			// Start of data - tile header complete
-			_, _ = p.readMarker() // consume SOD
-			break
-		}
-
-		marker, err = p.readMarker()
-		if err != nil {
-			return nil, err
-		}
-
-		switch marker {
-		case MarkerCOD:
-			cod, err := p.parseCOD()
-			if err != nil {
-				return nil, err
-			}
-			tile.COD = cod
-
-		case MarkerCOC:
-			if cs == nil || cs.SIZ == nil {
-				return nil, fmt.Errorf("COC encountered before SIZ")
-			}
-			coc, err := p.parseCOC(cs.SIZ)
-			if err != nil {
-				return nil, err
-			}
-			if tile.COC == nil {
-				tile.COC = make(map[uint16]*COCSegment)
-			}
-			if existing, ok := tile.COC[coc.Component]; ok && !cocEqual(existing, coc) {
-				return nil, fmt.Errorf("duplicate tile COC for component %d", coc.Component)
-			}
-			tile.COC[coc.Component] = coc
-
-		case MarkerQCD:
-			qcd, err := p.parseQCD()
-			if err != nil {
-				return nil, err
-			}
-			tile.QCD = qcd
-
-		case MarkerQCC:
-			if cs == nil || cs.SIZ == nil {
-				return nil, fmt.Errorf("QCC encountered before SIZ")
-			}
-			qcc, err := p.parseQCC(cs.SIZ)
-			if err != nil {
-				return nil, err
-			}
-			if tile.QCC == nil {
-				tile.QCC = make(map[uint16]*QCCSegment)
-			}
-			if existing, ok := tile.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
-				return nil, fmt.Errorf("duplicate tile QCC for component %d", qcc.Component)
-			}
-			tile.QCC[qcc.Component] = qcc
-
-		case MarkerPOC:
-			if cs == nil || cs.SIZ == nil {
-				return nil, fmt.Errorf("POC encountered before SIZ")
-			}
-			poc, err := p.parsePOC(cs.SIZ)
-			if err != nil {
-				return nil, err
-			}
-			tile.POC = append(tile.POC, *poc)
-
-		case MarkerRGN:
-			// Parse tile-part RGN (tile-specific ROI)
-			var siz *SIZSegment
-			if cs != nil {
-				siz = cs.SIZ
-			}
-			rgn, err := p.parseRGN(siz)
-			if err != nil {
-				return nil, err
-			}
-			tile.RGN = append(tile.RGN, rgn)
-
-		case MarkerMCT:
-			seg, err := p.parseMCT()
-			if err != nil {
-				return nil, err
-			}
-			if cs != nil {
-				cs.MCT = append(cs.MCT, *seg)
-			}
-
-		case MarkerMCC:
-			seg, err := p.parseMCC()
-			if err != nil {
-				return nil, err
-			}
-			if cs != nil {
-				cs.MCC = append(cs.MCC, *seg)
-			}
-
-		case MarkerMCO:
-			seg, err := p.parseMCO()
-			if err != nil {
-				return nil, err
-			}
-			if cs != nil {
-				cs.MCO = append(cs.MCO, *seg)
-			}
-
-		default:
-			// Skip unknown tile-part header segments
-			if err := p.skipSegment(); err != nil {
-				return nil, err
-			}
-		}
+	// Parse tile header segments until SOD
+	if err := p.parseTileHeader(cs, tile); err != nil {
+		return nil, err
 	}
 
 	// Read tile data using Psot length when available.
 	tile.Data = p.readTileDataWithLength(tileStart, sot.Psot)
 
 	return tile, nil
+}
+
+// parseTileHeader consumes tile-part header markers until SOD and updates tile
+func (p *Parser) parseTileHeader(cs *Codestream, tile *Tile) error {
+	handlers := map[uint16]func() error{
+		MarkerCOD: func() error { return p.handleCOD(tile) },
+		MarkerCOC: func() error { return p.handleCOC(cs, tile) },
+		MarkerQCD: func() error { return p.handleQCD(tile) },
+		MarkerQCC: func() error { return p.handleQCC(cs, tile) },
+		MarkerPOC: func() error { return p.handlePOC(cs, tile) },
+		MarkerRGN: func() error { return p.handleRGN(cs, tile) },
+		MarkerMCT: func() error { return p.handleMCT(cs) },
+		MarkerMCC: func() error { return p.handleMCC(cs) },
+		MarkerMCO: func() error { return p.handleMCO(cs) },
+	}
+	for {
+		marker, err := p.peekMarker()
+		if err != nil {
+			return err
+		}
+		if marker == MarkerSOD {
+			_, _ = p.readMarker()
+			return nil
+		}
+		marker, err = p.readMarker()
+		if err != nil {
+			return err
+		}
+		if h, ok := handlers[marker]; ok {
+			if err := h(); err != nil {
+				return err
+			}
+		} else {
+			if err := p.skipSegment(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (p *Parser) handleCOD(tile *Tile) error {
+	cod, err := p.parseCOD()
+	if err != nil {
+		return err
+	}
+	tile.COD = cod
+	return nil
+}
+
+func (p *Parser) handleCOC(cs *Codestream, tile *Tile) error {
+	if cs == nil || cs.SIZ == nil {
+		return fmt.Errorf("COC encountered before SIZ")
+	}
+	coc, err := p.parseCOC(cs.SIZ)
+	if err != nil {
+		return err
+	}
+	if tile.COC == nil {
+		tile.COC = make(map[uint16]*COCSegment)
+	}
+	if existing, ok := tile.COC[coc.Component]; ok && !cocEqual(existing, coc) {
+		return fmt.Errorf("duplicate tile COC for component %d", coc.Component)
+	}
+	tile.COC[coc.Component] = coc
+	return nil
+}
+
+func (p *Parser) handleQCD(tile *Tile) error {
+	qcd, err := p.parseQCD()
+	if err != nil {
+		return err
+	}
+	tile.QCD = qcd
+	return nil
+}
+
+func (p *Parser) handleQCC(cs *Codestream, tile *Tile) error {
+	if cs == nil || cs.SIZ == nil {
+		return fmt.Errorf("QCC encountered before SIZ")
+	}
+	qcc, err := p.parseQCC(cs.SIZ)
+	if err != nil {
+		return err
+	}
+	if tile.QCC == nil {
+		tile.QCC = make(map[uint16]*QCCSegment)
+	}
+	if existing, ok := tile.QCC[qcc.Component]; ok && !qccEqual(existing, qcc) {
+		return fmt.Errorf("duplicate tile QCC for component %d", qcc.Component)
+	}
+	tile.QCC[qcc.Component] = qcc
+	return nil
+}
+
+func (p *Parser) handlePOC(cs *Codestream, tile *Tile) error {
+	if cs == nil || cs.SIZ == nil {
+		return fmt.Errorf("POC encountered before SIZ")
+	}
+	poc, err := p.parsePOC(cs.SIZ)
+	if err != nil {
+		return err
+	}
+	tile.POC = append(tile.POC, *poc)
+	return nil
+}
+
+func (p *Parser) handleRGN(cs *Codestream, tile *Tile) error {
+	var siz *SIZSegment
+	if cs != nil {
+		siz = cs.SIZ
+	}
+	rgn, err := p.parseRGN(siz)
+	if err != nil {
+		return err
+	}
+	tile.RGN = append(tile.RGN, rgn)
+	return nil
+}
+
+func (p *Parser) handleMCT(cs *Codestream) error {
+	seg, err := p.parseMCT()
+	if err != nil {
+		return err
+	}
+	if cs != nil {
+		cs.MCT = append(cs.MCT, *seg)
+	}
+	return nil
+}
+
+func (p *Parser) handleMCC(cs *Codestream) error {
+	seg, err := p.parseMCC()
+	if err != nil {
+		return err
+	}
+	if cs != nil {
+		cs.MCC = append(cs.MCC, *seg)
+	}
+	return nil
+}
+
+func (p *Parser) handleMCO(cs *Codestream) error {
+	seg, err := p.parseMCO()
+	if err != nil {
+		return err
+	}
+	if cs != nil {
+		cs.MCO = append(cs.MCO, *seg)
+	}
+	return nil
 }
 
 type tilePartState struct {
@@ -429,10 +502,7 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 		if part.SOT.TPsot != 0 {
 			return fmt.Errorf("tile %d: first tile-part index is %d", idx, part.SOT.TPsot)
 		}
-		state = &tilePartState{
-			nextTP: part.SOT.TPsot + 1,
-			total:  part.SOT.TNsot,
-		}
+		state = &tilePartState{nextTP: part.SOT.TPsot + 1, total: part.SOT.TNsot}
 		states[idx] = state
 	} else {
 		if part.SOT.TPsot != state.nextTP {
@@ -462,6 +532,33 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 		existing.SOT.TNsot = state.total
 	}
 
+	if err := mergeCODSection(existing, part, idx); err != nil {
+		return err
+	}
+	if err := mergeQCDSection(existing, part, idx); err != nil {
+		return err
+	}
+	if err := mergeCOCSection(existing, part, idx); err != nil {
+		return err
+	}
+	if err := mergeQCCSection(existing, part, idx); err != nil {
+		return err
+	}
+	if err := mergePOCSection(existing, part, idx); err != nil {
+		return err
+	}
+	if err := mergeRGNSection(existing, part, idx); err != nil {
+		return err
+	}
+
+	if len(part.Data) > 0 {
+		existing.Data = append(existing.Data, part.Data...)
+	}
+
+	return nil
+}
+
+func mergeCODSection(existing, part *Tile, idx int) error {
 	if part.COD != nil {
 		if existing.COD == nil {
 			existing.COD = part.COD
@@ -469,6 +566,10 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			return fmt.Errorf("tile %d: COD differs between tile-parts", idx)
 		}
 	}
+	return nil
+}
+
+func mergeQCDSection(existing, part *Tile, idx int) error {
 	if part.QCD != nil {
 		if existing.QCD == nil {
 			existing.QCD = part.QCD
@@ -476,6 +577,10 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			return fmt.Errorf("tile %d: QCD differs between tile-parts", idx)
 		}
 	}
+	return nil
+}
+
+func mergeCOCSection(existing, part *Tile, idx int) error {
 	if len(part.COC) > 0 {
 		if existing.COC == nil {
 			existing.COC = make(map[uint16]*COCSegment)
@@ -490,6 +595,10 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			existing.COC[comp] = coc
 		}
 	}
+	return nil
+}
+
+func mergeQCCSection(existing, part *Tile, idx int) error {
 	if len(part.QCC) > 0 {
 		if existing.QCC == nil {
 			existing.QCC = make(map[uint16]*QCCSegment)
@@ -504,6 +613,10 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			existing.QCC[comp] = qcc
 		}
 	}
+	return nil
+}
+
+func mergePOCSection(existing, part *Tile, idx int) error {
 	if len(part.POC) > 0 {
 		if len(existing.POC) == 0 {
 			existing.POC = append(existing.POC, part.POC...)
@@ -511,6 +624,10 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			return fmt.Errorf("tile %d: POC differs between tile-parts", idx)
 		}
 	}
+	return nil
+}
+
+func mergeRGNSection(existing, part *Tile, idx int) error {
 	if len(part.RGN) > 0 {
 		if len(existing.RGN) == 0 {
 			existing.RGN = append(existing.RGN, part.RGN...)
@@ -518,11 +635,6 @@ func mergeTilePart(cs *Codestream, tiles map[int]*Tile, states map[int]*tilePart
 			return fmt.Errorf("tile %d: RGN differs between tile-parts", idx)
 		}
 	}
-
-	if len(part.Data) > 0 {
-		existing.Data = append(existing.Data, part.Data...)
-	}
-
 	return nil
 }
 

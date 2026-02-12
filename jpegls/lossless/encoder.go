@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
@@ -45,11 +45,11 @@ func NewEncoder(width, height, components, bitDepth int) *Encoder {
 // Returns: JPEG-LS compressed data
 func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, error) {
 	if width <= 0 || height <= 0 {
-		return nil, common.ErrInvalidDimensions
+		return nil, standard.ErrInvalidDimensions
 	}
 
 	if components != 1 && components != 3 {
-		return nil, common.ErrInvalidComponents
+		return nil, standard.ErrInvalidComponents
 	}
 
 	if bitDepth < 2 || bitDepth > 16 {
@@ -71,10 +71,10 @@ func (enc *Encoder) computeErrorValue(delta int) int {
 // encode performs the actual encoding
 func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	writer := common.NewWriter(&buf)
+	writer := standard.NewWriter(&buf)
 
 	// Write SOI marker
-	if err := writer.WriteMarker(common.MarkerSOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerSOI); err != nil {
 		return nil, err
 	}
 
@@ -99,7 +99,7 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 	}
 
 	// Write EOI marker
-	if err := writer.WriteMarker(common.MarkerEOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerEOI); err != nil {
 		return nil, err
 	}
 
@@ -107,7 +107,7 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 }
 
 // writeSOF55 writes Start of Frame marker for JPEG-LS
-func (enc *Encoder) writeSOF55(writer *common.Writer) error {
+func (enc *Encoder) writeSOF55(writer *standard.Writer) error {
 	// SOF55 = 0xFFF7
 	// Data length = 6 (fixed header) + components*3 (component specs)
 	// Note: WriteSegment adds the 2-byte length field automatically
@@ -133,7 +133,7 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 }
 
 // writeLSE writes JPEG-LS parameters (LSE marker)
-func (enc *Encoder) writeLSE(writer *common.Writer) error {
+func (enc *Encoder) writeLSE(writer *standard.Writer) error {
 	// LSE = 0xFFF8
 	// Write default parameters (11 bytes of data, WriteSegment adds 2-byte length field)
 	data := make([]byte, 11)
@@ -165,7 +165,7 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan marker
-func (enc *Encoder) writeSOS(writer *common.Writer) error {
+func (enc *Encoder) writeSOS(writer *standard.Writer) error {
 	length := 4 + enc.components*2
 	data := make([]byte, length)
 
@@ -187,11 +187,11 @@ func (enc *Encoder) writeSOS(writer *common.Writer) error {
 	// Point transform (0)
 	data[length-1] = 0
 
-	return writer.WriteSegment(common.MarkerSOS, data)
+	return writer.WriteSegment(standard.MarkerSOS, data)
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error {
 	// Create Golomb writer for entropy coding
 	var scanBuf bytes.Buffer
 	gw := NewGolombWriter(&scanBuf)

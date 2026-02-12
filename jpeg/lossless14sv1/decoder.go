@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"io"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 )
 
 // Component represents a color component
@@ -25,13 +25,13 @@ type Decoder struct {
 	height     int
 	precision  int // Bit depth (2-16)
 	components []*Component
-	dcTables   [4]*common.HuffmanTable
+	dcTables   [4]*standard.HuffmanTable
 }
 
 // Decode decodes JPEG Lossless First-Order Prediction data
 func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDepth int, err error) {
 	r := bytes.NewReader(jpegData)
-	reader := common.NewReader(r)
+	reader := standard.NewReader(r)
 
 	decoder := &Decoder{}
 
@@ -40,8 +40,8 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDe
 	if err != nil {
 		return nil, 0, 0, 0, 0, err
 	}
-	if marker != common.MarkerSOI {
-		return nil, 0, 0, 0, 0, common.ErrInvalidSOI
+	if marker != standard.MarkerSOI {
+		return nil, 0, 0, 0, 0, standard.ErrInvalidSOI
 	}
 
 	// Parse JPEG segments
@@ -52,17 +52,17 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDe
 		}
 
 		switch marker {
-		case common.MarkerSOF3: // Lossless
+		case standard.MarkerSOF3: // Lossless
 			if err := decoder.parseSOF3(reader); err != nil {
 				return nil, 0, 0, 0, 0, err
 			}
 
-		case common.MarkerDHT:
+		case standard.MarkerDHT:
 			if err := decoder.parseDHT(reader); err != nil {
 				return nil, 0, 0, 0, 0, err
 			}
 
-		case common.MarkerSOS:
+		case standard.MarkerSOS:
 			if err := decoder.parseSOS(reader); err != nil {
 				return nil, 0, 0, 0, 0, err
 			}
@@ -74,14 +74,14 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDe
 			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), decoder.precision, nil
 
-		case common.MarkerEOI:
+		case standard.MarkerEOI:
 			// Should not reach here normally
 			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), decoder.precision, nil
 
 		default:
 			// Skip unknown markers
-			if common.HasLength(marker) {
+			if standard.HasLength(marker) {
 				_, err := reader.ReadSegment()
 				if err != nil {
 					return nil, 0, 0, 0, 0, err
@@ -92,19 +92,19 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDe
 }
 
 // parseSOF3 parses Start of Frame (Lossless)
-func (d *Decoder) parseSOF3(reader *common.Reader) error {
+func (d *Decoder) parseSOF3(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
 	}
 
 	if len(data) < 6 {
-		return common.ErrInvalidSOF
+		return standard.ErrInvalidSOF
 	}
 
 	d.precision = int(data[0])
 	if d.precision < 2 || d.precision > 16 {
-		return common.ErrInvalidBitDepth
+		return standard.ErrInvalidBitDepth
 	}
 
 	d.height = int(data[1])<<8 | int(data[2])
@@ -112,15 +112,15 @@ func (d *Decoder) parseSOF3(reader *common.Reader) error {
 	numComponents := int(data[5])
 
 	if d.width <= 0 || d.height <= 0 {
-		return common.ErrInvalidDimensions
+		return standard.ErrInvalidDimensions
 	}
 
 	if numComponents != 1 && numComponents != 3 {
-		return common.ErrInvalidComponents
+		return standard.ErrInvalidComponents
 	}
 
 	if len(data) < 6+numComponents*3 {
-		return common.ErrInvalidSOF
+		return standard.ErrInvalidSOF
 	}
 
 	// Parse component specifications
@@ -139,7 +139,7 @@ func (d *Decoder) parseSOF3(reader *common.Reader) error {
 
 		// For lossless, sampling factors should be 1x1
 		if comp.H != 1 || comp.V != 1 {
-			return common.ErrUnsupportedFormat
+			return standard.ErrUnsupportedFormat
 		}
 
 		d.components[i] = comp
@@ -149,7 +149,7 @@ func (d *Decoder) parseSOF3(reader *common.Reader) error {
 }
 
 // parseDHT parses Define Huffman Table marker
-func (d *Decoder) parseDHT(reader *common.Reader) error {
+func (d *Decoder) parseDHT(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
@@ -166,17 +166,17 @@ func (d *Decoder) parseDHT(reader *common.Reader) error {
 		th := tcTh & 0x0F // Table ID
 
 		if th > 3 {
-			return common.ErrInvalidDHT
+			return standard.ErrInvalidDHT
 		}
 
 		offset++
 
 		// Read the number of codes for each length
-		table := &common.HuffmanTable{}
+		table := &standard.HuffmanTable{}
 		totalCodes := 0
 		for i := 0; i < 16; i++ {
 			if offset >= len(data) {
-				return common.ErrInvalidDHT
+				return standard.ErrInvalidDHT
 			}
 			table.Bits[i] = int(data[offset])
 			totalCodes += table.Bits[i]
@@ -185,7 +185,7 @@ func (d *Decoder) parseDHT(reader *common.Reader) error {
 
 		// Read the symbol values
 		if offset+totalCodes > len(data) {
-			return common.ErrInvalidDHT
+			return standard.ErrInvalidDHT
 		}
 		table.Values = make([]byte, totalCodes)
 		copy(table.Values, data[offset:offset+totalCodes])
@@ -206,19 +206,19 @@ func (d *Decoder) parseDHT(reader *common.Reader) error {
 }
 
 // parseSOS parses Start of Scan marker
-func (d *Decoder) parseSOS(reader *common.Reader) error {
+func (d *Decoder) parseSOS(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
 	}
 
 	if len(data) < 1 {
-		return common.ErrInvalidSOS
+		return standard.ErrInvalidSOS
 	}
 
 	ns := int(data[0]) // Number of components in scan
 	if len(data) < 1+ns*2+3 {
-		return common.ErrInvalidSOS
+		return standard.ErrInvalidSOS
 	}
 
 	// Parse component selectors
@@ -236,7 +236,7 @@ func (d *Decoder) parseSOS(reader *common.Reader) error {
 		}
 
 		if comp == nil {
-			return common.ErrInvalidSOS
+			return standard.ErrInvalidSOS
 		}
 
 		comp.dcTableSelector = int(td)
@@ -245,14 +245,14 @@ func (d *Decoder) parseSOS(reader *common.Reader) error {
 	// Get predictor selection (Ss field)
 	predictor := int(data[1+ns*2])
 	if predictor != 1 {
-		return common.ErrInvalidPredictor
+		return standard.ErrInvalidPredictor
 	}
 
 	return nil
 }
 
 // decodeScan decodes the scan data
-func (d *Decoder) decodeScan(reader *common.Reader) error {
+func (d *Decoder) decodeScan(reader *standard.Reader) error {
 	// Compute modulus for wrapping reconstructed samples to P-bit range
 	modulus := 1 << uint(d.precision)
 
@@ -281,7 +281,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 				// Byte stuffing
 				scanData.WriteByte(b)
 				scanData.WriteByte(b2)
-			} else if common.IsRST(uint16(0xFF00) | uint16(b2)) {
+			} else if standard.IsRST(uint16(0xFF00) | uint16(b2)) {
 				// Restart marker, reset predictors
 				for _, comp := range d.components {
 					comp.pred = 0
@@ -296,7 +296,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 		}
 	}
 
-	huffDec := common.NewHuffmanDecoder(bytes.NewReader(scanData.Bytes()))
+	huffDec := standard.NewHuffmanDecoder(bytes.NewReader(scanData.Bytes()))
 
 	// Decode samples (lossless uses line-by-line interleaved)
 	for row := 0; row < d.height; row++ {
@@ -305,7 +305,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 				// Decode difference
 				table := d.dcTables[comp.dcTableSelector]
 				if table == nil {
-					return common.ErrInvalidDHT
+					return standard.ErrInvalidDHT
 				}
 
 				ssss, err := huffDec.Decode(table)

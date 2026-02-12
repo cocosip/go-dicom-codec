@@ -3043,7 +3043,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, _ int) *t2.PrecinctCodeBlock
 		var completeData []byte
 		var err error
 
-		if t1Enc, ok := blockEnc.(*t1.T1Encoder); ok {
+		if t1Enc, ok := blockEnc.(*t1.Encoder); ok {
 			// Calculate code-block style flags (match writeCOD logic)
 			cblksty := uint8(0)
 			if e.params.NumLayers > 1 || e.params.TargetRatio > 0 {

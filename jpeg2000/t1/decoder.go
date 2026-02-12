@@ -6,9 +6,9 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
 
-// T1Decoder implements EBCOT Tier-1 decoding
+// Decoder implements EBCOT Tier-1 decoding
 // Reference: ISO/IEC 15444-1:2019 Annex D
-type T1Decoder struct {
+type Decoder struct {
 	// Code-block dimensions
 	width  int
 	height int
@@ -39,12 +39,12 @@ type T1Decoder struct {
 }
 
 // NewT1Decoder creates a new Tier-1 decoder
-func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
+func NewT1Decoder(width, height int, cblkstyle int) *Decoder {
 	// Add padding for boundary conditions (1 pixel on each side)
 	paddedWidth := width + 2
 	paddedHeight := height + 2
 
-	t1 := &T1Decoder{
+	t1 := &Decoder{
 		width:  width,
 		height: height,
 		data:   make([]int32, paddedWidth*paddedHeight),
@@ -62,13 +62,13 @@ func NewT1Decoder(width, height int, cblkstyle int) *T1Decoder {
 }
 
 // SetOrientation sets the subband orientation for zero coding context lookup.
-func (t1 *T1Decoder) SetOrientation(orient int) {
+func (t1 *Decoder) SetOrientation(orient int) {
 	t1.orientation = orient
 }
 
 // DecodeWithBitplane decodes a code-block starting from a specific bitplane
 // This is used when the max bitplane is known (e.g., from packet header in T2)
-func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
+func (t1 *Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
 	return t1.DecodeWithOptions(data, numPasses, maxBitplane, roishift, false)
 }
 
@@ -76,7 +76,7 @@ func (t1 *T1Decoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane 
 // In TERMALL mode, each pass is independently terminated and requires MQC state reset
 // passLengths[i] indicates the cumulative byte position after pass i (not used for now)
 // This method assumes TERMALL mode is enabled
-func (t1 *T1Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
+func (t1 *Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
 	// By default: TERMALL mode with contexts preserved (not reset)
 	// This matches OpenJPEG's behavior for TERMALL without RESET flag
 	return t1.DecodeLayeredWithMode(data, passLengths, maxBitplane, roishift, true, false)
@@ -84,7 +84,7 @@ func (t1 *T1Decoder) DecodeLayered(data []byte, passLengths []int, maxBitplane i
 
 // DecodeLayeredWithMode decodes a code-block with optional TERMALL mode
 // lossless parameter controls whether to reset MQ contexts between passes
-func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error {
+func (t1 *Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBitplane int, roishift int, useTERMALL bool, lossless bool) error {
 
 	if len(data) == 0 {
 		return fmt.Errorf("empty code-block data")
@@ -144,10 +144,10 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 		if raw {
 			t1.mqc = mqc.NewRawDecoder(passData)
 		} else if passIdx == 0 || resetContexts {
-			t1.mqc = mqc.NewMQDecoder(passData, NUM_CONTEXTS)
-			t1.mqc.SetContextState(CTX_UNI, 46)
-			t1.mqc.SetContextState(CTX_RL, 3)
-			t1.mqc.SetContextState(CTX_ZC_START, 4)
+			t1.mqc = mqc.NewMQDecoder(passData, NUMCONTEXTS)
+			t1.mqc.SetContextState(CTXUNI, 46)
+			t1.mqc.SetContextState(CTXRL, 3)
+			t1.mqc.SetContextState(CTXZCSTART, 4)
 		} else {
 			t1.mqc = mqc.NewMQDecoderWithContexts(passData, prevContexts)
 		}
@@ -163,7 +163,7 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
-					t1.mqc.Decode(CTX_UNI)
+					t1.mqc.Decode(CTXUNI)
 				}
 			}
 		}
@@ -188,7 +188,7 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 // DecodeWithOptions decodes a code-block with optional TERMALL mode support
 // If useTERMALL is true, the decoder resets MQC state after each pass
 // If useTERMALL is false, use the decoder's termall flag from code block style
-func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane int, roishift int, useTERMALL bool) error {
+func (t1 *Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane int, roishift int, useTERMALL bool) error {
 	// If useTERMALL parameter is false, use the decoder's own termall flag
 	if !useTERMALL {
 		useTERMALL = t1.termall
@@ -200,10 +200,10 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 	t1.roishift = roishift
 
 	// Initialize MQ decoder with OpenJPEG default context states
-	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
-	t1.mqc.SetContextState(CTX_UNI, 46)
-	t1.mqc.SetContextState(CTX_RL, 3)
-	t1.mqc.SetContextState(CTX_ZC_START, 4)
+	t1.mqc = mqc.NewMQDecoder(data, NUMCONTEXTS)
+	t1.mqc.SetContextState(CTXUNI, 46)
+	t1.mqc.SetContextState(CTXRL, 3)
+	t1.mqc.SetContextState(CTXZCSTART, 4)
 
 	// Decode passes using OpenJPEG sequencing.
 	passIdx := 0
@@ -236,7 +236,7 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
-					t1.mqc.Decode(CTX_UNI)
+					t1.mqc.Decode(CTXUNI)
 				}
 			}
 		}
@@ -247,17 +247,17 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		if useTERMALL && passIdx < numPasses {
 			t1.mqc.ReinitAfterTermination()
 			t1.mqc.ResetContexts()
-			t1.mqc.SetContextState(CTX_UNI, 46)
-			t1.mqc.SetContextState(CTX_RL, 3)
-			t1.mqc.SetContextState(CTX_ZC_START, 4)
+			t1.mqc.SetContextState(CTXUNI, 46)
+			t1.mqc.SetContextState(CTXRL, 3)
+			t1.mqc.SetContextState(CTXZCSTART, 4)
 		}
 
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses && !raw {
 			t1.mqc.ResetContexts()
-			t1.mqc.SetContextState(CTX_UNI, 46)
-			t1.mqc.SetContextState(CTX_RL, 3)
-			t1.mqc.SetContextState(CTX_ZC_START, 4)
+			t1.mqc.SetContextState(CTXUNI, 46)
+			t1.mqc.SetContextState(CTXRL, 3)
+			t1.mqc.SetContextState(CTXZCSTART, 4)
 		}
 
 		if passType == 2 {
@@ -282,7 +282,7 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 // - MQ decoding is the inner loop bottleneck
 // - Typical workload: 32x32 block = 1024 coefficients × 12-16 bit-planes
 // - Optimization opportunities: vectorization, parallel code-blocks
-func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
+func (t1 *Decoder) Decode(data []byte, numPasses int, roishift int) error {
 	if len(data) == 0 {
 		return fmt.Errorf("empty code-block data")
 	}
@@ -290,10 +290,10 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 	t1.roishift = roishift
 
 	// Initialize MQ decoder with OpenJPEG default context states
-	t1.mqc = mqc.NewMQDecoder(data, NUM_CONTEXTS)
-	t1.mqc.SetContextState(CTX_UNI, 46)
-	t1.mqc.SetContextState(CTX_RL, 3)
-	t1.mqc.SetContextState(CTX_ZC_START, 4)
+	t1.mqc = mqc.NewMQDecoder(data, NUMCONTEXTS)
+	t1.mqc.SetContextState(CTXUNI, 46)
+	t1.mqc.SetContextState(CTXRL, 3)
+	t1.mqc.SetContextState(CTXZCSTART, 4)
 
 	// Determine starting bit-plane from number of passes
 	// OpenJPEG sequencing: numBitplanes = (numPasses + 2) / 3
@@ -336,7 +336,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
-					t1.mqc.Decode(CTX_UNI)
+					t1.mqc.Decode(CTXUNI)
 				}
 			}
 		}
@@ -345,9 +345,9 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		// Reset context if required
 		if t1.resetctx && passIdx < numPasses && !raw {
 			t1.mqc.ResetContexts()
-			t1.mqc.SetContextState(CTX_UNI, 46)
-			t1.mqc.SetContextState(CTX_RL, 3)
-			t1.mqc.SetContextState(CTX_ZC_START, 4)
+			t1.mqc.SetContextState(CTXUNI, 46)
+			t1.mqc.SetContextState(CTXRL, 3)
+			t1.mqc.SetContextState(CTXZCSTART, 4)
 		}
 
 		if passType == 2 {
@@ -363,7 +363,7 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 
 // GetData returns the decoded coefficients (without padding)
 // Note: Does NOT apply T1_NMSEDEC_FRACBITS inverse scaling - that should be done by the caller (tile decoder)
-func (t1 *T1Decoder) GetData() []int32 {
+func (t1 *Decoder) GetData() []int32 {
 	// Extract data without padding
 	result := make([]int32, t1.width*t1.height)
 	paddedWidth := t1.width + 2
@@ -383,7 +383,7 @@ func (t1 *T1Decoder) GetData() []int32 {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Decoder) decodeSigPropPass(raw bool) {
+func (t1 *Decoder) decodeSigPropPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -456,7 +456,7 @@ func (t1 *T1Decoder) decodeSigPropPass(raw bool) {
 
 // decodeMagRefPass decodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Decoder) decodeMagRefPass(raw bool) {
+func (t1 *Decoder) decodeMagRefPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -501,7 +501,7 @@ func (t1 *T1Decoder) decodeMagRefPass(raw bool) {
 // decodeCleanupPass decodes the Cleanup Pass
 // IMPORTANT: Process in VERTICAL order (column-first) with 4-row groups for RL decoding
 // This matches OpenJPEG's opj_t1_dec_clnpass() implementation and the encoder
-func (t1 *T1Decoder) decodeCleanupPass() {
+func (t1 *Decoder) decodeCleanupPass() {
 	paddedWidth := t1.width + 2
 
 	// Process in groups of 4 rows (vertical RL decoding)
@@ -532,7 +532,7 @@ func (t1 *T1Decoder) decodeCleanupPass() {
 
 				if canUseRL {
 					// Decode run-length bit
-					rlBit := t1.mqc.Decode(CTX_RL)
+					rlBit := t1.mqc.Decode(CTXRL)
 
 					if rlBit == 0 {
 						continue // Move to next column
@@ -540,9 +540,9 @@ func (t1 *T1Decoder) decodeCleanupPass() {
 
 					// At least one is significant, decode uniformly which one
 					runlen := 0
-					bit1 := t1.mqc.Decode(CTX_UNI)
+					bit1 := t1.mqc.Decode(CTXUNI)
 					runlen |= bit1 << 1
-					bit2 := t1.mqc.Decode(CTX_UNI)
+					bit2 := t1.mqc.Decode(CTXUNI)
 					runlen |= bit2
 
 					// In RL path, the first sample at runlen is implicitly significant
@@ -649,7 +649,7 @@ func (t1 *T1Decoder) decodeCleanupPass() {
 
 // updateNeighborFlags updates the neighbor significance flags
 // when a coefficient becomes significant
-func (t1 *T1Decoder) updateNeighborFlags(x, y, idx int) {
+func (t1 *Decoder) updateNeighborFlags(x, y, idx int) {
 	paddedWidth := t1.width + 2
 	sign := t1.flags[idx] & T1_SIGN
 

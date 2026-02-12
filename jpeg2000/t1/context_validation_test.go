@@ -16,18 +16,18 @@ func TestOpenJPEGLUTAlignment(t *testing.T) {
 	spb := parseOpenJPEGLUT(t, "lut_spb", 256)
 
 	for i, v := range zc {
-		if lut_ctxno_zc[i] != uint8(v) {
-			t.Fatalf("lut_ctxno_zc[%d] mismatch: got %d want %d", i, lut_ctxno_zc[i], v)
+		if lutCtxnoZc[i] != uint8(v) {
+			t.Fatalf("lut_ctxno_zc[%d] mismatch: got %d want %d", i, lutCtxnoZc[i], v)
 		}
 	}
 	for i, v := range sc {
-		if lut_ctxno_sc[i] != uint8(v) {
-			t.Fatalf("lut_ctxno_sc[%d] mismatch: got 0x%X want 0x%X", i, lut_ctxno_sc[i], v)
+		if lutCtxnoSc[i] != uint8(v) {
+			t.Fatalf("lut_ctxno_sc[%d] mismatch: got 0x%X want 0x%X", i, lutCtxnoSc[i], v)
 		}
 	}
 	for i, v := range spb {
-		if lut_spb[i] != v {
-			t.Fatalf("lut_spb[%d] mismatch: got %d want %d", i, lut_spb[i], v)
+		if lutSpb[i] != v {
+			t.Fatalf("lut_spb[%d] mismatch: got %d want %d", i, lutSpb[i], v)
 		}
 	}
 }
@@ -115,27 +115,27 @@ func TestContextConstants(t *testing.T) {
 		end   int
 		count int
 	}{
-		{name: "ZeroCoding", start: CTX_ZC_START, end: CTX_ZC_END, count: 9},
-		{name: "SignCoding", start: CTX_SC_START, end: CTX_SC_END, count: 5},
-		{name: "MagnitudeRefinement", start: CTX_MR_START, end: CTX_MR_END, count: 3},
+		{name: "ZeroCoding", start: CTXZCSTART, end: CTXZCEND, count: 9},
+		{name: "SignCoding", start: CTXSCSTART, end: CTXSCEND, count: 5},
+		{name: "MagnitudeRefinement", start: CTXMRSTART, end: CTXMREND, count: 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.end-tt.start+1; got != tt.count {
+			if got := tt.end - tt.start + 1; got != tt.count {
 				t.Fatalf("context count mismatch: got %d want %d", got, tt.count)
 			}
 		})
 	}
 
-	if NUM_CONTEXTS != 19 {
-		t.Fatalf("NUM_CONTEXTS = %d, want 19", NUM_CONTEXTS)
+	if NUMCONTEXTS != 19 {
+		t.Fatalf("NUM_CONTEXTS = %d, want 19", NUMCONTEXTS)
 	}
-	if CTX_RL != 17 {
-		t.Fatalf("CTX_RL = %d, want 17", CTX_RL)
+	if CTXRL != 17 {
+		t.Fatalf("CTX_RL = %d, want 17", CTXRL)
 	}
-	if CTX_UNI != 18 {
-		t.Fatalf("CTX_UNI = %d, want 18", CTX_UNI)
+	if CTXUNI != 18 {
+		t.Fatalf("CTX_UNI = %d, want 18", CTXUNI)
 	}
 }
 

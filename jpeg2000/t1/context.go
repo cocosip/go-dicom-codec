@@ -10,39 +10,39 @@ package t1
 const (
 	// Zero Coding contexts (0-8)
 	// Used in Significance Propagation and Cleanup passes
-	CTX_ZC_START = 0
-	CTX_ZC_END   = 8
+	CTXZCSTART = 0
+	CTXZCEND   = 8
 
 	// Sign Coding contexts (9-13)
 	// Used when encoding/decoding sign bits
-	CTX_SC_START = 9
-	CTX_SC_END   = 13
+	CTXSCSTART = 9
+	CTXSCEND   = 13
 
 	// Magnitude Refinement contexts (14-16)
 	// Used in Magnitude Refinement pass
-	CTX_MR_START = 14
-	CTX_MR_END   = 16
+	CTXMRSTART = 14
+	CTXMREND   = 16
 
 	// Run-Length context (17)
 	// Used for run-length coding in Cleanup pass
-	CTX_RL = 17
+	CTXRL = 17
 
 	// Uniform context (18)
 	// Used for sign magnitude bits
-	CTX_UNI = 18
+	CTXUNI = 18
 
 	// Total number of contexts
-	NUM_CONTEXTS = 19
+	NUMCONTEXTS = 19
 )
 
 // Code-block style flags (ISO/IEC 15444-1 Table A.18)
 const (
-	CblkStyleLazy   = 0x01
-	CblkStyleReset  = 0x02
+	CblkStyleLazy    = 0x01
+	CblkStyleReset   = 0x02
 	CblkStyleTermAll = 0x04
-	CblkStyleVSC    = 0x08
-	CblkStylePterm  = 0x10
-	CblkStyleSegsym = 0x20
+	CblkStyleVSC     = 0x08
+	CblkStylePterm   = 0x10
+	CblkStyleSegsym  = 0x20
 )
 
 // Coefficient state flags
@@ -84,14 +84,14 @@ const (
 // Context lookup tables
 // These tables map neighbor configurations to context labels
 
-// lut_ctxno_zc - Zero Coding context lookup
+// lutCtxnoZc - Zero Coding context lookup
 // Maps neighbor significance to context 0-8
 // Full table size: 2048 entries = 4 orientations × 512 neighbor configurations
 // Each orientation is 512 entries for all 9-bit neighbor significance patterns
 // Index: orientation_offset + (flags & T1_SIGMA_NEIGHBOURS)
 //   where orientation_offset = orientation * 512
 // Reference: OpenJPEG t1_luts.h
-var lut_ctxno_zc = [2048]uint8{
+var lutCtxnoZc = [2048]uint8{
 	// Orientation 0 (0-511)
 	0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7, 0, 1, 3, 3, 1, 2, 3, 3, 5, 6, 7, 7, 6, 6, 7, 7,
 	5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 5, 6, 7, 7, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8,
@@ -162,7 +162,7 @@ var lut_ctxno_zc = [2048]uint8{
 	7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8, 7, 8, 7, 8, 8, 8, 8, 8,
 }
 
-// lut_ctxno_sc - Sign Coding context lookup
+// lutCtxnoSc - Sign Coding context lookup
 // Maps neighbor signs to context 9-13
 // Indexed by OpenJPEG bit layout (8 bits):
 //   Bit 0: T1_LUT_SGN_W - West neighbor sign
@@ -174,7 +174,7 @@ var lut_ctxno_zc = [2048]uint8{
 //   Bit 6: T1_LUT_SGN_S - South neighbor sign
 //   Bit 7: T1_LUT_SIG_S - South neighbor significance
 // Reference: OpenJPEG t1_luts.h
-var lut_ctxno_sc = [256]uint8{
+var lutCtxnoSc = [256]uint8{
 	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xd, 0xb, 0xc, 0xc, 0xd, 0xb,
 	0x9, 0x9, 0xa, 0xa, 0x9, 0x9, 0xa, 0xa, 0xc, 0xc, 0xb, 0xd, 0xc, 0xc, 0xb, 0xd,
 	0xc, 0xc, 0xd, 0xd, 0xc, 0xc, 0xb, 0xb, 0xc, 0x9, 0xd, 0xa, 0x9, 0xc, 0xa, 0xb,
@@ -201,12 +201,12 @@ var lut_ctxno_sc = [256]uint8{
 // 	15, 16, 16, 16, 16, 16, 16, 16,
 // }
 
-// lut_spb - Sign bit prediction lookup
+// lutSpb - Sign bit prediction lookup
 // Predicts the sign bit based on neighbor signs
 // Uses same indexing as lut_ctxno_sc (OpenJPEG bit layout)
 // 0 = predict positive, 1 = predict negative
 // Reference: OpenJPEG t1_luts.h
-var lut_spb = [256]int{
+var lutSpb = [256]int{
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
 	0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1,
@@ -268,7 +268,7 @@ func getSignCodingContext(flags uint32) uint8 {
 		}
 	}
 
-	return lut_ctxno_sc[idx]
+	return lutCtxnoSc[idx]
 }
 
 // getZeroCodingContext returns the zero coding context for a coefficient
@@ -311,18 +311,18 @@ func getZeroCodingContext(flags uint32, orient int) uint8 {
 		orient = 0
 	}
 	offset := uint16(orient) * 512
-	return lut_ctxno_zc[offset+idx]
+	return lutCtxnoZc[offset+idx]
 }
 
 // getMagRefinementContext returns the magnitude refinement context.
 // OpenJPEG logic: neighbor significance selects ctx 14/15, and MU/REFINE selects ctx 16.
 func getMagRefinementContext(flags uint32) uint8 {
-	ctx := uint8(CTX_MR_START)
+	ctx := uint8(CTXMRSTART)
 	if flags&T1_SIG_NEIGHBORS != 0 {
-		ctx = CTX_MR_START + 1
+		ctx = CTXMRSTART + 1
 	}
 	if flags&T1_REFINE != 0 {
-		ctx = CTX_MR_START + 2
+		ctx = CTXMRSTART + 2
 	}
 	return ctx
 }
@@ -364,20 +364,20 @@ func getSignPrediction(flags uint32) int {
 		}
 	}
 
-	return lut_spb[idx]
+	return lutSpb[idx]
 }
 
 // GetSignContextLUT returns the sign context lookup table for validation
 func GetSignContextLUT() [256]uint8 {
-	return lut_ctxno_sc
+	return lutCtxnoSc
 }
 
 // GetZeroCodingLUT returns the zero coding context lookup table for validation
 func GetZeroCodingLUT() [2048]uint8 {
-	return lut_ctxno_zc
+	return lutCtxnoZc
 }
 
 // GetSignPredictionLUT returns the sign prediction lookup table for validation
 func GetSignPredictionLUT() [256]int {
-	return lut_spb
+	return lutSpb
 }

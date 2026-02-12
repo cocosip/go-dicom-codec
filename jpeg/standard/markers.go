@@ -1,4 +1,4 @@
-package common
+package standard
 
 // JPEG marker constants
 const (

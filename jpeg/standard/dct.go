@@ -1,4 +1,4 @@
-package common
+package standard
 
 // DCT performs Discrete Cosine Transform on an 8x8 block
 // Input: 64 spatial domain values (range 0-255)

@@ -1,5 +1,5 @@
-// Package common contains shared helpers and tables used across JPEG codecs.
-package common
+// Package standard contains shared helpers and tables used across JPEG codecs.
+package standard
 
 // Clamp clamps a value between min and max
 func Clamp(v, minVal, maxVal int) int {

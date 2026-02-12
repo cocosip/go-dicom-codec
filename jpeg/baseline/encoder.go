@@ -3,7 +3,7 @@ package baseline
 import (
 	"bytes"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 )
 
 // Encoder represents a JPEG Baseline encoder
@@ -14,10 +14,10 @@ type Encoder struct {
 	quality    int
 
 	qtables  [2][64]int32
-	dcTables [2]*common.HuffmanTable
-	acTables [2]*common.HuffmanTable
-	dcCodes  [2][]common.HuffmanCode
-	acCodes  [2][]common.HuffmanCode
+	dcTables [2]*standard.HuffmanTable
+	acTables [2]*standard.HuffmanTable
+	dcCodes  [2][]standard.HuffmanCode
+	acCodes  [2][]standard.HuffmanCode
 }
 
 // Encode encodes pixel data to JPEG Baseline format
@@ -25,19 +25,19 @@ type Encoder struct {
 // quality: 1-100, where 100 is best quality
 func Encode(pixelData []byte, width, height, components, quality int) ([]byte, error) {
 	if width <= 0 || height <= 0 {
-		return nil, common.ErrInvalidDimensions
+		return nil, standard.ErrInvalidDimensions
 	}
 
 	if components != 1 && components != 3 {
-		return nil, common.ErrInvalidComponents
+		return nil, standard.ErrInvalidComponents
 	}
 
 	if quality < 1 || quality > 100 {
-		return nil, common.ErrInvalidQuality
+		return nil, standard.ErrInvalidQuality
 	}
 
 	if len(pixelData) < width*height*components {
-		return nil, common.ErrBufferTooSmall
+		return nil, standard.ErrBufferTooSmall
 	}
 
 	enc := &Encoder{
@@ -48,38 +48,38 @@ func Encode(pixelData []byte, width, height, components, quality int) ([]byte, e
 	}
 
 	// Initialize quantization tables
-	enc.qtables[0] = common.ScaleQuantTable(common.DefaultLuminanceQuantTable, quality)
-	enc.qtables[1] = common.ScaleQuantTable(common.DefaultChrominanceQuantTable, quality)
+	enc.qtables[0] = standard.ScaleQuantTable(standard.DefaultLuminanceQuantTable, quality)
+	enc.qtables[1] = standard.ScaleQuantTable(standard.DefaultChrominanceQuantTable, quality)
 
 	// Initialize Huffman tables
-	enc.dcTables[0] = common.BuildStandardHuffmanTable(
-		common.StandardDCLuminanceBits,
-		common.StandardDCLuminanceValues,
+	enc.dcTables[0] = standard.BuildStandardHuffmanTable(
+		standard.StandardDCLuminanceBits,
+		standard.StandardDCLuminanceValues,
 	)
-	enc.acTables[0] = common.BuildStandardHuffmanTable(
-		common.StandardACLuminanceBits,
-		common.StandardACLuminanceValues,
+	enc.acTables[0] = standard.BuildStandardHuffmanTable(
+		standard.StandardACLuminanceBits,
+		standard.StandardACLuminanceValues,
 	)
-	enc.dcTables[1] = common.BuildStandardHuffmanTable(
-		common.StandardDCChrominanceBits,
-		common.StandardDCChrominanceValues,
+	enc.dcTables[1] = standard.BuildStandardHuffmanTable(
+		standard.StandardDCChrominanceBits,
+		standard.StandardDCChrominanceValues,
 	)
-	enc.acTables[1] = common.BuildStandardHuffmanTable(
-		common.StandardACChrominanceBits,
-		common.StandardACChrominanceValues,
+	enc.acTables[1] = standard.BuildStandardHuffmanTable(
+		standard.StandardACChrominanceBits,
+		standard.StandardACChrominanceValues,
 	)
 
 	// Build Huffman codes
-	enc.dcCodes[0] = common.BuildHuffmanCodes(enc.dcTables[0])
-	enc.acCodes[0] = common.BuildHuffmanCodes(enc.acTables[0])
-	enc.dcCodes[1] = common.BuildHuffmanCodes(enc.dcTables[1])
-	enc.acCodes[1] = common.BuildHuffmanCodes(enc.acTables[1])
+	enc.dcCodes[0] = standard.BuildHuffmanCodes(enc.dcTables[0])
+	enc.acCodes[0] = standard.BuildHuffmanCodes(enc.acTables[0])
+	enc.dcCodes[1] = standard.BuildHuffmanCodes(enc.dcTables[1])
+	enc.acCodes[1] = standard.BuildHuffmanCodes(enc.acTables[1])
 
 	var buf bytes.Buffer
-	writer := common.NewWriter(&buf)
+	writer := standard.NewWriter(&buf)
 
 	// Write SOI
-	if err := writer.WriteMarker(common.MarkerSOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerSOI); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func Encode(pixelData []byte, width, height, components, quality int) ([]byte, e
 	}
 
 	// Write EOI
-	if err := writer.WriteMarker(common.MarkerEOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerEOI); err != nil {
 		return nil, err
 	}
 
@@ -112,7 +112,7 @@ func Encode(pixelData []byte, width, height, components, quality int) ([]byte, e
 }
 
 // writeDQT writes Define Quantization Table segments
-func (enc *Encoder) writeDQT(writer *common.Writer) error {
+func (enc *Encoder) writeDQT(writer *standard.Writer) error {
 	numTables := 1
 	if enc.components == 3 {
 		numTables = 2
@@ -124,10 +124,10 @@ func (enc *Encoder) writeDQT(writer *common.Writer) error {
 
 		// Write in zigzag order
 		for j := 0; j < 64; j++ {
-			data[1+j] = byte(enc.qtables[i][common.ZigZag[j]])
+			data[1+j] = byte(enc.qtables[i][standard.ZigZag[j]])
 		}
 
-		if err := writer.WriteSegment(common.MarkerDQT, data); err != nil {
+		if err := writer.WriteSegment(standard.MarkerDQT, data); err != nil {
 			return err
 		}
 	}
@@ -136,7 +136,7 @@ func (enc *Encoder) writeDQT(writer *common.Writer) error {
 }
 
 // writeSOF0 writes Start of Frame (Baseline DCT)
-func (enc *Encoder) writeSOF0(writer *common.Writer) error {
+func (enc *Encoder) writeSOF0(writer *standard.Writer) error {
 	data := make([]byte, 6+enc.components*3)
 
 	data[0] = 8                     // Precision: 8 bits
@@ -169,15 +169,15 @@ func (enc *Encoder) writeSOF0(writer *common.Writer) error {
 		data[14] = 1    // Quantization table 1
 	}
 
-	return writer.WriteSegment(common.MarkerSOF0, data)
+	return writer.WriteSegment(standard.MarkerSOF0, data)
 }
 
 // writeDHT writes Define Huffman Table segments
-func (enc *Encoder) writeDHT(writer *common.Writer) error {
+func (enc *Encoder) writeDHT(writer *standard.Writer) error {
 	tables := []struct {
 		class byte
 		id    byte
-		table *common.HuffmanTable
+		table *standard.HuffmanTable
 	}{
 		{0, 0, enc.dcTables[0]}, // DC table 0 (luminance)
 		{1, 0, enc.acTables[0]}, // AC table 0 (luminance)
@@ -188,12 +188,12 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 			struct {
 				class byte
 				id    byte
-				table *common.HuffmanTable
+				table *standard.HuffmanTable
 			}{0, 1, enc.dcTables[1]}, // DC table 1 (chrominance)
 			struct {
 				class byte
 				id    byte
-				table *common.HuffmanTable
+				table *standard.HuffmanTable
 			}{1, 1, enc.acTables[1]}, // AC table 1 (chrominance)
 		)
 	}
@@ -213,7 +213,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 
 		copy(data[17:], t.table.Values)
 
-		if err := writer.WriteSegment(common.MarkerDHT, data); err != nil {
+		if err := writer.WriteSegment(standard.MarkerDHT, data); err != nil {
 			return err
 		}
 	}
@@ -222,7 +222,7 @@ func (enc *Encoder) writeDHT(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan and scan data
-func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) writeSOS(writer *standard.Writer, pixelData []byte) error {
 	// Write SOS header
 	data := make([]byte, 1+enc.components*2+3)
 	data[0] = byte(enc.components)
@@ -244,7 +244,7 @@ func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
 	data[2+enc.components*2] = 63 // End of spectral selection
 	data[3+enc.components*2] = 0  // Successive approximation
 
-	if err := writer.WriteSegment(common.MarkerSOS, data); err != nil {
+	if err := writer.WriteSegment(standard.MarkerSOS, data); err != nil {
 		return err
 	}
 
@@ -253,9 +253,9 @@ func (enc *Encoder) writeSOS(writer *common.Writer, pixelData []byte) error {
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error {
 	var scanBuf bytes.Buffer
-	huffEnc := common.NewHuffmanEncoder(&scanBuf)
+	huffEnc := standard.NewHuffmanEncoder(&scanBuf)
 
 	if enc.components == 1 {
 		// Grayscale
@@ -282,11 +282,11 @@ func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
 }
 
 // encodeGrayscale encodes grayscale image
-func (enc *Encoder) encodeGrayscale(huffEnc *common.HuffmanEncoder, pixelData []byte) error {
+func (enc *Encoder) encodeGrayscale(huffEnc *standard.HuffmanEncoder, pixelData []byte) error {
 	dcPred := 0
 
-	blocksWide := common.DivCeil(enc.width, 8)
-	blocksHigh := common.DivCeil(enc.height, 8)
+	blocksWide := standard.DivCeil(enc.width, 8)
+	blocksHigh := standard.DivCeil(enc.height, 8)
 
 	for by := 0; by < blocksHigh; by++ {
 		for bx := 0; bx < blocksWide; bx++ {
@@ -300,18 +300,18 @@ func (enc *Encoder) encodeGrayscale(huffEnc *common.HuffmanEncoder, pixelData []
 }
 
 // encodeRGB encodes RGB image
-func (enc *Encoder) encodeRGB(huffEnc *common.HuffmanEncoder, pixelData []byte) error {
+func (enc *Encoder) encodeRGB(huffEnc *standard.HuffmanEncoder, pixelData []byte) error {
 	// Convert RGB to YCbCr and encode with 4:2:0 subsampling
 	ycbcr := enc.rgbToYCbCr(pixelData)
 
 	dcPred := [3]int{0, 0, 0}
 
 	// Process in 16x16 MCUs
-	mcuWide := common.DivCeil(enc.width, 16)
-	mcuHigh := common.DivCeil(enc.height, 16)
+	mcuWide := standard.DivCeil(enc.width, 16)
+	mcuHigh := standard.DivCeil(enc.height, 16)
 
-	yStride := common.DivCeil(enc.width, 8) * 8
-	cStride := common.DivCeil(enc.width/2, 8) * 8
+	yStride := standard.DivCeil(enc.width, 8) * 8
+	cStride := standard.DivCeil(enc.width/2, 8) * 8
 
 	for mcuY := 0; mcuY < mcuHigh; mcuY++ {
 		for mcuX := 0; mcuX < mcuWide; mcuX++ {
@@ -350,10 +350,10 @@ type YCbCrData struct {
 
 // rgbToYCbCr converts RGB to YCbCr with 4:2:0 subsampling
 func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
-	yStride := common.DivCeil(enc.width, 8) * 8
-	yHeight := common.DivCeil(enc.height, 8) * 8
-	cStride := common.DivCeil(enc.width/2, 8) * 8
-	cHeight := common.DivCeil(enc.height/2, 8) * 8
+	yStride := standard.DivCeil(enc.width, 8) * 8
+	yHeight := standard.DivCeil(enc.height, 8) * 8
+	cStride := standard.DivCeil(enc.width/2, 8) * 8
+	cHeight := standard.DivCeil(enc.height/2, 8) * 8
 
 	y := make([]byte, yStride*yHeight)
 	cb := make([]byte, cStride*cHeight)
@@ -371,13 +371,13 @@ func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
 			cbVal := ((-11056*r - 21712*g + 32768*b + 8421376) >> 16)
 			crVal := ((32768*r - 27440*g - 5328*b + 8421376) >> 16)
 
-			y[row*yStride+col] = byte(common.Clamp(yy, 0, 255))
+			y[row*yStride+col] = byte(standard.Clamp(yy, 0, 255))
 
 			// 4:2:0 subsampling for Cb and Cr
 			if row%2 == 0 && col%2 == 0 {
 				cbIdx := (row/2)*cStride + (col / 2)
-				cb[cbIdx] = byte(common.Clamp(cbVal, 0, 255))
-				cr[cbIdx] = byte(common.Clamp(crVal, 0, 255))
+				cb[cbIdx] = byte(standard.Clamp(cbVal, 0, 255))
+				cr[cbIdx] = byte(standard.Clamp(crVal, 0, 255))
 			}
 		}
 	}
@@ -386,7 +386,7 @@ func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
 }
 
 // encodeBlock encodes a single 8x8 block
-func (enc *Encoder) encodeBlock(huffEnc *common.HuffmanEncoder, data []byte, blockX, blockY, _ int, stride int, dcPred *int, tableIdx int) error {
+func (enc *Encoder) encodeBlock(huffEnc *standard.HuffmanEncoder, data []byte, blockX, blockY, _ int, stride int, dcPred *int, tableIdx int) error {
 	// Extract 8x8 block
 	var block [64]byte
 	for y := 0; y < 8; y++ {
@@ -406,7 +406,7 @@ func (enc *Encoder) encodeBlock(huffEnc *common.HuffmanEncoder, data []byte, blo
 
 	// DCT
 	var coef [64]int32
-	common.DCT(block[:], 8, coef[:])
+	standard.DCT(block[:], 8, coef[:])
 
 	// Quantize
 	qtable := &enc.qtables[tableIdx]
@@ -434,7 +434,7 @@ func (enc *Encoder) encodeBlock(huffEnc *common.HuffmanEncoder, data []byte, blo
 	zeroRun := 0
 
 	for k := 1; k < 64; k++ {
-		val := int(coef[common.ZigZag[k]])
+		val := int(coef[standard.ZigZag[k]])
 
 		if val == 0 {
 			zeroRun++

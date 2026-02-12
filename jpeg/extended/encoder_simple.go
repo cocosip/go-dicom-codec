@@ -5,26 +5,26 @@ import (
 	"image"
 	"image/jpeg"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 )
 
 // EncodeSimple encodes using Go's standard JPEG encoder for 8-bit
 // For 12-bit, we scale down to 8-bit, encode, and mark as SOF1
 func EncodeSimple(pixelData []byte, width, height, components, bitDepth, quality int) ([]byte, error) {
 	if width <= 0 || height <= 0 {
-		return nil, common.ErrInvalidDimensions
+		return nil, standard.ErrInvalidDimensions
 	}
 
 	if components != 1 && components != 3 {
-		return nil, common.ErrInvalidComponents
+		return nil, standard.ErrInvalidComponents
 	}
 
 	if bitDepth != 8 && bitDepth != 12 {
-		return nil, common.ErrInvalidPrecision
+		return nil, standard.ErrInvalidPrecision
 	}
 
 	if quality < 1 || quality > 100 {
-		return nil, common.ErrInvalidQuality
+		return nil, standard.ErrInvalidQuality
 	}
 
 	// For 12-bit data, scale to 8-bit for encoding
@@ -63,10 +63,10 @@ func EncodeSimple(pixelData []byte, width, height, components, bitDepth, quality
 			for x := 0; x < width; x++ {
 				srcIdx := (y*width + x) * 3
 				dstIdx := (y*width + x) * 4
-				rgbaImg.Pix[dstIdx+0] = img8bit[srcIdx+0]   // R
-				rgbaImg.Pix[dstIdx+1] = img8bit[srcIdx+1]   // G
-				rgbaImg.Pix[dstIdx+2] = img8bit[srcIdx+2]   // B
-				rgbaImg.Pix[dstIdx+3] = 255                 // A
+				rgbaImg.Pix[dstIdx+0] = img8bit[srcIdx+0] // R
+				rgbaImg.Pix[dstIdx+1] = img8bit[srcIdx+1] // G
+				rgbaImg.Pix[dstIdx+2] = img8bit[srcIdx+2] // B
+				rgbaImg.Pix[dstIdx+3] = 255               // A
 			}
 		}
 		img = rgbaImg

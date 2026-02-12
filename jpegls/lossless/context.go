@@ -1,6 +1,6 @@
 package lossless
 
-import runmode "github.com/cocosip/go-dicom-codec/jpegls/runmode"
+import "github.com/cocosip/go-dicom-codec/jpegls/runmode"
 
 // Context holds the statistical model for a specific context
 type Context struct {

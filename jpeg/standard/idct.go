@@ -1,4 +1,4 @@
-package common
+package standard
 
 // IDCT performs Inverse Discrete Cosine Transform on an 8x8 block
 // Input: 64 DCT coefficients in natural order

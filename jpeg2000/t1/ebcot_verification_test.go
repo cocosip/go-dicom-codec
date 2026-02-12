@@ -115,33 +115,33 @@ func TestEBCOTContextModeling(t *testing.T) {
 	t.Log("Verifying Context Modeling (19 contexts)")
 
 	// Verify context constants are defined correctly
-	if NUM_CONTEXTS != 19 {
-		t.Errorf("NUM_CONTEXTS should be 19, got %d", NUM_CONTEXTS)
+	if NUMCONTEXTS != 19 {
+		t.Errorf("NUM_CONTEXTS should be 19, got %d", NUMCONTEXTS)
 	}
 
 	// Zero Coding contexts: 0-8
-	if CTX_ZC_START != 0 || CTX_ZC_END != 8 {
-		t.Errorf("Zero Coding contexts should be 0-8, got %d-%d", CTX_ZC_START, CTX_ZC_END)
+	if CTXZCSTART != 0 || CTXZCEND != 8 {
+		t.Errorf("Zero Coding contexts should be 0-8, got %d-%d", CTXZCSTART, CTXZCEND)
 	}
 
 	// Sign Coding contexts: 9-13
-	if CTX_SC_START != 9 || CTX_SC_END != 13 {
-		t.Errorf("Sign Coding contexts should be 9-13, got %d-%d", CTX_SC_START, CTX_SC_END)
+	if CTXSCSTART != 9 || CTXSCEND != 13 {
+		t.Errorf("Sign Coding contexts should be 9-13, got %d-%d", CTXSCSTART, CTXSCEND)
 	}
 
 	// Magnitude Refinement contexts: 14-16
-	if CTX_MR_START != 14 || CTX_MR_END != 16 {
-		t.Errorf("Magnitude Refinement contexts should be 14-16, got %d-%d", CTX_MR_START, CTX_MR_END)
+	if CTXMRSTART != 14 || CTXMREND != 16 {
+		t.Errorf("Magnitude Refinement contexts should be 14-16, got %d-%d", CTXMRSTART, CTXMREND)
 	}
 
 	// Run-Length context: 17
-	if CTX_RL != 17 {
-		t.Errorf("Run-Length context should be 17, got %d", CTX_RL)
+	if CTXRL != 17 {
+		t.Errorf("Run-Length context should be 17, got %d", CTXRL)
 	}
 
 	// Uniform context: 18
-	if CTX_UNI != 18 {
-		t.Errorf("Uniform context should be 18, got %d", CTX_UNI)
+	if CTXUNI != 18 {
+		t.Errorf("Uniform context should be 18, got %d", CTXUNI)
 	}
 
 	t.Log("Context modeling: All 19 contexts defined correctly")

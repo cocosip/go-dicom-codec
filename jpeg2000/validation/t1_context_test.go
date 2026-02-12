@@ -154,36 +154,36 @@ func TestT1EBCOTFeatures(t *testing.T) {
 
 	t.Run("19 Context Model", func(t *testing.T) {
 		// Verify 19 contexts are correctly defined
-		if t1.NUM_CONTEXTS != 19 {
-			t.Errorf("NUM_CONTEXTS = %d, want 19", t1.NUM_CONTEXTS)
+		if t1.NUMCONTEXTS != 19 {
+			t.Errorf("NUM_CONTEXTS = %d, want 19", t1.NUMCONTEXTS)
 		}
 
 		// Zero Coding: contexts 0-8
-		if t1.CTX_ZC_START != 0 || t1.CTX_ZC_END != 8 {
+		if t1.CTXZCSTART != 0 || t1.CTXZCEND != 8 {
 			t.Errorf("Zero Coding contexts = [%d, %d], want [0, 8]",
-				t1.CTX_ZC_START, t1.CTX_ZC_END)
+				t1.CTXZCSTART, t1.CTXZCEND)
 		}
 
 		// Sign Coding: contexts 9-13
-		if t1.CTX_SC_START != 9 || t1.CTX_SC_END != 13 {
+		if t1.CTXSCSTART != 9 || t1.CTXSCEND != 13 {
 			t.Errorf("Sign Coding contexts = [%d, %d], want [9, 13]",
-				t1.CTX_SC_START, t1.CTX_SC_END)
+				t1.CTXSCSTART, t1.CTXSCEND)
 		}
 
 		// Magnitude Refinement: contexts 14-16
-		if t1.CTX_MR_START != 14 || t1.CTX_MR_END != 16 {
+		if t1.CTXMRSTART != 14 || t1.CTXMREND != 16 {
 			t.Errorf("Magnitude Refinement contexts = [%d, %d], want [14, 16]",
-				t1.CTX_MR_START, t1.CTX_MR_END)
+				t1.CTXMRSTART, t1.CTXMREND)
 		}
 
 		// Run-Length: context 17
-		if t1.CTX_RL != 17 {
-			t.Errorf("Run-Length context = %d, want 17", t1.CTX_RL)
+		if t1.CTXRL != 17 {
+			t.Errorf("Run-Length context = %d, want 17", t1.CTXRL)
 		}
 
 		// Uniform: context 18
-		if t1.CTX_UNI != 18 {
-			t.Errorf("Uniform context = %d, want 18", t1.CTX_UNI)
+		if t1.CTXUNI != 18 {
+			t.Errorf("Uniform context = %d, want 18", t1.CTXUNI)
 		}
 
 		t.Log("✅ 19-context model (ISO/IEC 15444-1 Table D.1) verified")

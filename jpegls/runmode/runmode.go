@@ -3,7 +3,6 @@
 package runmode
 
 // J array for run mode encoding
-// This is defined in lossless package and re-exported here for convenience
 // J array (JPEG-LS A.2.1)
 var J = [32]int{
 	0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3,

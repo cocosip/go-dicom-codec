@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 	"github.com/cocosip/go-dicom-codec/jpegls/lossless"
 	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
@@ -42,15 +42,15 @@ func Decode(jpegLSData []byte) ([]byte, int, int, int, int, int, error) {
 // decode performs the actual decoding
 func (dec *Decoder) decode(jpegLSData []byte) ([]byte, int, int, int, int, int, error) {
 	r := bytes.NewReader(jpegLSData)
-	reader := common.NewReader(r)
+	reader := standard.NewReader(r)
 
 	// Read SOI marker
 	marker, err := reader.ReadMarker()
 	if err != nil {
 		return nil, 0, 0, 0, 0, 0, err
 	}
-	if marker != common.MarkerSOI {
-		return nil, 0, 0, 0, 0, 0, common.ErrInvalidSOI
+	if marker != standard.MarkerSOI {
+		return nil, 0, 0, 0, 0, 0, standard.ErrInvalidSOI
 	}
 
 	// Parse segments
@@ -74,7 +74,7 @@ func (dec *Decoder) decode(jpegLSData []byte) ([]byte, int, int, int, int, int, 
 				return nil, 0, 0, 0, 0, 0, err
 			}
 
-		case common.MarkerSOS:
+		case standard.MarkerSOS:
 			if err := dec.parseSOS(reader); err != nil {
 				return nil, 0, 0, 0, 0, 0, err
 			}
@@ -87,11 +87,11 @@ func (dec *Decoder) decode(jpegLSData []byte) ([]byte, int, int, int, int, int, 
 
 			return pixelData, dec.width, dec.height, dec.components, dec.bitDepth, dec.near, nil
 
-		case common.MarkerEOI:
+		case standard.MarkerEOI:
 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("unexpected EOI before scan data")
 
 		default:
-			if common.HasLength(marker) {
+			if standard.HasLength(marker) {
 				_, err := reader.ReadSegment()
 				if err != nil {
 					return nil, 0, 0, 0, 0, 0, err
@@ -104,14 +104,14 @@ func (dec *Decoder) decode(jpegLSData []byte) ([]byte, int, int, int, int, int, 
 }
 
 // parseSOF55 parses the SOF55 segment
-func (dec *Decoder) parseSOF55(reader *common.Reader) error {
+func (dec *Decoder) parseSOF55(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
 	}
 
 	if len(data) < 6 {
-		return common.ErrInvalidSOF
+		return standard.ErrInvalidSOF
 	}
 
 	dec.bitDepth = int(data[0])
@@ -120,11 +120,11 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 	dec.components = int(data[5])
 
 	if dec.width <= 0 || dec.height <= 0 {
-		return common.ErrInvalidDimensions
+		return standard.ErrInvalidDimensions
 	}
 
 	if dec.components != 1 && dec.components != 3 {
-		return common.ErrInvalidComponents
+		return standard.ErrInvalidComponents
 	}
 
 	dec.maxVal = (1 << uint(dec.bitDepth)) - 1
@@ -134,7 +134,7 @@ func (dec *Decoder) parseSOF55(reader *common.Reader) error {
 }
 
 // parseLSE parses the LSE segment
-func (dec *Decoder) parseLSE(reader *common.Reader) error {
+func (dec *Decoder) parseLSE(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
@@ -191,14 +191,14 @@ func (dec *Decoder) applyCodingParameters() {
 }
 
 // parseSOS parses the SOS segment and extracts NEAR parameter
-func (dec *Decoder) parseSOS(reader *common.Reader) error {
+func (dec *Decoder) parseSOS(reader *standard.Reader) error {
 	data, err := reader.ReadSegment()
 	if err != nil {
 		return err
 	}
 
 	if len(data) < 4 {
-		return common.ErrInvalidSOS
+		return standard.ErrInvalidSOS
 	}
 
 	numComponents := int(data[0])
@@ -216,7 +216,7 @@ func (dec *Decoder) parseSOS(reader *common.Reader) error {
 }
 
 // decodeScan decodes the scan data
-func (dec *Decoder) decodeScan(reader *common.Reader) ([]byte, error) {
+func (dec *Decoder) decodeScan(reader *standard.Reader) ([]byte, error) {
 	// Read scan data
 	var scanData bytes.Buffer
 	for {

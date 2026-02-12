@@ -1,4 +1,4 @@
-package common
+package standard
 
 // DCT12 performs Discrete Cosine Transform on an 8x8 block for 12-bit data
 // Input: 64 spatial domain values (range 0-4095)

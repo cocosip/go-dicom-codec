@@ -7,9 +7,9 @@ import (
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
 
-// T1Encoder implements EBCOT Tier-1 encoding
+// Encoder implements EBCOT Tier-1 encoding
 // Reference: ISO/IEC 15444-1:2019 Annex D
-type T1Encoder struct {
+type Encoder struct {
 	// Code-block dimensions
 	width  int
 	height int
@@ -69,12 +69,12 @@ func isTerminatingPass(bitplane int, maxBitplane int, passType int, cblkstyle in
 }
 
 // NewT1Encoder creates a new Tier-1 encoder
-func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
+func NewT1Encoder(width, height int, cblkstyle int) *Encoder {
 	// Add padding for boundary conditions (1 pixel on each side)
 	paddedWidth := width + 2
 	paddedHeight := height + 2
 
-	t1 := &T1Encoder{
+	t1 := &Encoder{
 		width:  width,
 		height: height,
 		flags:  make([]uint32, paddedWidth*paddedHeight),
@@ -91,7 +91,7 @@ func NewT1Encoder(width, height int, cblkstyle int) *T1Encoder {
 }
 
 // SetOrientation sets the subband orientation for zero coding context lookup.
-func (t1 *T1Encoder) SetOrientation(orient int) {
+func (t1 *Encoder) SetOrientation(orient int) {
 	t1.orientation = orient
 }
 
@@ -104,7 +104,7 @@ func (t1 *T1Encoder) SetOrientation(orient int) {
 // - Context modeling using 8-neighbor flags (cached for speed)
 // - MQ encoding is the inner loop bottleneck
 // - Typical workload: 32x32 block = 1024 coefficients × 12-16 bit-planes
-func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, error) {
+func (t1 *Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, error) {
 	if len(data) != t1.width*t1.height {
 		return nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			t1.width*t1.height, len(data))
@@ -127,16 +127,16 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 	if maxBitplane < 0 {
 		// All coefficients are zero
-		t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
+		t1.mqe = mqc.NewMQEncoder(NUMCONTEXTS)
 		result := t1.mqe.Flush()
 		return result, nil
 	}
 
 	// Initialize MQ encoder with OpenJPEG default context states
-	t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
-	t1.mqe.SetContextState(CTX_UNI, 46)
-	t1.mqe.SetContextState(CTX_RL, 3)
-	t1.mqe.SetContextState(CTX_ZC_START, 4)
+	t1.mqe = mqc.NewMQEncoder(NUMCONTEXTS)
+	t1.mqe.SetContextState(CTXUNI, 46)
+	t1.mqe.SetContextState(CTXRL, 3)
+	t1.mqe.SetContextState(CTXZCSTART, 4)
 
 	// Encode passes using OpenJPEG sequencing:
 	// - First pass is Cleanup on the highest bit-plane.
@@ -198,9 +198,9 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 		if t1.resetctx {
 			t1.mqe.ResetContexts()
-			t1.mqe.SetContextState(CTX_UNI, 46)
-			t1.mqe.SetContextState(CTX_RL, 3)
-			t1.mqe.SetContextState(CTX_ZC_START, 4)
+			t1.mqe.SetContextState(CTXUNI, 46)
+			t1.mqe.SetContextState(CTXRL, 3)
+			t1.mqe.SetContextState(CTXZCSTART, 4)
 		}
 
 		passIdx++
@@ -224,7 +224,7 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 }
 
 // findMaxBitplane finds the maximum bit-plane that contains significant bits
-func (t1 *T1Encoder) findMaxBitplane() int {
+func (t1 *Encoder) findMaxBitplane() int {
 	maxAbs := int32(0)
 
 	// Find maximum absolute value
@@ -257,7 +257,7 @@ func (t1 *T1Encoder) findMaxBitplane() int {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Encoder) encodeSigPropPass(raw bool) {
+func (t1 *Encoder) encodeSigPropPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -329,7 +329,7 @@ func (t1 *T1Encoder) encodeSigPropPass(raw bool) {
 
 // encodeMagRefPass encodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Encoder) encodeMagRefPass(raw bool) {
+func (t1 *Encoder) encodeMagRefPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -372,7 +372,7 @@ func (t1 *T1Encoder) encodeMagRefPass(raw bool) {
 // This pass encodes all remaining coefficients not encoded in previous passes
 // IMPORTANT: Process in VERTICAL order (column-first) with 4-row groups for RL encoding
 // This matches OpenJPEG's opj_t1_enc_clnpass() implementation
-func (t1 *T1Encoder) encodeCleanupPass() {
+func (t1 *Encoder) encodeCleanupPass() {
 	paddedWidth := t1.width + 2
 
 	// Process in groups of 4 rows (vertical RL encoding)
@@ -419,7 +419,7 @@ func (t1 *T1Encoder) encodeCleanupPass() {
 					if rlSigPos >= 0 {
 						rlBit = 1
 					}
-					t1.mqe.Encode(rlBit, CTX_RL)
+					t1.mqe.Encode(rlBit, CTXRL)
 
 					if rlBit == 0 {
 						continue // Move to next column
@@ -428,8 +428,8 @@ func (t1 *T1Encoder) encodeCleanupPass() {
 					// Encode runlen index with uniform context
 					runlenMSB := (rlSigPos >> 1) & 1
 					runlenLSB := rlSigPos & 1
-					t1.mqe.Encode(runlenMSB, CTX_UNI)
-					t1.mqe.Encode(runlenLSB, CTX_UNI)
+					t1.mqe.Encode(runlenMSB, CTXUNI)
+					t1.mqe.Encode(runlenLSB, CTXUNI)
 
 					// In RL path, the first sample at runlen is implicitly significant
 					partial := true
@@ -537,7 +537,7 @@ func (t1 *T1Encoder) encodeCleanupPass() {
 
 // updateNeighborFlags updates the neighbor significance flags
 // when a coefficient becomes significant
-func (t1 *T1Encoder) updateNeighborFlags(x, y, idx int) {
+func (t1 *Encoder) updateNeighborFlags(x, y, idx int) {
 	paddedWidth := t1.width + 2
 	sign := t1.flags[idx] & T1_SIGN
 
@@ -587,7 +587,7 @@ func (t1 *T1Encoder) updateNeighborFlags(x, y, idx int) {
 
 // ComputeDistortion computes the distortion for rate-distortion optimization
 // This is a simplified version - full implementation would use MSE reduction tables
-func (t1 *T1Encoder) ComputeDistortion() float64 {
+func (t1 *Encoder) ComputeDistortion() float64 {
 	distortion := 0.0
 
 	paddedWidth := t1.width + 2
@@ -607,7 +607,7 @@ func (t1 *T1Encoder) ComputeDistortion() float64 {
 }
 
 // GetRate returns the current encoding rate (in bytes)
-func (t1 *T1Encoder) GetRate() int {
+func (t1 *Encoder) GetRate() int {
 	if t1.mqe == nil {
 		return 0
 	}

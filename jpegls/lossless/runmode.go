@@ -3,7 +3,7 @@ package lossless
 import (
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
+	runmode "github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 // J array (JPEG-LS A.2.1)

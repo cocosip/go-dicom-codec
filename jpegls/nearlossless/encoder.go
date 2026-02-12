@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/common"
+	"github.com/cocosip/go-dicom-codec/jpeg/standard"
 	"github.com/cocosip/go-dicom-codec/jpegls/lossless"
 	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
@@ -46,11 +46,11 @@ func NewEncoder(width, height, components, bitDepth, near int) *Encoder {
 // Encode encodes pixel data to JPEG-LS near-lossless format
 func Encode(pixelData []byte, width, height, components, bitDepth, near int) ([]byte, error) {
 	if width <= 0 || height <= 0 {
-		return nil, common.ErrInvalidDimensions
+		return nil, standard.ErrInvalidDimensions
 	}
 
 	if components != 1 && components != 3 {
-		return nil, common.ErrInvalidComponents
+		return nil, standard.ErrInvalidComponents
 	}
 
 	if bitDepth < 2 || bitDepth > 16 {
@@ -68,10 +68,10 @@ func Encode(pixelData []byte, width, height, components, bitDepth, near int) ([]
 // encode performs the actual encoding
 func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	writer := common.NewWriter(&buf)
+	writer := standard.NewWriter(&buf)
 
 	// Write SOI marker
-	if err := writer.WriteMarker(common.MarkerSOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerSOI); err != nil {
 		return nil, err
 	}
 
@@ -96,7 +96,7 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 	}
 
 	// Write EOI marker
-	if err := writer.WriteMarker(common.MarkerEOI); err != nil {
+	if err := writer.WriteMarker(standard.MarkerEOI); err != nil {
 		return nil, err
 	}
 
@@ -106,7 +106,7 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 // writeSOF55 writes Start of Frame marker for JPEG-LS
 // Format matches CharLS jpeg_stream_writer.cpp:96
 // SOF55 data: 6 (fixed header) + components*3 (component specs)
-func (enc *Encoder) writeSOF55(writer *common.Writer) error {
+func (enc *Encoder) writeSOF55(writer *standard.Writer) error {
 	length := 6 + enc.components*3 // Fixed: was 8, should be 6
 	data := make([]byte, length)
 
@@ -131,7 +131,7 @@ func (enc *Encoder) writeSOF55(writer *common.Writer) error {
 // writeLSE writes JPEG-LS parameters (LSE marker) with NEAR
 // Format matches CharLS jpeg_stream_writer.cpp:149-158
 // LSE segment data: 11 bytes = 1 (ID) + 5*2 (five uint16 values)
-func (enc *Encoder) writeLSE(writer *common.Writer) error {
+func (enc *Encoder) writeLSE(writer *standard.Writer) error {
 	data := make([]byte, 11) // ID (1) + MAXVAL (2) + T1 (2) + T2 (2) + T3 (2) + RESET (2)
 	data[0] = 1              // ID = 1 (preset parameters)
 
@@ -156,7 +156,7 @@ func (enc *Encoder) writeLSE(writer *common.Writer) error {
 }
 
 // writeSOS writes Start of Scan marker with NEAR parameter
-func (enc *Encoder) writeSOS(writer *common.Writer) error {
+func (enc *Encoder) writeSOS(writer *standard.Writer) error {
 	length := 4 + enc.components*2
 	data := make([]byte, length)
 
@@ -177,11 +177,11 @@ func (enc *Encoder) writeSOS(writer *common.Writer) error {
 	// Point transform
 	data[length-1] = 0
 
-	return writer.WriteSegment(common.MarkerSOS, data)
+	return writer.WriteSegment(standard.MarkerSOS, data)
 }
 
 // encodeScan encodes the scan data
-func (enc *Encoder) encodeScan(writer *common.Writer, pixelData []byte) error {
+func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error {
 	var scanBuf bytes.Buffer
 	gw := lossless.NewGolombWriter(&scanBuf)
 

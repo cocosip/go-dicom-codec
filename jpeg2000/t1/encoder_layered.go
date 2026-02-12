@@ -53,7 +53,7 @@ func shouldTerminateLayer(passIdx int, layerBoundaries []int, cblksty uint8) boo
 // - passes: array of PassData with rate/distortion info
 // - encodedData: complete MQ-encoded data for all passes
 // - error: any encoding error
-func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, cblksty uint8) ([]PassData, []byte, error) {
+func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, cblksty uint8) ([]PassData, []byte, error) {
 	if len(data) != t1.width*t1.height {
 		return nil, nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			t1.width*t1.height, len(data))
@@ -87,14 +87,14 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 	}
 
 	// Initialize MQ encoder
-	t1.mqe = mqc.NewMQEncoder(NUM_CONTEXTS)
+	t1.mqe = mqc.NewMQEncoder(NUMCONTEXTS)
 
 	// Set initial context states (match OpenJPEG's opj_mqc_setstate calls)
 	// These initial states optimize encoding by providing better probability estimates
 	// State byte format: bits 0-6 = state number, bit 7 = MPS value
-	t1.mqe.SetContextState(CTX_UNI, 46) // Uniform context: state 46, MPS=0
-	t1.mqe.SetContextState(CTX_RL, 3)   // Run-length/Aggregate context: state 3, MPS=0
-	t1.mqe.SetContextState(0, 4)        // Zero-coding context 0: state 4, MPS=0
+	t1.mqe.SetContextState(CTXUNI, 46) // Uniform context: state 46, MPS=0
+	t1.mqe.SetContextState(CTXRL, 3)   // Run-length/Aggregate context: state 3, MPS=0
+	t1.mqe.SetContextState(0, 4)       // Zero-coding context 0: state 4, MPS=0
 
 	// Result array
 	passes := make([]PassData, 0, numPasses)
@@ -163,9 +163,9 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 		// RESET flag: reset contexts after each pass
 		if (cblksty & CblkStyleReset) != 0 {
 			t1.mqe.ResetContexts()
-			t1.mqe.SetContextState(CTX_UNI, 46)
-			t1.mqe.SetContextState(CTX_RL, 3)
-			t1.mqe.SetContextState(CTX_ZC_START, 4)
+			t1.mqe.SetContextState(CTXUNI, 46)
+			t1.mqe.SetContextState(CTXRL, 3)
+			t1.mqe.SetContextState(CTXZCSTART, 4)
 		}
 
 		actualBytes := t1.mqe.NumBytes()
