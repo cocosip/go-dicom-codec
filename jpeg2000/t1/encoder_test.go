@@ -187,50 +187,6 @@ func TestT1EncodeEmptyBlock(t *testing.T) {
 	}
 }
 
-// TestT1EncodeLargeBlock tests encoding a larger block
-// TODO: Fix gradient pattern encoding - currently has mismatches
-func testT1EncodeLargeBlock(t *testing.T) {
-	width, height := 32, 32
-	enc := NewT1Encoder(width, height, 0)
-
-	// Create test data with a pattern
-	data := make([]int32, width*height)
-	for i := range data {
-		// Create a gradient pattern
-		x := i % width
-		y := i / width
-		data[i] = int32((x + y) % 16)
-	}
-
-	encoded, err := enc.Encode(data, 10, 0) // maxBitplane=3 -> 10 passes
-	if err != nil {
-		t.Fatalf("Encode failed: %v", err)
-	}
-
-	maxBitplane := enc.findMaxBitplane()
-	t.Logf("Encoded 32x32 block: %d bytes (%.2f bits/coeff), maxBitplane=%d",
-		len(encoded), float64(len(encoded)*8)/float64(width*height), maxBitplane)
-
-	// Decode and verify
-	dec := NewT1Decoder(width, height, 0)
-	err = dec.DecodeWithBitplane(encoded, 10, maxBitplane, 0)
-	if err != nil {
-		t.Fatalf("Decode failed: %v", err)
-	}
-
-	decoded := dec.GetData()
-	mismatchCount := 0
-	for i := range data {
-		if decoded[i] != data[i] {
-			mismatchCount++
-		}
-	}
-
-	if mismatchCount > 0 {
-		t.Errorf("Mismatches: %d / %d", mismatchCount, len(data))
-	}
-}
-
 // TestT1Quantization tests quantization function
 func TestT1Quantization(t *testing.T) {
 	data := []int32{100, -100, 50, -50, 25, -25}

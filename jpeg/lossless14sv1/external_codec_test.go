@@ -58,7 +58,9 @@ func TestLosslessSV1CodecEncodeDecode(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create destination PixelData for encoded data
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -153,7 +155,9 @@ func TestLosslessSV1CodecRGB(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create destination PixelData for encoded data
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -250,7 +254,9 @@ func TestLosslessSV1CodecRegistry(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)
@@ -312,7 +318,9 @@ func TestLosslessSV116Bit(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 

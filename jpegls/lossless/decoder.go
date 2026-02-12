@@ -338,26 +338,26 @@ func (dec *Decoder) decodeComponent(gr *GolombReader, pixels []int, comp int) er
 
 				// Apply prediction correction (CharLS: traits_.correct_prediction(predicted + apply_sign(context.c(), sign)))
 				correctionC := ApplySign(ctx.C, sign)
-				predicted_value := dec.traits.CorrectPrediction(predicted + correctionC)
+				predictedValue := dec.traits.CorrectPrediction(predicted + correctionC)
 
 				// In REGULAR MODE, use limit directly (J[RunIndex] is only for RUN MODE)
-				mapped_error, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
+				mappedError, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
 				if err != nil {
 					return fmt.Errorf("decode regular at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
 				}
 
 				// Unmap error (before sign)
-				error_value := UnmapErrorValue(mapped_error)
+				errorValue := UnmapErrorValue(mappedError)
 				if k == 0 {
-					error_value ^= ctx.GetErrorCorrection(k, 0)
+					errorValue ^= ctx.GetErrorCorrection(k, 0)
 				}
 
 				// Update context using unsigned error (before sign)
-				ctx.UpdateContext(error_value, 0, dec.traits.Reset)
+				ctx.UpdateContext(errorValue, 0, dec.traits.Reset)
 
 				// Apply sign to error and reconstruct
-				signedError := ApplySign(error_value, sign)
-				reconstructed := dec.traits.ComputeReconstructedSample(predicted_value, signedError)
+				signedError := ApplySign(errorValue, sign)
+				reconstructed := dec.traits.ComputeReconstructedSample(predictedValue, signedError)
 
 				pixels[idx] = reconstructed
 				x++

@@ -84,7 +84,9 @@ func (c *JPEGLSNearLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newP
 	}
 
 	// Validate parameters
-	nearLosslessParams.Validate()
+	if err := nearLosslessParams.Validate(); err != nil {
+		return fmt.Errorf("invalid JPEG-LS Near-Lossless parameters: %w", err)
+	}
 	near := nearLosslessParams.NEAR
 
 	// Process all frames

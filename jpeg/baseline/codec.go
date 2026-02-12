@@ -8,45 +8,45 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
-var _ codec.Codec = (*BaselineCodec)(nil)
+var _ codec.Codec = (*Codec)(nil)
 
-// BaselineCodec implements the external codec.Codec interface for JPEG Baseline
-type BaselineCodec struct {
+// Codec implements the external codec.Codec interface for JPEG Baseline
+type Codec struct {
 	transferSyntax *transfer.Syntax
 	quality        int // Default quality (1-100)
 }
 
 // NewBaselineCodec creates a new JPEG Baseline codec
 // quality: 1-100, where 100 is best quality (default: 85)
-func NewBaselineCodec(quality int) *BaselineCodec {
+func NewBaselineCodec(quality int) *Codec {
 	if quality < 1 || quality > 100 {
 		quality = 85 // default
 	}
-	return &BaselineCodec{
+	return &Codec{
 		transferSyntax: transfer.JPEGBaseline8Bit,
 		quality:        quality,
 	}
 }
 
 // Name returns the codec name
-func (c *BaselineCodec) Name() string {
+func (c *Codec) Name() string {
 	return fmt.Sprintf("JPEG Baseline (Quality %d)", c.quality)
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *BaselineCodec) TransferSyntax() *transfer.Syntax {
+func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return c.transferSyntax
 }
 
 // GetDefaultParameters returns the default codec parameters
-func (c *BaselineCodec) GetDefaultParameters() codec.Parameters {
+func (c *Codec) GetDefaultParameters() codec.Parameters {
 	params := NewBaselineParameters()
 	params.Quality = c.quality
 	return params
 }
 
 // Encode encodes pixel data to JPEG Baseline format
-func (c *BaselineCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -84,7 +84,9 @@ func (c *BaselineCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 	}
 
 	// Validate parameters
-	baselineParams.Validate()
+	if err := baselineParams.Validate(); err != nil {
+		return fmt.Errorf("invalid JPEG Baseline parameters: %w", err)
+	}
 	quality := baselineParams.Quality
 
 	// Process all frames
@@ -122,7 +124,7 @@ func (c *BaselineCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 }
 
 // Decode decodes JPEG Baseline data to uncompressed pixel data
-func (c *BaselineCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

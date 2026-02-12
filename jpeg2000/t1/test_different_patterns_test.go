@@ -17,11 +17,11 @@ func TestDifferentPatterns_5x5(t *testing.T) {
 		},
 		{
 			name: "All zeros",
-			gen:  func(i int) int32 { return 0 },
+			gen:  func(_ int) int32 { return 0 },
 		},
 		{
 			name: "All ones",
-			gen:  func(i int) int32 { return 1 },
+			gen:  func(_ int) int32 { return 1 },
 		},
 		{
 			name: "Alternating 0 and 1",

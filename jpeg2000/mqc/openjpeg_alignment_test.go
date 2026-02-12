@@ -42,11 +42,11 @@ func parseOpenJPEGMQCEntries(t *testing.T, source string) []openjpegMQCEntry {
 	if open == -1 {
 		t.Fatal("mqc_states opening brace not found")
 	}
-	close := strings.Index(block, "};")
-	if close == -1 {
+	closeIdx := strings.Index(block, "};")
+	if closeIdx == -1 {
 		t.Fatal("mqc_states closing brace not found")
 	}
-	block = block[open+1 : close]
+	block = block[open+1 : closeIdx]
 
 	re := regexp.MustCompile(`\{\s*(0x[0-9a-fA-F]+)\s*,\s*([01])\s*,\s*&mqc_states\[(\d+)\]\s*,\s*&mqc_states\[(\d+)\]\s*\}`)
 	matches := re.FindAllStringSubmatch(block, -1)

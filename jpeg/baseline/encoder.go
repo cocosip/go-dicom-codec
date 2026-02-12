@@ -368,16 +368,16 @@ func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
 
 			// RGB to YCbCr conversion
 			yy := (19595*r + 38470*g + 7471*b + 32768) >> 16
-			cb_ := ((-11056*r - 21712*g + 32768*b + 8421376) >> 16)
-			cr_ := ((32768*r - 27440*g - 5328*b + 8421376) >> 16)
+			cbVal := ((-11056*r - 21712*g + 32768*b + 8421376) >> 16)
+			crVal := ((32768*r - 27440*g - 5328*b + 8421376) >> 16)
 
 			y[row*yStride+col] = byte(common.Clamp(yy, 0, 255))
 
 			// 4:2:0 subsampling for Cb and Cr
 			if row%2 == 0 && col%2 == 0 {
 				cbIdx := (row/2)*cStride + (col / 2)
-				cb[cbIdx] = byte(common.Clamp(cb_, 0, 255))
-				cr[cbIdx] = byte(common.Clamp(cr_, 0, 255))
+				cb[cbIdx] = byte(common.Clamp(cbVal, 0, 255))
+				cr[cbIdx] = byte(common.Clamp(crVal, 0, 255))
 			}
 		}
 	}
@@ -386,7 +386,7 @@ func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
 }
 
 // encodeBlock encodes a single 8x8 block
-func (enc *Encoder) encodeBlock(huffEnc *common.HuffmanEncoder, data []byte, blockX, blockY, comp, stride int, dcPred *int, tableIdx int) error {
+func (enc *Encoder) encodeBlock(huffEnc *common.HuffmanEncoder, data []byte, blockX, blockY, _ int, stride int, dcPred *int, tableIdx int) error {
 	// Extract 8x8 block
 	var block [64]byte
 	for y := 0; y < 8; y++ {

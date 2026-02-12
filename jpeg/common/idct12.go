@@ -136,12 +136,12 @@ func IDCT12(coef []int32, output []uint16, stride int) {
 }
 
 // Clamp16 clamps a value to a range for 16-bit values
-func Clamp16(val, min, max int32) uint16 {
-	if val < min {
-		return uint16(min)
+func Clamp16(val, minVal, maxVal int32) uint16 {
+	if val < minVal {
+		return uint16(minVal)
 	}
-	if val > max {
-		return uint16(max)
+	if val > maxVal {
+		return uint16(maxVal)
 	}
 	return uint16(val)
 }

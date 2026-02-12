@@ -125,7 +125,9 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Validate parameters
-	lossyParams.Validate()
+	if err := lossyParams.Validate(); err != nil {
+		return fmt.Errorf("invalid JPEG 2000 lossy parameters: %w", err)
+	}
 
 	// Create encoding parameters
 	baseEncParams := jpeg2000.DefaultEncodeParams(
@@ -395,19 +397,6 @@ func qualityFromRatio(ratio float64) int {
 	// ratio=2 -> ~85, ratio=3 -> ~76, ratio=5 -> ~65, ratio=10 -> ~50
 	q := int(math.Round(100 - 15*math.Log2(ratio)))
 	return clampQuality(q)
-}
-
-func rateToTargetRatio(rate, bitsStored, bitsAllocated int) float64 {
-	if rate <= 0 {
-		return 0
-	}
-	if bitsAllocated <= 0 {
-		bitsAllocated = bitsStored
-	}
-	if bitsStored <= 0 || bitsAllocated <= 0 {
-		return float64(rate)
-	}
-	return float64(rate) * float64(bitsStored) / float64(bitsAllocated)
 }
 
 func layersFromRateLevels(rate int, levels []int) int {

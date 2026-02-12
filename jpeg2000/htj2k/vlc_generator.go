@@ -188,34 +188,7 @@ func validateTable(name string, source []VLCEntry, lookup [1024]VLCDecoderEntry)
 		}
 	}
 
-	// Check for codeword prefix uniqueness within each context
-	// (This is required for a valid VLC code)
-	for ctx := 0; ctx < 8; ctx++ {
-		// Collect all codewords for this context
-		type codeInfo struct {
-			cwd    uint8
-			cwdLen uint8
-			index  int
-		}
-		var codes []codeInfo
-
-		for cwd := 0; cwd < 128; cwd++ {
-			index := (ctx << 7) | cwd
-			decoded := lookup[index]
-			if decoded.CwdLen > 0 {
-				codes = append(codes, codeInfo{
-					cwd:    uint8(cwd),
-					cwdLen: decoded.CwdLen,
-					index:  index,
-				})
-			}
-		}
-
-		// Note: Prefix uniqueness check is complex for variable-length codes
-		// stored in LSB format. The VLC tables from ISO standard are already
-		// validated, so we skip this check to avoid false positives.
-		// The decoder will fail gracefully on invalid codewords.
-	}
+	// Prefix uniqueness is assumed valid for standard tables; skip additional checks.
 
 	return nil
 }

@@ -69,9 +69,8 @@ func quantizeGradient(d int) int {
 		return 2
 	} else if d < 21 {
 		return 3
-	} else {
-		return 4
 	}
+	return 4
 }
 
 // NewGradientQuantizer creates a quantizer with thresholds and NEAR.

@@ -11,6 +11,8 @@ import (
 
 var _ codec.Codec = (*Codec)(nil)
 
+const j2kLosslessName = "JPEG 2000 Lossless"
+
 // Codec implements the JPEG 2000 Lossless codec
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.90
 type Codec struct {
@@ -36,7 +38,7 @@ func NewPart2MultiComponentLosslessCodec() *Codec {
 
 // Name returns the codec name
 func (c *Codec) Name() string {
-	return "JPEG 2000 Lossless"
+	return j2kLosslessName
 }
 
 // TransferSyntax returns the transfer syntax this codec handles

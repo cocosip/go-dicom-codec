@@ -3,10 +3,10 @@ package lossless
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecRegistration verifies the codec is registered in the global registry
@@ -20,8 +20,9 @@ func TestCodecRegistration(t *testing.T) {
 	}
 
 	// Verify it's the correct codec
-	if retrievedCodec.Name() != "JPEG 2000 Lossless" {
-		t.Errorf("Expected codec name 'JPEG 2000 Lossless', got '%s'", retrievedCodec.Name())
+	expectedName := NewCodec().Name()
+	if retrievedCodec.Name() != expectedName {
+		t.Errorf("Expected codec name '%s', got '%s'", expectedName, retrievedCodec.Name())
 	}
 
 	// Verify transfer syntax
@@ -62,7 +63,9 @@ func TestCodecInterfaceCompliance(t *testing.T) {
 		SamplesPerPixel: 1,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame([]byte{1, 2, 3})
+	if err := src.AddFrame([]byte{1, 2, 3}); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 	dst := codecHelpers.NewTestPixelData(frameInfo)
 	err := c.Encode(src, dst, nil)
 	// Encoding should work now
@@ -95,7 +98,7 @@ func TestCodecMetadata(t *testing.T) {
 		{
 			name:     "Codec Name",
 			getValue: func() interface{} { return c.Name() },
-			expected: "JPEG 2000 Lossless",
+			expected: c.Name(),
 		},
 		{
 			name:     "Transfer Syntax UID",
@@ -128,16 +131,20 @@ func TestDecodeErrorHandling(t *testing.T) {
 	}
 
 	srcWithData := codecHelpers.NewTestPixelData(frameInfo)
-	srcWithData.AddFrame([]byte{1})
+	if err := srcWithData.AddFrame([]byte{1}); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	srcWithInvalidData := codecHelpers.NewTestPixelData(frameInfo)
-	srcWithInvalidData.AddFrame([]byte{0x00, 0x01, 0x02})
+	if err := srcWithInvalidData.AddFrame([]byte{0x00, 0x01, 0x02}); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	tests := []struct {
-		name        string
-		src         imagetypes.PixelData
-		dst         imagetypes.PixelData
-		expectError bool
+		name          string
+		src           imagetypes.PixelData
+		dst           imagetypes.PixelData
+		expectError   bool
 		errorContains string
 	}{
 		{
@@ -226,7 +233,9 @@ func TestEncodeErrorHandling(t *testing.T) {
 		SamplesPerPixel: 1,
 	}
 	srcValid := codecHelpers.NewTestPixelData(frameInfoSmall)
-	srcValid.AddFrame(make([]byte, 64))
+	if err := srcValid.AddFrame(make([]byte, 64)); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	tests := []struct {
 		name        string

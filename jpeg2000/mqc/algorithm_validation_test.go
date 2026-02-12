@@ -1,3 +1,4 @@
+// Package mqc contains MQ-coder test alignment and validation utilities.
 package mqc
 
 import "testing"

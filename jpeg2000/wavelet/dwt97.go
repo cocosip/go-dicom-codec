@@ -1,3 +1,4 @@
+// Package wavelet implements discrete wavelet transforms used by JPEG 2000.
 package wavelet
 
 // DWT97 implements the 9/7 irreversible wavelet transform
@@ -9,10 +10,10 @@ package wavelet
 // Direct translation from OpenJPEG's dwt.c to ensure 100% compatibility
 const (
 	// From OpenJPEG table F.4 from the standard
-	alpha97 = -1.586134342  // opj_dwt_alpha
-	beta97  = -0.052980118  // opj_dwt_beta
-	gamma97 = 0.882911075   // opj_dwt_gamma
-	delta97 = 0.443506852   // opj_dwt_delta
+	alpha97 = -1.586134342 // opj_dwt_alpha
+	beta97  = -0.052980118 // opj_dwt_beta
+	gamma97 = 0.882911075  // opj_dwt_gamma
+	delta97 = 0.443506852  // opj_dwt_delta
 
 	// Normalization factors
 	K97    = 1.230174105 // opj_K
@@ -74,13 +75,13 @@ func Forward97_1DWithParity(data []float64, even bool) {
 
 	// Normalization (scale)
 	if a == 0 {
-		encodeStep1Combined_97(data, sn, dn, invK97, K97)
+		encodeStep1Combined97(data, sn, dn, invK97, K97)
 	} else {
-		encodeStep1Combined_97(data, dn, sn, K97, invK97)
+		encodeStep1Combined97(data, dn, sn, K97, invK97)
 	}
 
 	// Deinterleave to [L | H] format
-	deinterleaveH_97(data, dn, sn, even)
+	deinterleaveH97(data, dn, sn, even)
 }
 
 // encodeStep2_97 implements OpenJPEG's opj_dwt_encode_step2 for 9/7 wavelet
@@ -109,10 +110,10 @@ func encodeStep2_97(data []float64, flStart, fwStart int32, end, m int32, c floa
 	}
 }
 
-// encodeStep1Combined_97 implements OpenJPEG's opj_dwt_encode_step1_combined
+// encodeStep1Combined97 implements OpenJPEG's opj_dwt_encode_step1_combined
 // Applies normalization factors to interleaved data
-func encodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 float64) {
-	itersCommon := min32(iters_c1, iters_c2)
+func encodeStep1Combined97(data []float64, itersC1, itersC2 int32, c1, c2 float64) {
+	itersCommon := min32(itersC1, itersC2)
 
 	var i int32
 	fw := int32(0)
@@ -122,15 +123,15 @@ func encodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 flo
 		fw += 2
 	}
 
-	if i < iters_c1 {
+	if i < itersC1 {
 		data[fw] *= c1
-	} else if i < iters_c2 {
+	} else if i < itersC2 {
 		data[fw+1] *= c2
 	}
 }
 
-// deinterleaveH_97 separates interleaved data into [low | high] format
-func deinterleaveH_97(data []float64, dn, sn int32, even bool) {
+// deinterleaveH97 separates interleaved data into [low | high] format
+func deinterleaveH97(data []float64, dn, sn int32, even bool) {
 	width := int(dn + sn)
 	tmp := make([]float64, width)
 
@@ -200,13 +201,13 @@ func Inverse97_1DWithParity(data []float64, even bool) {
 	}
 
 	// Step 1: Interleave [L | H] format back to interleaved
-	interleaveH_97(data, dn, sn, even)
+	interleaveH97(data, dn, sn, even)
 
 	// Step 2: Inverse normalization (reverse of step1_combined)
 	if a == 0 {
-		decodeStep1Combined_97(data, sn, dn, invK97, K97)
+		decodeStep1Combined97(data, sn, dn, invK97, K97)
 	} else {
-		decodeStep1Combined_97(data, dn, sn, K97, invK97)
+		decodeStep1Combined97(data, dn, sn, K97, invK97)
 	}
 
 	// Step 3-6: Inverse lifting steps (reverse order of forward)
@@ -229,9 +230,9 @@ func decodeStep2_97(data []float64, flStart, fwStart int32, end, m int32, c floa
 	encodeStep2_97(data, flStart, fwStart, end, m, -c)
 }
 
-// decodeStep1Combined_97 implements the inverse of encodeStep1Combined_97
-func decodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 float64) {
-	itersCommon := min32(iters_c1, iters_c2)
+// decodeStep1Combined97 implements the inverse of encodeStep1Combined97
+func decodeStep1Combined97(data []float64, itersC1, itersC2 int32, c1, c2 float64) {
+	itersCommon := min32(itersC1, itersC2)
 
 	var i int32
 	fw := int32(0)
@@ -241,15 +242,15 @@ func decodeStep1Combined_97(data []float64, iters_c1, iters_c2 int32, c1, c2 flo
 		fw += 2
 	}
 
-	if i < iters_c1 {
+	if i < itersC1 {
 		data[fw] /= c1
-	} else if i < iters_c2 {
+	} else if i < itersC2 {
 		data[fw+1] /= c2
 	}
 }
 
-// interleaveH_97 converts [low | high] format back to interleaved
-func interleaveH_97(data []float64, dn, sn int32, even bool) {
+// interleaveH97 converts [low | high] format back to interleaved
+func interleaveH97(data []float64, dn, sn int32, even bool) {
 	width := int(dn + sn)
 	tmp := make([]float64, width)
 
@@ -417,7 +418,7 @@ func InverseMultilevel97WithParity(data []float64, width, height, levels int, x0
 	}
 }
 
-// Helper functions for int32/float64 conversion
+// ConvertInt32ToFloat64 converts a slice of int32 to float64 values.
 func ConvertInt32ToFloat64(data []int32) []float64 {
 	result := make([]float64, len(data))
 	for i, v := range data {
@@ -426,6 +427,7 @@ func ConvertInt32ToFloat64(data []int32) []float64 {
 	return result
 }
 
+// ConvertFloat64ToInt32 converts a slice of float64 to int32 with rounding.
 func ConvertFloat64ToInt32(data []float64) []int32 {
 	result := make([]int32, len(data))
 	for i, v := range data {

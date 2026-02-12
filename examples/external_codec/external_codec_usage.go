@@ -52,7 +52,10 @@ func directUsage() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("AddFrame error: %v\n", err)
+		return
+	}
 
 	// Create codec with predictor 4 (Ra + Rb - Rc)
 	losslessCodec := lossless.NewLosslessCodec(4)
@@ -129,7 +132,10 @@ func registryUsage() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("AddFrame error: %v\n", err)
+		return
+	}
 
 	// Encode using retrieved codec
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -193,7 +199,10 @@ func parametersUsage() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("AddFrame error: %v\n", err)
+		return
+	}
 
 	// Create parameters and override predictor
 	params := codec.NewBaseParameters()

@@ -69,28 +69,28 @@ func TestRunInterruptionSymmetry(t *testing.T) {
 		decCtx := NewRunModeContext(tc.contextType, tc.rangeVal)
 		gr := NewGolombReader(&buf)
 
-		k_dec := decCtx.GetGolombCode()
-		if k_dec != k {
-			t.Errorf("k mismatch: encoded with %d, decoded with %d", k, k_dec)
+		kDec := decCtx.GetGolombCode()
+		if kDec != k {
+			t.Errorf("k mismatch: encoded with %d, decoded with %d", k, kDec)
 		}
 
-		decoded_eMapped, err := gr.DecodeValue(k_dec, limit, qbpp)
+		decodedEMapped, err := gr.DecodeValue(kDec, limit, qbpp)
 		if err != nil {
 			t.Fatalf("DecodeValue failed: %v", err)
 		}
 
-		t.Logf("Decoded eMappedErrorValue=%d", decoded_eMapped)
+		t.Logf("Decoded eMappedErrorValue=%d", decodedEMapped)
 
-		if decoded_eMapped != eMappedErrorValue {
-			t.Errorf("eMapped mismatch: expected %d, got %d", eMappedErrorValue, decoded_eMapped)
+		if decodedEMapped != eMappedErrorValue {
+			t.Errorf("eMapped mismatch: expected %d, got %d", eMappedErrorValue, decodedEMapped)
 		}
 
 		// Reconstruct error value
-		errorValue_dec := decCtx.ComputeErrorValue(decoded_eMapped+decCtx.runInterruptionType, k_dec)
-		t.Logf("Decoded errorValue=%d", errorValue_dec)
+		errorValueDec := decCtx.ComputeErrorValue(decodedEMapped+decCtx.runInterruptionType, kDec)
+		t.Logf("Decoded errorValue=%d", errorValueDec)
 
-		if errorValue_dec != tc.errorValue {
-			t.Errorf("errorValue mismatch: expected %d, got %d", tc.errorValue, errorValue_dec)
+		if errorValueDec != tc.errorValue {
+			t.Errorf("errorValue mismatch: expected %d, got %d", tc.errorValue, errorValueDec)
 		}
 	}
 }

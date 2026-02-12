@@ -587,12 +587,12 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 // ycbcrToRGB converts YCbCr to RGB
 func ycbcrToRGB(yy, cb, cr byte) (byte, byte, byte) {
 	y := int(yy)
-	cb_ := int(cb) - 128
-	cr_ := int(cr) - 128
+	cbVal := int(cb) - 128
+	crVal := int(cr) - 128
 
-	r := y + (91881*cr_)>>16
-	g := y - ((22554*cb_+46802*cr_)>>16)
-	b := y + (116130*cb_)>>16
+	r := y + (91881*crVal)>>16
+	g := y - ((22554*cbVal + 46802*crVal) >> 16)
+	b := y + (116130*cbVal)>>16
 
 	return byte(common.Clamp(r, 0, 255)),
 		byte(common.Clamp(g, 0, 255)),

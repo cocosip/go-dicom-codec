@@ -13,7 +13,7 @@ func Test5x5SimplePatterns(t *testing.T) {
 	}{
 		{
 			"all_minus128",
-			func(x, y int) int32 { return -128 },
+			func(x, _ int) int32 { return -128 },
 		},
 		{
 			"two_values_minus128_minus127",
@@ -26,7 +26,7 @@ func Test5x5SimplePatterns(t *testing.T) {
 		},
 		{
 			"horizontal_gradient",
-			func(x, y int) int32 { return int32(-128 + x) },
+			func(x, _ int) int32 { return int32(-128 + x) },
 		},
 		{
 			"vertical_gradient",

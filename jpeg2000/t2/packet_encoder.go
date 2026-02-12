@@ -347,48 +347,11 @@ func (pe *PacketEncoder) sortedPrecincts(comp, res int) []int {
 	return keys
 }
 
-func (pe *PacketEncoder) sortedPrecinctsAllComponents(res int) []int {
-	set := make(map[int]struct{})
-	for comp := 0; comp < pe.numComponents; comp++ {
-		if pe.precincts[comp] == nil || pe.precincts[comp][res] == nil {
-			continue
-		}
-		for k := range pe.precincts[comp][res] {
-			set[k] = struct{}{}
-		}
-	}
-	return sortKeys(set)
-}
-
-func (pe *PacketEncoder) sortedPrecinctsAll() []int {
-	set := make(map[int]struct{})
-	for comp := 0; comp < pe.numComponents; comp++ {
-		if pe.precincts[comp] == nil {
-			continue
-		}
-		for _, resMap := range pe.precincts[comp] {
-			for k := range resMap {
-				set[k] = struct{}{}
-			}
-		}
-	}
-	return sortKeys(set)
-}
-
 func (pe *PacketEncoder) getPrecincts(comp, res, precinctIdx int) []*Precinct {
 	if pe.precincts[comp] == nil || pe.precincts[comp][res] == nil {
 		return nil
 	}
 	return pe.precincts[comp][res][precinctIdx]
-}
-
-func sortKeys(m map[int]struct{}) []int {
-	keys := make([]int, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	return keys
 }
 
 func (pe *PacketEncoder) componentSamplingFor(component int) (int, int) {
@@ -509,101 +472,6 @@ func orderPrecinctsByBand(precincts []*Precinct, resolution int) []*Precinct {
 	return ordered
 }
 
-// encodePacketHeader encodes a packet header
-// This is a simplified implementation - full implementation would use tag trees
-func (pe *PacketEncoder) encodePacketHeader(precinct *Precinct, layer int) ([]byte, []CodeBlockIncl, error) {
-	header := &bytes.Buffer{}
-	cbIncls := make([]CodeBlockIncl, 0)
-
-	// Simplified header encoding:
-	// For each code-block in precinct:
-	//   - 1 bit: included (1) or not (0)
-	//   - If included and first time:
-	//     - encode zero bitplanes
-	//     - encode number of passes
-	//   - If included and not first time:
-	//     - encode number of passes
-	//   - encode data length
-
-	bitBuf := newBitWriter(header)
-
-	// DEBUG: Count code blocks with/without data
-	cbWithData := 0
-	cbWithoutData := 0
-	for _, cb := range precinct.CodeBlocks {
-		if cb.Data != nil && len(cb.Data) > 0 {
-			cbWithData++
-		} else {
-			cbWithoutData++
-		}
-	}
-
-	for _, cb := range precinct.CodeBlocks {
-		// Determine if this code-block is included in this layer
-		// Simplified: include all code-blocks with data
-		included := cb.Data != nil && len(cb.Data) > 0
-		firstIncl := !cb.Included
-
-		cbIncl := CodeBlockIncl{
-			Included:       included,
-			FirstInclusion: firstIncl,
-		}
-
-		// Write inclusion bit
-		if included {
-			bitBuf.writeBit(1)
-		} else {
-			bitBuf.writeBit(0)
-			cbIncls = append(cbIncls, cbIncl)
-			continue
-		}
-
-		// If first inclusion, encode zero bitplanes
-		if firstIncl {
-			// Simplified: encode zero bitplanes directly (should use tag tree)
-			zbp := cb.ZeroBitPlanes
-			for zbp > 0 {
-				bitBuf.writeBit(0)
-				zbp--
-			}
-			bitBuf.writeBit(1) // Termination bit
-
-			// Mark as included
-			cb.Included = true
-		}
-
-		// Encode number of coding passes for this layer
-		// Simplified: use all available passes
-		numPasses := cb.NumPassesTotal
-		cbIncl.NumPasses = numPasses
-
-		// Encode number of passes using JPEG2000 standard encoding
-		if err := encodeNumPasses(bitBuf, numPasses); err != nil {
-			return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
-		}
-
-		// Encode data length
-		dataLen := len(cb.Data)
-		cbIncl.DataLength = dataLen
-		cbIncl.Data = cb.Data
-
-		// Encode length (simplified - use fixed-length encoding for now)
-		// In real implementation, would use variable-length encoding
-		// Using 16-bit length for simplicity
-		for i := 15; i >= 0; i-- {
-			bit := (dataLen >> i) & 1
-			bitBuf.writeBit(bit)
-		}
-
-		cbIncls = append(cbIncls, cbIncl)
-	}
-
-	// Flush remaining bits
-	bitBuf.flush()
-
-	return header.Bytes(), cbIncls, nil
-}
-
 // bitWriter helps with bit-level writing
 type bitWriter struct {
 	buf      *bytes.Buffer
@@ -652,7 +520,7 @@ func (bw *bitWriter) flush() {
 
 // encodePacketHeaderLayered encodes a packet header for multi-layer support
 // This version properly handles layer-specific pass allocation
-func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, resolution int) ([]byte, []CodeBlockIncl, error) {
+func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, _ int) ([]byte, []CodeBlockIncl, error) {
 	header := &bytes.Buffer{}
 	cbIncls := make([]CodeBlockIncl, 0)
 
@@ -678,7 +546,7 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 			}
 		} else {
 			// Fallback: use old single-layer method
-			hasData := cb.Data != nil && len(cb.Data) > 0
+			hasData := len(cb.Data) > 0
 			included = hasData
 			newPasses = cb.NumPassesTotal
 		}
@@ -793,40 +661,6 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 	headerBytes := header.Bytes()
 
 	return headerBytes, cbIncls, nil
-}
-
-// applyByteStuffing applies JPEG 2000 byte-stuffing to code-block data
-// Any 0xFF byte must be followed by 0x00 to distinguish it from markers
-func applyByteStuffing(data []byte) []byte {
-	if len(data) == 0 {
-		return data
-	}
-
-	// Count 0xFF bytes to pre-allocate
-	ffCount := 0
-	for _, b := range data {
-		if b == 0xFF {
-			ffCount++
-		}
-	}
-
-	if ffCount == 0 {
-		return data // No stuffing needed
-	}
-
-	// Allocate result buffer
-	result := make([]byte, len(data)+ffCount)
-	j := 0
-	for _, b := range data {
-		result[j] = b
-		j++
-		if b == 0xFF {
-			result[j] = 0x00 // Stuff byte
-			j++
-		}
-	}
-
-	return result
 }
 
 // GetPackets returns the encoded packets

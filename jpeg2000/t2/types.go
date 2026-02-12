@@ -101,24 +101,19 @@ type Layer struct {
 type ProgressionOrder int
 
 const (
-	// LRCP - Layer-Resolution-Component-Position (default)
-	// Best for file download and viewing
+	// ProgressionLRCP specifies Layer-Resolution-Component-Position ordering (default).
 	ProgressionLRCP ProgressionOrder = 0
 
-	// RLCP - Resolution-Layer-Component-Position
-	// Best for resolution scalability
+	// ProgressionRLCP specifies Resolution-Layer-Component-Position ordering (resolution scalability).
 	ProgressionRLCP ProgressionOrder = 1
 
-	// RPCL - Resolution-Position-Component-Layer
-	// Best for spatial random access
+	// ProgressionRPCL specifies Resolution-Position-Component-Layer ordering (spatial random access).
 	ProgressionRPCL ProgressionOrder = 2
 
-	// PCRL - Position-Component-Resolution-Layer
-	// Best for spatial scalability
+	// ProgressionPCRL specifies Position-Component-Resolution-Layer ordering (spatial scalability).
 	ProgressionPCRL ProgressionOrder = 3
 
-	// CPRL - Component-Position-Resolution-Layer
-	// Best for component scalability (color images)
+	// ProgressionCPRL specifies Component-Position-Resolution-Layer ordering (component scalability).
 	ProgressionCPRL ProgressionOrder = 4
 )
 
@@ -229,8 +224,8 @@ func (pi *PacketIterator) precinctSizeForResolution(resolution int) (int, int) {
 			shift = 0
 		}
 		if shift > 0 {
-			pw = max(1, pw>>shift)
-			ph = max(1, ph>>shift)
+			pw = intMax(1, pw>>shift)
+			ph = intMax(1, ph>>shift)
 		}
 	}
 	return pw, ph
@@ -407,7 +402,7 @@ func (pi *PacketIterator) advanceCPRL() {
 	}
 }
 
-func max(a, b int) int {
+func intMax(a, b int) int {
 	if a > b {
 		return a
 	}

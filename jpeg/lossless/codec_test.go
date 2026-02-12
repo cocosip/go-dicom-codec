@@ -59,7 +59,9 @@ func TestLosslessCodecEncodeDecode(t *testing.T) {
 
 	// Create source PixelData using helper
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create codec with predictor 4
 	losslessCodec := NewLosslessCodec(4)
@@ -169,7 +171,9 @@ func TestLosslessCodecRGB(t *testing.T) {
 
 	// Create source PixelData using helper
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create codec with predictor 4
 	losslessCodec := NewLosslessCodec(4)
@@ -239,7 +243,9 @@ func TestLosslessCodecWithParameters(t *testing.T) {
 
 	// Create source PixelData using helper
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create codec with default predictor
 	losslessCodec := NewLosslessCodec(0) // Auto-select
@@ -323,7 +329,9 @@ func TestCodecRegistry(t *testing.T) {
 
 	// Create source PixelData using helper
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)

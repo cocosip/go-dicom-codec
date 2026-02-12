@@ -1,3 +1,4 @@
+// Package lossless14sv1 provides JPEG Lossless (SV1) codec implementations.
 package lossless14sv1
 
 import (
@@ -39,7 +40,7 @@ func (c *LosslessSV1Codec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG Lossless SV1 format
-func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -90,7 +91,7 @@ func (c *LosslessSV1Codec) Encode(oldPixelData imagetypes.PixelData, newPixelDat
 }
 
 // Decode decodes JPEG Lossless SV1 data to uncompressed pixel data
-func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *LosslessSV1Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

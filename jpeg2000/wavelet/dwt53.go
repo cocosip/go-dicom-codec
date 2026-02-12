@@ -1,3 +1,4 @@
+// Package wavelet implements discrete wavelet transforms used by JPEG 2000.
 package wavelet
 
 // DWT53 implements the 5/3 reversible wavelet transform
@@ -192,7 +193,7 @@ func Inverse53_1DWithParity(data []int32, even bool) {
 		// Note: this is swapped compared to cas0!
 		tmp := make([]int32, width)
 
-		var s1, s2, dc, dn_var int32
+		var s1, s2, dc, dnVar int32
 
 		s1 = data[sn+1]  // in_even[1]
 		dc = data[0] - ((data[sn] + s1 + 2) >> 2)  // in_odd[0] - ((in_even[0] + s1 + 2) >> 2)
@@ -210,20 +211,20 @@ func Inverse53_1DWithParity(data []int32, even bool) {
 		for i, j = 1, 1; i < limit; i, j = i+2, j+1 {
 			s2 = data[sn+j+1]  // in_even[j+1]
 
-			dn_var = data[j] - ((s1 + s2 + 2) >> 2)  // in_odd[j] - ((s1 + s2 + 2) >> 2)
+			dnVar = data[j] - ((s1 + s2 + 2) >> 2)  // in_odd[j] - ((s1 + s2 + 2) >> 2)
 			tmp[i] = dc
-			tmp[i+1] = s1 + ((dn_var + dc) >> 1)
+			tmp[i+1] = s1 + ((dnVar + dc) >> 1)
 
-			dc = dn_var
+			dc = dnVar
 			s1 = s2
 		}
 
 		tmp[i] = dc
 
 		if (width & 1) == 0 { // len is even
-			dn_var = data[width/2-1] - ((s1 + 1) >> 1)  // in_odd[len/2-1] - ((s1 + 1) >> 1)
-			tmp[width-2] = s1 + ((dn_var + dc) >> 1)
-			tmp[width-1] = dn_var
+			dnVar = data[width/2-1] - ((s1 + 1) >> 1)  // in_odd[len/2-1] - ((s1 + 1) >> 1)
+			tmp[width-2] = s1 + ((dnVar + dc) >> 1)
+			tmp[width-1] = dnVar
 		} else { // len is odd
 			tmp[width-1] = s1 + dc
 		}

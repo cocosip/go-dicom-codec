@@ -239,7 +239,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 				continue
 			}
 
-			x_sample := pixels[idx] // Current sample value
+			xSample := pixels[idx] // Current sample value
 
 			// Get neighboring pixels (ra=left, rb=top, rc=top-left, rd=top-right)
 			var ra, rb, rc, rd int
@@ -289,27 +289,27 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 
 				// Apply prediction correction (CharLS: traits_.correct_prediction(predicted + apply_sign(context.c(), sign)))
 				correctionC := ApplySign(ctx.C, sign)
-				predicted_value := enc.traits.CorrectPrediction(predicted + correctionC)
+				predictedValue := enc.traits.CorrectPrediction(predicted + correctionC)
 
 				// Compute error value (CharLS: traits_.compute_error_value(apply_sign(x - predicted_value, sign)))
 				// CRITICAL: Sign must be applied BEFORE modulo/wrapping, not after!
-				rawErr := x_sample - predicted_value
+				rawErr := xSample - predictedValue
 				signedErr := ApplySign(rawErr, sign)
-				error_value := enc.computeErrorValue(signedErr)
+				errorValue := enc.computeErrorValue(signedErr)
 
 				// Apply error correction and map (CharLS: map_error_value(context.get_error_correction(k | NEAR) ^ error_value))
 				errorCorrection := ctx.GetErrorCorrection(k, 0) // k|0 = k for lossless
-				corrected_error := errorCorrection ^ error_value
-				mapped_error := MapErrorValue(corrected_error)
+				correctedError := errorCorrection ^ errorValue
+				mappedError := MapErrorValue(correctedError)
 
 				// In REGULAR MODE, use limit directly (J[RunIndex] is only for RUN MODE)
 				// Encode mapped error
-				if err := gw.EncodeMappedValue(k, mapped_error, enc.traits.Limit, enc.traits.Qbpp); err != nil {
+				if err := gw.EncodeMappedValue(k, mappedError, enc.traits.Limit, enc.traits.Qbpp); err != nil {
 					return err
 				}
 
 				// Update context
-				ctx.UpdateContext(error_value, 0, enc.traits.Reset)
+				ctx.UpdateContext(errorValue, 0, enc.traits.Reset)
 
 				x++
 			} else {

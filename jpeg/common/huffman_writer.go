@@ -1,3 +1,4 @@
+// Package common contains helpers for JPEG Huffman tables and stream writing.
 package common
 
 // WriteHuffmanTable writes a Huffman table to the JPEG stream

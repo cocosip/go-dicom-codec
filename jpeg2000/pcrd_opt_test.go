@@ -100,7 +100,7 @@ func TestAllocateLayersWithLambda(t *testing.T) {
 	}
 	for cb := range alloc.CodeBlockPasses {
 		lp := alloc.CodeBlockPasses[cb]
-		if !(lp[0] <= lp[1] && lp[1] <= lp[2]) {
+		if lp[0] > lp[1] || lp[1] > lp[2] {
 			t.Errorf("monotonic failed: %v", lp)
 		}
 		if lp[2] > len(passes[cb]) {

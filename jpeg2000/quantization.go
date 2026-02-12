@@ -85,8 +85,8 @@ func encodeQuantizationStep(stepSize float64, numbps int) uint16 {
 		fixed = 1
 	}
 	log2 := bits.Len32(uint32(fixed)) - 1
-	p := int(log2) - 13
-	n := 11 - int(log2)
+	p := log2 - 13
+	n := 11 - log2
 	mant := int32(0)
 	if n < 0 {
 		mant = fixed >> -n

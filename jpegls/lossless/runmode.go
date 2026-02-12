@@ -17,8 +17,9 @@ type RunModeContext struct {
 	NN                  int
 }
 
-func NewRunModeContext(runInterruptionType int, range_ int) *RunModeContext {
-	aInit := max(2, (range_+32)/64)
+// NewRunModeContext creates a run-mode context with initial variables derived from RANGE.
+func NewRunModeContext(runInterruptionType int, rangeVal int) *RunModeContext {
+	aInit := max(2, (rangeVal+32)/64)
 	return &RunModeContext{
 		runInterruptionType: runInterruptionType,
 		A:                   aInit,
@@ -96,11 +97,12 @@ type RunModeScanner struct {
 	traits          Traits
 }
 
+// NewRunModeScanner constructs a scanner to encode/decode run-mode segments.
 func NewRunModeScanner(traits Traits) *RunModeScanner {
-	range_ := traits.Range
+	rangeVal := traits.Range
 	return &RunModeScanner{
 		RunIndex:        0,
-		RunModeContexts: [2]*RunModeContext{NewRunModeContext(0, range_), NewRunModeContext(1, range_)},
+		RunModeContexts: [2]*RunModeContext{NewRunModeContext(0, rangeVal), NewRunModeContext(1, rangeVal)},
 		traits:          traits,
 	}
 }
@@ -119,6 +121,7 @@ func (r *RunModeScanner) incRunIndex() {
 		r.RunIndex++
 	}
 }
+// DecRunIndex decrements the run index with bounds checking.
 func (r *RunModeScanner) DecRunIndex() {
 	if r.RunIndex > 0 {
 		r.RunIndex--

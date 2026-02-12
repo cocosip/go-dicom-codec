@@ -138,10 +138,7 @@ func TestParametersMixedUsage(t *testing.T) {
 
 // TestGenericParametersInterface tests using as generic codec.Parameters
 func TestGenericParametersInterface(t *testing.T) {
-	var genericParams codec.Parameters
-
-	// Can assign to interface
-	genericParams = NewLossyParameters()
+	genericParams := codec.Parameters(NewLossyParameters())
 
 	// Can use generic methods
 	genericParams.SetParameter("rate", 95)

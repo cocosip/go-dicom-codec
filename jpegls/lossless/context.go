@@ -12,10 +12,10 @@ type Context struct {
 
 // NewContext creates a new context with initial values.
 // The range parameter is the dynamic range (can be adjusted for NEAR>0).
-func NewContext(range_ int) *Context {
+func NewContext(rangeVal int) *Context {
 	// ISO/IEC 14495-1, A.8, step 1.d and A.2.1
 	// A_init = max(2, (RANGE + 32) / 64)
-	aInit := max(2, (range_+32)/64)
+	aInit := max(2, (rangeVal+32)/64)
 
 	return &Context{
 		A: aInit,
@@ -114,7 +114,7 @@ func (ctx *Context) GetErrorCorrection(k int, nearLossless int) int {
 type ContextTable struct {
 	contexts []*Context
 	maxVal   int // Maximum sample value (e.g., 255 for 8-bit)
-	range_   int // Dynamic range
+	rangeVal int // Dynamic range
 	near     int // NEAR parameter
 	reset    int // RESET interval
 }
@@ -123,14 +123,14 @@ type ContextTable struct {
 func NewContextTable(maxVal, near, reset int) *ContextTable {
 	// CharLS uses 365 contexts after sign symmetry (|ID| <= 364)
 	numContexts := 365
-	range_ := maxVal + 1
+	rangeVal := maxVal + 1
 	if near > 0 {
-		range_ = (maxVal+2*near)/(2*near+1) + 1
+		rangeVal = (maxVal+2*near)/(2*near+1) + 1
 	}
 
 	contexts := make([]*Context, numContexts)
 	for i := range contexts {
-		contexts[i] = NewContext(range_)
+		contexts[i] = NewContext(rangeVal)
 	}
 
 	if reset == 0 {
@@ -140,7 +140,7 @@ func NewContextTable(maxVal, near, reset int) *ContextTable {
 	return &ContextTable{
 		contexts: contexts,
 		maxVal:   maxVal,
-		range_:   range_,
+		rangeVal: rangeVal,
 		near:     near,
 		reset:    reset,
 	}
@@ -182,13 +182,13 @@ type CodingParameters struct {
 // - bits_per_pixel = log2_ceil(maximum_sample_value)
 // - limit = compute_limit_parameter(bits_per_pixel)  // Uses bits_per_pixel, NOT qbpp!
 func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
-	range_ := maxVal + 1
+	rangeVal := maxVal + 1
 	if near > 0 {
-		range_ = (maxVal+2*near)/(2*near+1) + 1
+		rangeVal = (maxVal+2*near)/(2*near+1) + 1
 	}
 
 	// qbpp (quantized_bits_per_pixel) = ceil(log2(range))
-	qbpp := bitsLen(range_)
+	qbpp := bitsLen(rangeVal)
 
 	// bitsPerPixel = ceil(log2(maximum_sample_value))
 	// CharLS uses this for limit calculation, NOT qbpp!
@@ -207,7 +207,7 @@ func ComputeCodingParameters(maxVal, near int, reset int) CodingParameters {
 	return CodingParameters{
 		MaxVal: maxVal,
 		Near:   near,
-		Range:  range_,
+		Range:  rangeVal,
 		Qbpp:   qbpp,
 		Limit:  limit,
 		T1:     t1,
@@ -280,14 +280,14 @@ func UnmapErrorValue(val int) int {
 }
 
 // CorrectPrediction applies bias correction and modulo reduction to prediction
-func CorrectPrediction(prediction, bias, range_ int) int {
+func CorrectPrediction(prediction, bias, rangeVal int) int {
 	prediction += bias
 
 	// Apply modulo reduction to keep in valid range
 	if prediction < 0 {
-		prediction += range_
-	} else if prediction >= range_ {
-		prediction -= range_
+		prediction += rangeVal
+	} else if prediction >= rangeVal {
+		prediction -= rangeVal
 	}
 
 	return prediction

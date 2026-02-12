@@ -361,7 +361,7 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 	buf := &bytes.Buffer{}
 
 	// Write SOC (Start of Codestream)
-	if err := binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOC)); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOC); err != nil {
 		return nil, err
 	}
 
@@ -406,7 +406,7 @@ func (e *Encoder) buildCodestream() ([]byte, error) {
 	}
 
 	// Write EOC (End of Codestream)
-	if err := binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC)); err != nil {
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerEOC); err != nil {
 		return nil, err
 	}
 
@@ -1143,7 +1143,7 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	}
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerCOD))
+	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerCOD)
 	_ = binary.Write(buf, binary.BigEndian, uint16(codData.Len()+2))
 	buf.Write(codData.Bytes())
 
@@ -1456,7 +1456,7 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 		// Lossless mode: no quantization (style 0)
 		// Sqcd - bits 0-4: quantization type, bits 5-7: guard bits
 		// Match OpenJPEG: qntsty + (numgbits << 5)
-		sqcd := uint8((info.guardBits << 5) | 0)
+		sqcd := uint8(info.guardBits << 5)
 		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
 
 		// SPqcd - Quantization step size for each subband
@@ -1539,7 +1539,7 @@ func (e *Encoder) writeVersionCOM(buf *bytes.Buffer) error {
 	data.WriteString(version)
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerCOM))
+	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerCOM)
 	_ = binary.Write(buf, binary.BigEndian, uint16(data.Len()+2))
 	buf.Write(data.Bytes())
 
@@ -1861,7 +1861,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	}
 
 	// Write SOT (Start of Tile)
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
+	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerSOT)
 	_ = binary.Write(buf, binary.BigEndian, uint16(10)) // Lsot
 
 	_ = binary.Write(buf, binary.BigEndian, uint16(tileIdx)) // Isot
@@ -1876,7 +1876,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	}
 
 	// Write SOD (Start of Data)
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
+	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerSOD)
 
 	// Write tile data
 	buf.Write(tileBytes)
@@ -2578,17 +2578,6 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 	}
 }
 
-// writeWithByteStuffing writes data with JPEG 2000 byte-stuffing
-// Any 0xFF byte must be followed by 0x00 to distinguish it from markers
-func writeWithByteStuffing(buf *bytes.Buffer, data []byte) {
-	for _, b := range data {
-		buf.WriteByte(b)
-		if b == 0xFF {
-			buf.WriteByte(0x00) // Stuff byte
-		}
-	}
-}
-
 func stuffedLen(data []byte) int {
 	if len(data) == 0 {
 		return 0
@@ -2843,7 +2832,7 @@ func (e *Encoder) partitionIntoCodeBlocks(subband subbandInfo, compIdx int) []co
 }
 
 // encodeCodeBlock encodes a single code-block using T1 EBCOT encoder
-func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeBlock {
+func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, _ int) *t2.PrecinctCodeBlock {
 	// Use provided dimensions
 	actualWidth := cb.width
 	actualHeight := cb.height
@@ -2905,7 +2894,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 	roishift := 0
 	if roiShift > 0 && inside {
 		// MaxShift/General Scaling: scale ROI coefficients before coding.
-		if cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
+		if len(cb.mask) > 0 && len(cb.mask[0]) > 0 {
 			applyGeneralScalingMasked(cbData, cb.mask, roiShift)
 		} else {
 			applyGeneralScaling(cbData, roiShift)
@@ -2931,7 +2920,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, cbIdx int) *t2.PrecinctCodeB
 
 	if useLayered {
 		// Force TERMALL style termination so each pass boundary is byte-aligned for PCRD.
-		layerBoundaries := []int{numPasses}
+		var layerBoundaries []int
 		if e.params.NumLayers > 1 {
 			layerAlloc := AllocateLayersSimple(numPasses, e.params.NumLayers, 1)
 			layerBoundaries = make([]int, e.params.NumLayers)
@@ -3032,7 +3021,7 @@ func (e *Encoder) roiContext(cb codeBlockInfo) (byte, int, bool) {
 	y1 := cb.globalY0 + cb.height
 
 	inside := false
-	hasMask := cb.mask != nil && len(cb.mask) > 0 && len(cb.mask[0]) > 0
+	hasMask := len(cb.mask) > 0 && len(cb.mask[0]) > 0
 	if hasMask {
 		inside = maskAnyTrue(cb.mask)
 	} else {
@@ -3076,20 +3065,6 @@ func applyGeneralScalingMasked(data []int32, mask [][]bool, shift int) {
 			}
 		}
 	}
-}
-
-func maskAllTrue(mask [][]bool) bool {
-	if len(mask) == 0 || len(mask[0]) == 0 {
-		return false
-	}
-	for y := 0; y < len(mask); y++ {
-		for x := 0; x < len(mask[y]); x++ {
-			if !mask[y][x] {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func maskAnyTrue(mask [][]bool) bool {

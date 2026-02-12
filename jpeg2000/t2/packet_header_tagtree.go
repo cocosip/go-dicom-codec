@@ -9,7 +9,7 @@ import (
 
 // encodePacketHeaderWithTagTree encodes a packet header using tag-tree encoding
 // This matches OpenJPEG's approach and achieves much better compression
-func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer int, resolution int) ([]byte, []CodeBlockIncl, error) {
+func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer int, _ int) ([]byte, []CodeBlockIncl, error) {
 	cbIncls := make([]CodeBlockIncl, 0)
 
 	// Ensure precinct has grid dimensions
@@ -56,7 +56,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer
 					included = newPasses > 0
 				}
 			} else {
-				hasData := cb.Data != nil && len(cb.Data) > 0
+				hasData := len(cb.Data) > 0
 				included = hasData
 			}
 			if included {
@@ -99,7 +99,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer
 			}
 		} else {
 			// Fallback: use old single-layer method
-			hasData := cb.Data != nil && len(cb.Data) > 0
+			hasData := len(cb.Data) > 0
 			included = hasData
 			newPasses = cb.NumPassesTotal
 		}
@@ -257,7 +257,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 				included = newPasses > 0
 			}
 		} else {
-			included = cb.Data != nil && len(cb.Data) > 0
+			included = len(cb.Data) > 0
 			newPasses = cb.NumPassesTotal
 		}
 		return included, newPasses

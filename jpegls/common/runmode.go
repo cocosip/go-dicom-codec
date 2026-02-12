@@ -1,3 +1,5 @@
+// Package common provides shared utilities and tables for JPEG-LS modules,
+// including run-mode constants and helpers used by encoder/decoder implementations.
 package common
 
 // J array for run mode encoding

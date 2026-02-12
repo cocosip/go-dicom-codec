@@ -1,3 +1,4 @@
+// Package lossless provides JPEG-LS lossless codec implementations.
 package lossless
 
 import (
@@ -38,7 +39,7 @@ func (c *JPEGLSLosslessCodec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data to JPEG-LS Lossless format
-func (c *JPEGLSLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *JPEGLSLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}
@@ -93,7 +94,7 @@ func (c *JPEGLSLosslessCodec) Encode(oldPixelData imagetypes.PixelData, newPixel
 }
 
 // Decode decodes JPEG-LS Lossless data to uncompressed pixel data
-func (c *JPEGLSLosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *JPEGLSLosslessCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	if oldPixelData == nil || newPixelData == nil {
 		return fmt.Errorf("source and destination PixelData cannot be nil")
 	}

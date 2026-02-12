@@ -23,7 +23,7 @@ func TestLosslessCodecWithMCTBindingsWritesMarkers(t *testing.T) {
         SamplesPerPixel: uint16(comps),
     }
     pdIn := codecHelpers.NewTestPixelData(frameInfo)
-    pdIn.AddFrame(src)
+    if err := pdIn.AddFrame(src); err != nil { t.Fatalf("AddFrame failed: %v", err) }
     pdOut := codecHelpers.NewTestPixelData(frameInfo)
 
     params := NewLosslessParameters()

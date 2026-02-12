@@ -2,9 +2,9 @@ module github.com/cocosip/go-dicom-codec
 
 go 1.25.0
 
-require github.com/cocosip/go-dicom v0.1.9
+require github.com/cocosip/go-dicom v0.2.0
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
 )

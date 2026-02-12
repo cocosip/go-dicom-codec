@@ -30,10 +30,7 @@ func TestParametersInterface(t *testing.T) {
 	var _ codec.Parameters = (*JPEG2000LossyParameters)(nil)
 
 	params := NewLossyParameters()
-	var genericParams codec.Parameters = params
-	if genericParams == nil {
-		t.Fatal("Parameters should implement codec.Parameters")
-	}
+	var _ codec.Parameters = params
 }
 
 func TestGetSetParameter(t *testing.T) {

@@ -1,3 +1,4 @@
+// Package extended provides JPEG Extended codec (8/12-bit) implementations.
 package extended
 
 import (
@@ -94,7 +95,9 @@ func (c *ExtendedCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 	}
 
 	// Validate parameters
-	extendedParams.Validate()
+	if err := extendedParams.Validate(); err != nil {
+		return fmt.Errorf("invalid JPEG Extended parameters: %w", err)
+	}
 
 	// Determine bit depth from source if not explicitly set
 	bitDepth := extendedParams.BitDepth
@@ -131,7 +134,7 @@ func (c *ExtendedCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 }
 
 // Decode decodes JPEG Extended data
-func (c *ExtendedCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *ExtendedCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()
 	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {

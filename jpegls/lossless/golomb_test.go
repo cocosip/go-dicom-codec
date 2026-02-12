@@ -94,18 +94,6 @@ func TestGolombRoundTrip(t *testing.T) {
 	t.Log("✓ Golomb round-trip test passed")
 }
 
-// unstuffBytes removes JPEG byte-stuffing (0xFF 0x00 -> 0xFF)
-func unstuffBytes(data []byte) []byte {
-	var result bytes.Buffer
-	for i := 0; i < len(data); i++ {
-		result.WriteByte(data[i])
-		if data[i] == 0xFF && i+1 < len(data) && data[i+1] == 0x00 {
-			i++ // Skip the stuffed 0x00
-		}
-	}
-	return result.Bytes()
-}
-
 func TestSimpleEncode(t *testing.T) {
 	// Create simple 4x4 image with gradient
 	width, height := 4, 4

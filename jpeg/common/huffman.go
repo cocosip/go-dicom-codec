@@ -16,7 +16,7 @@ type HuffmanTable struct {
 	lookupTable [256]int16 // value: (nbits << 8) | value, -1 if not found
 }
 
-// BuildHuffmanTable builds lookup tables for fast Huffman decoding
+// Build builds lookup tables for fast Huffman decoding
 func (h *HuffmanTable) Build() error {
 	// Build fast lookup table for codes up to 8 bits
 	for i := range h.lookupTable {

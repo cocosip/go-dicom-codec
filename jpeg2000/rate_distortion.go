@@ -384,7 +384,7 @@ func computeIncrementals(passesPerBlock [][]t1.PassData) ([][]float64, [][]int, 
 	return slopes, incRates, cumRates, maxSlope
 }
 
-func truncateAtLambda(passesPerBlock [][]t1.PassData, slopes [][]float64, cumRates [][]int, lambda float64, minPasses []int) ([]int, float64) {
+func truncateAtLambda(passesPerBlock [][]t1.PassData, slopes [][]float64, _ [][]int, lambda float64, minPasses []int) ([]int, float64) {
 	numBlocks := len(passesPerBlock)
 	selected := make([]int, numBlocks)
 	total := 0.0

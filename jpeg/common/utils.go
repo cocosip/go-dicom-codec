@@ -1,12 +1,13 @@
+// Package common contains shared helpers and tables used across JPEG codecs.
 package common
 
 // Clamp clamps a value between min and max
-func Clamp(v, min, max int) int {
-	if v < min {
-		return min
+func Clamp(v, minVal, maxVal int) int {
+	if v < minVal {
+		return minVal
 	}
-	if v > max {
-		return max
+	if v > maxVal {
+		return maxVal
 	}
 	return v
 }

@@ -223,101 +223,6 @@ func (php *PacketHeaderParser) readBit() (int, error) {
 	return php.reader.readBit()
 }
 
-// decodeNumPasses decodes the number of coding passes
-// Reference: OpenJPEG's opj_t2_getnumpasses() in t2.c
-// Must match encodeNumPasses in packet_header_tagtree.go
-func (php *PacketHeaderParser) decodeNumPassesLegacy() (int, error) {
-	// Number of passes is encoded with a variable-length code:
-	// 0           → 1 pass (1 bit)
-	// 10          → 2 passes (2 bits)
-	// 11xx        → 3-5 passes where xx ≠ 11 (4 bits total)
-	// 1111xxxxx   → 6-36 passes where xxxxx ≠ 11111 (9 bits total)
-	// 111111111xxxxxxx → 37-164 passes (16 bits total)
-
-	// Read first bit
-	bit1, err := php.readBit()
-	if err != nil {
-		return 0, err
-	}
-	if bit1 == 0 {
-		return 1, nil
-	}
-
-	// Read second bit
-	bit2, err := php.readBit()
-	if err != nil {
-		return 0, err
-	}
-	if bit2 == 0 {
-		return 2, nil
-	}
-
-	// Read 2 bits
-	val2, err := php.readBits(2)
-	if err != nil {
-		return 0, err
-	}
-	if val2 != 3 {
-		// 11xx where xx ≠ 11 → 3-5 passes
-		return 3 + val2, nil
-	}
-
-	// Read 5 bits
-	val5, err := php.readBits(5)
-	if err != nil {
-		return 0, err
-	}
-	if val5 != 31 {
-		// 1111xxxxx where xxxxx ≠ 11111 → 6-36 passes
-		return 6 + val5, nil
-	}
-
-	// Read 7 bits for 37-164 passes
-	val7, err := php.readBits(7)
-	if err != nil {
-		return 0, err
-	}
-	return 37 + val7, nil
-}
-
-// decodeDataLength decodes the length of code-block contribution
-// Reference: ISO/IEC 15444-1:2019 Annex B.10.8
-func (php *PacketHeaderParser) decodeDataLengthLegacy(numPasses int, cbState *CodeBlockState) (int, error) {
-	if numPasses <= 0 {
-		return 0, nil
-	}
-	if cbState.NumLenBits <= 0 {
-		cbState.NumLenBits = 3
-	}
-
-	increment, err := php.decodeCommaCode()
-	if err != nil {
-		return 0, err
-	}
-	cbState.NumLenBits += increment
-
-	totalLen := 0
-	if php.termAll {
-		for pass := 0; pass < numPasses; pass++ {
-			bitCount := cbState.NumLenBits
-			segLen, err := php.readBits(bitCount)
-			if err != nil {
-				return 0, err
-			}
-			totalLen += segLen
-		}
-		return totalLen, nil
-	}
-
-	bitCount := cbState.NumLenBits + floorLog2(numPasses)
-	segLen, err := php.readBits(bitCount)
-	if err != nil {
-		return 0, err
-	}
-	totalLen += segLen
-	return totalLen, nil
-}
-
 func (php *PacketHeaderParser) decodeNumPasses() (int, error) {
 	return decodeNumPassesWithReader(php.reader)
 }
@@ -362,25 +267,6 @@ func (php *PacketHeaderParser) Reset() {
 // Position returns the current byte position
 func (php *PacketHeaderParser) Position() int {
 	return php.reader.bytesRead()
-}
-
-func (php *PacketHeaderParser) decodeCommaCodeLegacy() (int, error) {
-	n := 0
-	for {
-		bit, err := php.readBit()
-		if err != nil {
-			return 0, err
-		}
-		if bit == 0 {
-			break
-		}
-		n++
-	}
-	return n, nil
-}
-
-func (php *PacketHeaderParser) decodeCommaCode() (int, error) {
-	return decodeCommaCodeWithReader(php.reader)
 }
 
 func newCodeBlockStates(numCB int) []*CodeBlockState {

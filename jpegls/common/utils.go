@@ -1,3 +1,4 @@
+// Package common provides minimal math helpers for JPEG-LS modules.
 package common
 
 // Abs returns the absolute value of an integer

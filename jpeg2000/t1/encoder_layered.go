@@ -2,7 +2,6 @@ package t1
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
 )
@@ -227,20 +226,6 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 	// Return passes with rate/distortion info and the complete MQ data
 	return passes, fullMQData, nil
-}
-
-// rdDistortionDelta approximates distortion reduction contributed by a pass (DEPRECATED).
-// This is the old estimation formula. Use calculateDistortion() for accurate results.
-func rdDistortionDelta(bitplane int, passType int) float64 {
-	base := math.Pow(2.0, float64(2*(bitplane+1)))
-	switch passType {
-	case 0: // SPP
-		return base
-	case 1: // MRP
-		return base * 0.5
-	default: // CP
-		return base * 0.75
-	}
 }
 
 // calculateDistortion computes accurate distortion based on reconstruction error.
