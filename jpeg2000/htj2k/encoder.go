@@ -33,8 +33,7 @@ type HTEncoder struct {
 	expPred *ExponentPredictorComputer
 
 	// Encoding state
-	maxBitplane int
-	roishift    int
+	roishift int
 
 	// Dimensions in quads
 	qw int // width in quads
@@ -144,47 +143,6 @@ func (h *HTEncoder) encodeSubsequentRows(context *ContextComputer) error {
 	return nil
 }
 
-// findMaxBitplane finds the maximum bitplane with non-zero coefficients
-func (h *HTEncoder) findMaxBitplane() int {
-	maxVal := int32(0)
-	for _, v := range h.data {
-		abs := v
-		if abs < 0 {
-			abs = -abs
-		}
-		if abs > maxVal {
-			maxVal = abs
-		}
-	}
-
-	if maxVal == 0 {
-		return -1
-	}
-
-	// Calculate bitplane (position of most significant bit)
-	return bits.Len32(uint32(maxVal)) - 1
-}
-
-// encodeHTCleanupPass performs HT cleanup pass encoding (quad by quad)
-func (h *HTEncoder) encodeHTCleanupPass() error {
-	for qy := 0; qy < h.qh; qy++ {
-		for qx := 0; qx < h.qw; qx++ {
-			info := h.getQuadInfo(qx, qy)
-
-			// MEL：0 表示全零 quad，1 表示存在非零系数
-			h.mel.EncodeBit(info.MelBit)
-			if info.MelBit == 0 {
-				continue
-			}
-
-			if err := h.encodeQuadData(info); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // QuadInfo holds encoding information for a single quad
 // Reference: ITU-T T.814 Annex C
 type QuadInfo struct {
@@ -203,14 +161,16 @@ type QuadInfo struct {
 // Reference: OpenJPH ojph_block_encoder.cpp lines 600-650
 //
 // Formula (ITU-T T.814):
-//   val_adjusted = val << (p - missing_msbs)  // p = 30 for 32-bit
-//   mag = abs(val_adjusted) >> 1
-//   e_q = 31 - leading_zeros(mag)
+//
+//	val_adjusted = val << (p - missing_msbs)  // p = 30 for 32-bit
+//	mag = abs(val_adjusted) >> 1
+//	e_q = 31 - leading_zeros(mag)
 //
 // Returns:
-//   mag: absolute magnitude
-//   sign: 0 for positive, 1 for negative
-//   eQ: exponent (bit position of MSB)
+//
+//	mag: absolute magnitude
+//	sign: 0 for positive, 1 for negative
+//	eQ: exponent (bit position of MSB)
 func (h *HTEncoder) preprocessSample(val int32) (mag uint32, sign int, eQ int) {
 	if val == 0 {
 		return 0, 0, -1
@@ -233,123 +193,6 @@ func (h *HTEncoder) preprocessSample(val int32) (mag uint32, sign int, eQ int) {
 	}
 
 	return mag, sign, eQ
-}
-
-// getQuadInfo extracts encoding information for a single quad
-func (h *HTEncoder) getQuadInfo(qx, qy int) *QuadInfo {
-	info := &QuadInfo{
-		Qx: qx,
-		Qy: qy,
-	}
-
-	// Quad top-left position in samples
-	x0 := qx * 2
-	y0 := qy * 2
-
-	// Collect 4 samples in quad
-	positions := [][2]int{
-		{x0, y0}, {x0, y0 + 1},
-		{x0 + 1, y0}, {x0 + 1, y0 + 1},
-	}
-
-	allZero := true
-	info.MaxE = -1
-
-	for i, pos := range positions {
-		px, py := pos[0], pos[1]
-		if px < h.width && py < h.height {
-			idx := py*h.width + px
-			info.Samples[i] = h.data[idx]
-
-			// Preprocess sample to get exponent
-			_, _, eQ := h.preprocessSample(info.Samples[i])
-			info.EQ[i] = eQ
-
-			info.Significant[i] = (info.Samples[i] != 0)
-			if info.Significant[i] {
-				allZero = false
-				info.Rho |= (1 << i)
-				info.SigCount++
-
-				// Track maximum exponent
-				if eQ > info.MaxE {
-					info.MaxE = eQ
-				}
-
-				// Build exponent mask (eps)
-				// eps bit i is set if sample i has non-zero exponent
-				if eQ > 0 {
-					info.Eps |= (1 << i)
-				}
-			}
-		}
-	}
-
-	if allZero {
-		info.MelBit = 0
-	} else {
-		info.MelBit = 1
-	}
-
-	return info
-}
-
-// getQuadPair extracts a pair of horizontally adjacent quads
-// Returns two QuadInfo structs and a boolean indicating if second quad exists
-// Reference: ITU-T T.814 - HTJ2K processes quads in horizontal pairs
-func (h *HTEncoder) getQuadPair(qx, qy int) (*QuadInfo, *QuadInfo, bool) {
-	// First quad in pair (always exists if qx is valid)
-	quad1 := h.getQuadInfo(qx, qy)
-
-	// Second quad in pair (may not exist for odd-width blocks)
-	if qx+1 < h.qw {
-		quad2 := h.getQuadInfo(qx+1, qy)
-		return quad1, quad2, true
-	}
-
-	return quad1, nil, false
-}
-
-// encodeQuadData encodes rho + per-coefficient bit-length + magnitude/sign directly
-//  - VLC segment：rho(4bit) + 对每个显著系数的长度 len-1（6bit，支持最长 32bit）
-//  - MagSgn segment：len 位的无符号幅度 + 1bit 符号（由 MagSgnEncoder 处理）
-func (h *HTEncoder) encodeQuadData(info *QuadInfo) error {
-	// 写入 rho
-	if err := h.vlc.WriteBits(uint32(info.Rho), 4); err != nil {
-		return fmt.Errorf("encode rho: %w", err)
-	}
-
-	// 为每个显著样本写入长度并输出幅度/符号
-	for i := 0; i < 4; i++ {
-		if !info.Significant[i] {
-			continue
-		}
-		val := info.Samples[i]
-		mag := uint32(val)
-		sign := 0
-		if val < 0 {
-			mag = uint32(-val)
-			sign = 1
-		}
-
-		// 使用真实位长编码（至少 1 位，最大 32 位）
-		numBits := bits.Len32(mag)
-		if numBits == 0 {
-			numBits = 1
-		}
-		if numBits > 32 {
-			numBits = 32
-		}
-
-		// 将 (numBits-1) 写入 VLC 流，固定 6 bit
-		if err := h.vlc.WriteBits(uint32(numBits-1), 6); err != nil {
-			return fmt.Errorf("encode mag length: %w", err)
-		}
-
-		h.magsgn.EncodeMagSgn(mag, sign, numBits)
-	}
-
-	return nil
 }
 
 // assembleCodel assembles the three segments into final codeblock with MEL/VLC fusion
@@ -432,23 +275,5 @@ func (h *HTEncoder) assembleCodel() []byte {
 	binary.LittleEndian.PutUint16(result[pos:pos+2], uint16(melLen))
 	binary.LittleEndian.PutUint16(result[pos+2:pos+4], uint16(vlcLen))
 
-	return result
-}
-
-// assembleRaw 将所有系数按 int32 小端序写入，并在尾部附加 4 字节footer（=0表示raw mode）
-func (h *HTEncoder) assembleRaw() []byte {
-	dataBytes := make([]byte, len(h.data)*4)
-	for i, v := range h.data {
-		binary.LittleEndian.PutUint32(dataBytes[i*4:], uint32(v))
-	}
-
-	// Raw mode: melLen=0, vlcLen=0, 占 4 字节尾部
-	// 使用与assembleCodel相同的footer格式
-	result := make([]byte, len(dataBytes)+4)
-	copy(result, dataBytes)
-	// bytes[n-4:n-2] = melLen = 0 (uint16 LE)
-	// bytes[n-2:n] = vlcLen = 0 (uint16 LE)
-	binary.LittleEndian.PutUint16(result[len(result)-4:len(result)-2], 0)
-	binary.LittleEndian.PutUint16(result[len(result)-2:], 0)
 	return result
 }

@@ -1,5 +1,8 @@
 package colorspace
 
+// RCTForward applies Reversible Color Transform (RCT) forward.
+// params: r,g,b - input component samples
+// returns: y,cb,cr components
 func RCTForward(r, g, b int32) (y, cb, cr int32) {
     y = (r + 2*g + b) >> 2
     cb = b - g
@@ -7,6 +10,9 @@ func RCTForward(r, g, b int32) (y, cb, cr int32) {
     return
 }
 
+// RCTInverse applies inverse Reversible Color Transform (RCT).
+// params: y,cb,cr - transformed components
+// returns: r,g,b original components
 func RCTInverse(y, cb, cr int32) (r, g, b int32) {
     g = y - ((cb + cr) >> 2)
     r = cr + g
@@ -14,6 +20,9 @@ func RCTInverse(y, cb, cr int32) (r, g, b int32) {
     return
 }
 
+// ApplyRCTToComponents converts separate R,G,B arrays to Y,Cb,Cr using RCT.
+// params: r,g,b - input component slices
+// returns: y,cb,cr slices
 func ApplyRCTToComponents(r, g, b []int32) (y, cb, cr []int32) {
     n := len(r)
     y = make([]int32, n)
@@ -25,6 +34,9 @@ func ApplyRCTToComponents(r, g, b []int32) (y, cb, cr []int32) {
     return
 }
 
+// ApplyInverseRCTToComponents converts Y,Cb,Cr arrays back to R,G,B.
+// params: y,cb,cr - transformed component slices
+// returns: r,g,b slices
 func ApplyInverseRCTToComponents(y, cb, cr []int32) (r, g, b []int32) {
     n := len(y)
     r = make([]int32, n)

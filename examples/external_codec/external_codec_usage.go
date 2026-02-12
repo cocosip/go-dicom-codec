@@ -1,3 +1,4 @@
+// Package main provides examples demonstrating "外部编解码器" usage with JPEG Lossless.
 package main
 
 import (

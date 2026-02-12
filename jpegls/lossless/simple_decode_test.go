@@ -35,7 +35,7 @@ func TestDecodeWithPrint(t *testing.T) {
 	}
 
 	for i := 0; i < len(pixelData); i++ {
-		if byte(decoded[i]) != pixelData[i] {
+		if decoded[i] != pixelData[i] {
 			t.Errorf("像素 %d: 期望 %d, 得到 %d", i, pixelData[i], decoded[i])
 		}
 	}

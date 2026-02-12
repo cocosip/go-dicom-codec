@@ -46,7 +46,9 @@ func NewHTDecoder(width, height int) *HTDecoder {
 }
 
 // Decode decodes a HTJ2K code-block.
-func (h *HTDecoder) Decode(codeblock []byte, numPasses int) ([]int32, error) {
+// params: codeblock - encoded bytes, numPasses - pass count (unused in HT path)
+// returns: decoded int32 coefficients and error
+func (h *HTDecoder) Decode(codeblock []byte, _ int) ([]int32, error) {
 	if len(codeblock) == 0 {
 		return h.data, nil
 	}

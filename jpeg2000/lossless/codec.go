@@ -1,3 +1,4 @@
+// Package lossless provides JPEG 2000 Lossless codec implementations.
 package lossless
 
 import (

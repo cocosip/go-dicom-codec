@@ -1,3 +1,4 @@
+// Package lossy provides JPEG 2000 Lossy codec implementations.
 package lossy
 
 import (

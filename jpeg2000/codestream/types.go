@@ -163,15 +163,19 @@ type POCSegment struct {
 	Entries []POCEntry
 }
 
+// MCTArrayType enumerates multi-component transform array types.
 type MCTArrayType uint8
+// MCTElementType enumerates element types used in MCT arrays.
 type MCTElementType uint8
 
+// MCTArrayType values define transform array usage.
 const (
 	MCTArrayDependency  MCTArrayType = 0
 	MCTArrayDecorrelate MCTArrayType = 1
 	MCTArrayOffset      MCTArrayType = 2
 )
 
+// MCTElementType values define element representation.
 const (
 	MCTElementInt16   MCTElementType = 0
 	MCTElementInt32   MCTElementType = 1
@@ -179,6 +183,7 @@ const (
 	MCTElementFloat64 MCTElementType = 3
 )
 
+// MCTSegment describes a multi-component transform segment (Part 2).
 type MCTSegment struct {
 	Index       uint8
 	ElementType MCTElementType
@@ -186,6 +191,7 @@ type MCTSegment struct {
 	Data        []byte
 }
 
+// MCCSegment describes a Multiple Component Collection segment (Part 2).
 type MCCSegment struct {
 	Index              uint8
 	CollectionType     uint8
@@ -197,6 +203,7 @@ type MCCSegment struct {
 	Reversible         bool
 }
 
+// MCOSegment describes MCT ordering segment (Part 2).
 type MCOSegment struct {
 	NumStages    uint8
 	StageIndices []uint8

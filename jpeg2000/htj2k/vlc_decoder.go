@@ -10,7 +10,7 @@ type VLCDecoder struct {
 	lastByte  uint8  // Last byte read (for bit-unstuffing detection)
 
 	// Lookup tables for fast decoding (1024 entries each)
-	// Key: (c_q << 7) | codeword
+	// Key: (cQ << 7) | codeword
 	tbl0 [1024]uint16 // For initial quad rows
 	tbl1 [1024]uint16 // For non-initial quad rows
 }
@@ -36,12 +36,12 @@ func (v *VLCDecoder) buildLookupTables() {
 	// Build lookup table for tbl0
 	for i := 0; i < 1024; i++ {
 		cwd := i & 0x7F
-		c_q := i >> 7
+		cQ := i >> 7
 		bestLen := uint8(0)
 		var packed uint16
 		for j := range VLC_tbl0 {
 			entry := &VLC_tbl0[j]
-			if int(entry.CQ) != c_q {
+			if int(entry.CQ) != cQ {
 				continue
 			}
 			mask := (1 << entry.CwdLen) - 1
@@ -62,12 +62,12 @@ func (v *VLCDecoder) buildLookupTables() {
 	// Build lookup table for tbl1
 	for i := 0; i < 1024; i++ {
 		cwd := i & 0x7F
-		c_q := i >> 7
+		cQ := i >> 7
 		bestLen := uint8(0)
 		var packed uint16
 		for j := range VLC_tbl1 {
 			entry := &VLC_tbl1[j]
-			if int(entry.CQ) != c_q {
+			if int(entry.CQ) != cQ {
 				continue
 			}
 			mask := (1 << entry.CwdLen) - 1
@@ -158,11 +158,11 @@ func (v *VLCDecoder) DecodeInitialRow(context uint8) (uint8, uint8, uint8, uint8
 			}
 			mask := (1 << entry.CwdLen) - 1
 			if int(entry.Cwd) == int(bits&uint32(mask)) {
-				u_off := entry.UOff
+				uOff := entry.UOff
 				rho := entry.Rho
-				e_1 := entry.E1
-				e_k := entry.EK
-				return rho, u_off, e_k, e_1, true
+				e1 := entry.E1
+				eK := entry.EK
+				return rho, uOff, eK, e1, true
 			}
 		}
 	}
@@ -184,11 +184,11 @@ func (v *VLCDecoder) DecodeNonInitialRow(context uint8) (uint8, uint8, uint8, ui
 			}
 			mask := (1 << entry.CwdLen) - 1
 			if int(entry.Cwd) == int(bits&uint32(mask)) {
-				u_off := entry.UOff
+				uOff := entry.UOff
 				rho := entry.Rho
-				e_1 := entry.E1
-				e_k := entry.EK
-				return rho, u_off, e_k, e_1, true
+				e1 := entry.E1
+				eK := entry.EK
+				return rho, uOff, eK, e1, true
 			}
 		}
 	}

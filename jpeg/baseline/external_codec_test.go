@@ -58,7 +58,9 @@ func TestBaselineCodecEncodeDecode(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame error: %v", err)
+	}
 
 	// Create codec with quality 85
 	baselineCodec := NewBaselineCodec(85)
@@ -172,7 +174,9 @@ func TestBaselineCodecRGB(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame error: %v", err)
+	}
 
 	// Create codec with quality 90
 	baselineCodec := NewBaselineCodec(90)
@@ -254,7 +258,9 @@ func TestBaselineCodecWithParameters(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame error: %v", err)
+	}
 
 	// Create codec with default quality (85)
 	baselineCodec := NewBaselineCodec(85)

@@ -96,6 +96,8 @@ type BlockEncoder interface {
 	Encode(coeffs []int32, numPasses int, roiShift int) ([]byte, error)
 }
 
+// MCTBindingParams describes Part 2 multi-component transform binding parameters.
+// Fields map to MCT/MCC/MCO marker semantics in JPEG 2000 Part 2.
 type MCTBindingParams struct {
 	AssocType      uint8
 	ComponentIDs   []uint16
@@ -1457,19 +1459,25 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 		// Sqcd - bits 0-4: quantization type, bits 5-7: guard bits
 		// Match OpenJPEG: qntsty + (numgbits << 5)
 		sqcd := uint8(info.guardBits << 5)
-		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
+		if err := binary.Write(qcdData, binary.BigEndian, sqcd); err != nil {
+			return err
+		}
 
 		// SPqcd - Quantization step size for each subband
 		// For lossless: exponent only (8 bits), no mantissa
 		// Values are shifted left by 3 bits when encoded
 		for _, expn := range info.expn {
-			_ = binary.Write(qcdData, binary.BigEndian, uint8(expn<<3))
+			if err := binary.Write(qcdData, binary.BigEndian, uint8(expn<<3)); err != nil {
+				return err
+			}
 		}
 	} else {
 		// Lossy mode: scalar expounded quantization (style 2)
 		// Sqcd - bits 0-4: quantization type (2 = scalar expounded), bits 5-7: guard bits
 		sqcd := uint8((info.guardBits << 5) | (info.style & 0x1F))
-		_ = binary.Write(qcdData, binary.BigEndian, sqcd)
+		if err := binary.Write(qcdData, binary.BigEndian, sqcd); err != nil {
+			return err
+		}
 
 		// SPqcd - Quantization step sizes for each subband
 		// For scalar expounded: 16-bit value per subband (5-bit exponent, 11-bit mantissa)
@@ -1479,9 +1487,15 @@ func (e *Encoder) writeQCD(buf *bytes.Buffer) error {
 	}
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerQCD))
-	_ = binary.Write(buf, binary.BigEndian, uint16(qcdData.Len()+2))
-	buf.Write(qcdData.Bytes())
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerQCD); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.BigEndian, uint16(qcdData.Len()+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write(qcdData.Bytes()); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1903,25 +1917,20 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 			wavelet.ForwardMultilevelWithParity(transformed[c], width, height, e.params.NumLevels, x0, y0)
 		}
 		return transformed, nil
-	} else {
-		// Apply 9/7 irreversible wavelet transform (lossy)
-		transformed := make([][]int32, len(tileData))
-
-		// Calculate quantization parameters based on quality
-		quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
-
-		for c := 0; c < len(tileData); c++ {
-			// Convert to float64 for 9/7 transform
-			floatData := wavelet.ConvertInt32ToFloat64(tileData[c])
-
-			// Apply forward multilevel 9/7 DWT
-			wavelet.ForwardMultilevel97WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
-
-			// Apply quantization per subband using float coefficients
-			transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, x0, y0, quantParams.StepSizes)
-		}
-		return transformed, nil
 	}
+	// Apply 9/7 irreversible wavelet transform (lossy)
+	transformed := make([][]int32, len(tileData))
+	// Calculate quantization parameters based on quality
+	quantParams := CalculateQuantizationParams(e.params.Quality, e.params.NumLevels, e.params.BitDepth)
+	for c := 0; c < len(tileData); c++ {
+		// Convert to float64 for 9/7 transform
+		floatData := wavelet.ConvertInt32ToFloat64(tileData[c])
+		// Apply forward multilevel 9/7 DWT
+		wavelet.ForwardMultilevel97WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
+		// Apply quantization per subband using float coefficients
+		transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, x0, y0, quantParams.StepSizes)
+	}
+	return transformed, nil
 }
 
 // applyQuantizationBySubbandFloat applies quantization to each subband separately.
@@ -2838,23 +2847,23 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, _ int) *t2.PrecinctCodeBlock
 	actualHeight := cb.height
 	cbData := cb.data
 
-	// Apply T1_NMSEDEC_FRACBITS scaling (left shift 6 bits)
+	// Apply T1 NMSEDEC FRACBITS scaling (left shift 6 bits)
 	// This matches OpenJPEG's representation for lossless encoding
 	// OpenJPEG applies this shift in t1.c before T1 encoding
-	const T1_NMSEDEC_FRACBITS = 6
+	const t1NmseDecFracBits = 6
 	for i := range cbData {
-		cbData[i] <<= T1_NMSEDEC_FRACBITS
+		cbData[i] <<= t1NmseDecFracBits
 	}
 
 	// Calculate max bitplane from scaled data
 	rawMaxBitplane := calculateMaxBitplane(cbData)
 
-	// Adjust maxBitplane by adding 1 then subtracting T1_NMSEDEC_FRACBITS
+	// Adjust maxBitplane by adding 1 then subtracting t1NmseDecFracBits
 	// OpenJPEG does: numbps = (floorlog2(max) + 1) - T1_NMSEDEC_FRACBITS
 	// The +1 is critical - it converts from bit position to number of bits
 	cblkNumbps := 0
 	if rawMaxBitplane >= 0 {
-		cblkNumbps = (rawMaxBitplane + 1) - T1_NMSEDEC_FRACBITS
+		cblkNumbps = (rawMaxBitplane + 1) - t1NmseDecFracBits
 		if cblkNumbps < 0 {
 			cblkNumbps = 0
 		}
@@ -2973,19 +2982,18 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, _ int) *t2.PrecinctCodeBlock
 		pcb.UseTERMALL = e.params.NumLayers > 1 || e.params.TargetRatio > 0
 
 		return pcb
-	} else {
-		// Single layer: use block encoder
-		encodedData, err := blockEnc.Encode(cbData, numPasses, roishift)
-		if err != nil {
-			// Return minimal code-block on error
-			encodedData = []byte{0x00}
-			numPasses = 1
-			zeroBitPlanes = bandNumbps
-			pcb.NumPassesTotal = numPasses
-			pcb.ZeroBitPlanes = zeroBitPlanes
-		}
-		pcb.Data = encodedData
 	}
+	// Single layer: use block encoder
+	encodedData, err := blockEnc.Encode(cbData, numPasses, roishift)
+	if err != nil {
+		// Return minimal code-block on error
+		encodedData = []byte{0x00}
+		numPasses = 1
+		zeroBitPlanes = bandNumbps
+		pcb.NumPassesTotal = numPasses
+		pcb.ZeroBitPlanes = zeroBitPlanes
+	}
+	pcb.Data = encodedData
 
 	return pcb
 }
@@ -3118,20 +3126,6 @@ func log2(n int) int {
 		result++
 	}
 	return result
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // encodeQuantStepsFromFloats converts floating quantization steps to OpenJPEG-encoded form.

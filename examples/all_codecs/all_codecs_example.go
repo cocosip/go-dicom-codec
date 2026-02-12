@@ -1,3 +1,4 @@
+// Package main demonstrates "全部编解码器" usage examples for DICOM JPEG codecs.
 package main
 
 import (
@@ -46,7 +47,10 @@ func main() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("AddFrame error: %v\n", err)
+		return
+	}
 
 	// Get global registry
 	registry := codec.GetGlobalRegistry()
@@ -204,7 +208,10 @@ func testRGBImage(registry *codec.Registry) {
 		PhotometricInterpretation: "RGB",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("AddFrame error: %v\n", err)
+		return
+	}
 
 	fmt.Printf("RGB image: %dx%d, %d bytes\n\n", width, height, len(pixelData))
 

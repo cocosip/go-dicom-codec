@@ -34,14 +34,14 @@ func (m *MELEncoder) EncodeBit(bit int) {
 			if m.k < 12 {
 				m.k++
 			}
-			m.threshold = 1 << MEL_E[m.k]
+			m.threshold = 1 << MelE[m.k]
 		}
 		return
 	}
 
-	// bit == 1: emit 0 + run bits (length MEL_E[k]).
+	// bit == 1: emit 0 + run bits (length MelE[k]).
 	m.emitBit(0)
-	t := MEL_E[m.k]
+	t := MelE[m.k]
 	for t > 0 {
 		t--
 		m.emitBit(uint8((m.run >> t) & 1))
@@ -50,7 +50,7 @@ func (m *MELEncoder) EncodeBit(bit int) {
 	if m.k > 0 {
 		m.k--
 	}
-	m.threshold = 1 << MEL_E[m.k]
+	m.threshold = 1 << MelE[m.k]
 }
 
 // emitBit writes a single bit to the output buffer with byte stuffing.
@@ -201,7 +201,7 @@ func (m *MELDecoder) DecodeBit() (int, bool) {
 		return 0, false
 	}
 
-	eval := MEL_E[m.k]
+	eval := MelE[m.k]
 	if lead == 1 {
 		m.pendingZeros = 1 << eval
 		if m.k < 12 {

@@ -24,44 +24,46 @@ type BitReader interface {
 }
 
 // DecodeUnsignedResidual decodes an unsigned residual value uq.
+// params: none
+// returns: uq value and error if decoding fails
 func (d *UVLCDecoder) DecodeUnsignedResidual() (uint32, error) {
-	u_pfx, err := d.decodeUPrefix()
+	uPfx, err := d.decodeUPrefix()
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC prefix: %w", err)
 	}
 
-	u_sfx, err := d.decodeUSuffix(u_pfx)
+	uSfx, err := d.decodeUSuffix(uPfx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC suffix: %w", err)
 	}
 
-	u_ext, err := d.decodeUExtension(u_sfx)
+	uExt, err := d.decodeUExtension(uSfx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC extension: %w", err)
 	}
 
-	return uint32(u_pfx) + uint32(u_sfx) + 4*uint32(u_ext), nil
+	return uint32(uPfx) + uint32(uSfx) + 4*uint32(uExt), nil
 }
 
 // DecodeUnsignedResidualInitialPair decodes uq for the initial line-pair
 // when both quads have u_off=1.
 func (d *UVLCDecoder) DecodeUnsignedResidualInitialPair() (uint32, error) {
-	u_pfx, err := d.decodeUPrefix()
+	uPfx, err := d.decodeUPrefix()
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC prefix: %w", err)
 	}
 
-	u_sfx, err := d.decodeUSuffix(u_pfx)
+	uSfx, err := d.decodeUSuffix(uPfx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC suffix: %w", err)
 	}
 
-	u_ext, err := d.decodeUExtension(u_sfx)
+	uExt, err := d.decodeUExtension(uSfx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to decode U-VLC extension: %w", err)
 	}
 
-	return 2 + uint32(u_pfx) + uint32(u_sfx) + 4*uint32(u_ext), nil
+	return 2 + uint32(uPfx) + uint32(uSfx) + 4*uint32(uExt), nil
 }
 
 // DecodeUnsignedResidualSecondQuad decodes the second quad's residual when
@@ -75,8 +77,8 @@ func (d *UVLCDecoder) DecodeUnsignedResidualSecondQuad() (uint32, error) {
 }
 
 // DecodePair decodes U-VLC for a quad pair using OpenJPH tables.
-// uOff0/uOff1 are the u_off flags for the two quads.
-// melEvent is used only for initial pairs when both u_off are 1.
+// params: uOff0/uOff1 - u_off flags for quads; initialPair - is initial row; melEvent - MEL flag
+// returns: u0, u1 and error
 func (d *UVLCDecoder) DecodePair(uOff0, uOff1 uint8, initialPair bool, melEvent int) (uint32, uint32, error) {
 	mode := int(uOff0) + 2*int(uOff1)
 	if mode == 0 {
@@ -169,6 +171,8 @@ func (d *UVLCDecoder) DecodePair(uOff0, uOff1 uint8, initialPair bool, melEvent 
 }
 
 // DecodeWithTable decodes a single quad using the UVLC tables.
+// params: uOff - u_off flag; initialPair - initial row flag; melBit - MEL bit
+// returns: decoded value and ok flag
 func (d *UVLCDecoder) DecodeWithTable(uOff uint8, initialPair bool, melBit int) (uint32, bool) {
 	u0, _, err := d.DecodePair(uOff, 0, initialPair, melBit)
 	if err != nil {
@@ -222,6 +226,8 @@ func (d *UVLCDecoder) applyUExtension(u uint32, bias uint32, useBias bool) (uint
 }
 
 // decodeUPrefix decodes the U-VLC prefix component.
+// params: none
+// returns: prefix value and error
 func (d *UVLCDecoder) decodeUPrefix() (uint8, error) {
 	bit, err := d.bitReader.ReadBit()
 	if err != nil {
@@ -251,8 +257,10 @@ func (d *UVLCDecoder) decodeUPrefix() (uint8, error) {
 }
 
 // decodeUSuffix decodes the U-VLC suffix component.
-func (d *UVLCDecoder) decodeUSuffix(u_pfx uint8) (uint8, error) {
-	if u_pfx < 3 {
+// params: uPfx - prefix value
+// returns: suffix value and error
+func (d *UVLCDecoder) decodeUSuffix(uPfx uint8) (uint8, error) {
+	if uPfx < 3 {
 		return 0, nil
 	}
 
@@ -260,7 +268,7 @@ func (d *UVLCDecoder) decodeUSuffix(u_pfx uint8) (uint8, error) {
 	if err != nil {
 		return 0, err
 	}
-	if u_pfx == 3 {
+	if uPfx == 3 {
 		return val, nil
 	}
 
@@ -276,8 +284,10 @@ func (d *UVLCDecoder) decodeUSuffix(u_pfx uint8) (uint8, error) {
 }
 
 // decodeUExtension decodes the U-VLC extension component.
-func (d *UVLCDecoder) decodeUExtension(u_sfx uint8) (uint8, error) {
-	if u_sfx < 28 {
+// params: uSfx - suffix value
+// returns: extension nibble and error
+func (d *UVLCDecoder) decodeUExtension(uSfx uint8) (uint8, error) {
+	if uSfx < 28 {
 		return 0, nil
 	}
 

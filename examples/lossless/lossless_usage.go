@@ -1,3 +1,4 @@
+// Package main provides "无损编解码器"示例用法。
 package main
 
 import (

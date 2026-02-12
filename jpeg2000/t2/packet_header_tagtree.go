@@ -9,12 +9,70 @@ import (
 
 // encodePacketHeaderWithTagTree encodes a packet header using tag-tree encoding
 // This matches OpenJPEG's approach and achieves much better compression
+// encodePacketHeaderWithTagTree encodes a packet header using tag-tree encoding.
+// params: precinct - target precinct; layer - current layer; _ - reserved
+// returns: header bytes, block inclusions and error
 func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer int, _ int) ([]byte, []CodeBlockIncl, error) {
 	cbIncls := make([]CodeBlockIncl, 0)
+	pe.ensurePrecinctTrees(precinct)
+	if layer == 0 {
+		precinct.InclTree.ResetEncoding()
+		precinct.ZBPTree.ResetEncoding()
+	}
+	for _, cb := range precinct.CodeBlocks {
+		if !cb.Included {
+			included, _, _ := pe.layerContribution(cb, layer)
+			if included {
+				precinct.InclTree.SetValue(cb.CBX, cb.CBY, layer)
+			}
+		}
+		if layer == 0 {
+			precinct.ZBPTree.SetValue(cb.CBX, cb.CBY, cb.ZeroBitPlanes)
+		}
+	}
+	bitBuf := newBioWriter()
+	if len(precinct.CodeBlocks) == 0 {
+		bitBuf.writeBit(0)
+		return bitBuf.flush(), cbIncls, nil
+	}
+	bitBuf.writeBit(1)
+	for _, cb := range precinct.CodeBlocks {
+		included, newPasses, layerData := pe.layerContribution(cb, layer)
+		firstIncl := !cb.Included && included
+		cbIncl := CodeBlockIncl{Included: included, FirstInclusion: firstIncl}
+		proceed, err := pe.writeInclusionAndZBP(bitBuf, precinct, cb, layer, included)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !proceed {
+			cbIncls = append(cbIncls, cbIncl)
+			continue
+		}
+		cbIncl.NumPasses = newPasses
+		if err := encodeNumPasses(bitBuf, newPasses); err != nil {
+			return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
+		}
+		cbIncl.Data = layerData
+		cbIncl.DataLength = len(layerData)
+		cbIncl.PassLengths = pe.layerPassLengths(cb, layer)
+		cbIncl.UseTERMALL = cb.UseTERMALL
+		prevPasses, totalPasses := pe.computePrevAndTotalPasses(cb, layer, newPasses)
+		termAll := cb.UseTERMALL
+		passLens := buildPassLengths(cb.PassLengths, cb.Passes)
+		if termAll && (passLens == nil || totalPasses > len(passLens)) {
+			termAll = false
+		}
+		encodeCodeBlockLengths(bitBuf, cb, cbIncl.DataLength, prevPasses, newPasses, termAll, passLens)
+		cbIncls = append(cbIncls, cbIncl)
+	}
+	return bitBuf.flush(), cbIncls, nil
+}
 
-	// Ensure precinct has grid dimensions
+// ensurePrecinctTrees prepares precinct dimensions and tag trees.
+// params: precinct - target precinct
+// returns: none
+func (pe *PacketEncoder) ensurePrecinctTrees(precinct *Precinct) {
 	if precinct.NumCodeBlocksX == 0 || precinct.NumCodeBlocksY == 0 {
-		// Calculate from codeblocks
 		maxX, maxY := 0, 0
 		for _, cb := range precinct.CodeBlocks {
 			if cb.CBX+1 > maxX {
@@ -27,212 +85,69 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTree(precinct *Precinct, layer
 		precinct.NumCodeBlocksX = maxX
 		precinct.NumCodeBlocksY = maxY
 	}
-
-	// Create tag-trees for this packet if needed
 	if precinct.InclTree == nil || precinct.ZBPTree == nil {
 		precinct.InclTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
 		precinct.ZBPTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
 	}
+}
 
-	// Reset tag-trees only on first layer (OpenJPEG semantics)
-	if layer == 0 {
-		precinct.InclTree.ResetEncoding()
-		precinct.ZBPTree.ResetEncoding()
-	}
-
-	// First pass: populate tag-trees with values for this layer
-	for _, cb := range precinct.CodeBlocks {
-		// Determine inclusion layer for this codeblock
-		if !cb.Included {
-			included := false
-			if cb.LayerData != nil && layer < len(cb.LayerData) {
-				if layer < len(cb.LayerPasses) {
-					totalPasses := cb.LayerPasses[layer]
-					prevPasses := 0
-					if layer > 0 {
-						prevPasses = cb.LayerPasses[layer-1]
-					}
-					newPasses := totalPasses - prevPasses
-					included = newPasses > 0
-				}
-			} else {
-				hasData := len(cb.Data) > 0
-				included = hasData
-			}
-			if included {
-				precinct.InclTree.SetValue(cb.CBX, cb.CBY, layer)
-			}
-		}
-
-		if layer == 0 {
-			precinct.ZBPTree.SetValue(cb.CBX, cb.CBY, cb.ZeroBitPlanes)
-		}
-	}
-
-	// Create bit writer (OpenJPEG-style bit stuffing)
-	bitBuf := newBioWriter()
-
-	// Write packet present flag (1 bit) - matches OpenJPEG's opj_t2_encode_packet
-	// 0 = empty packet, 1 = packet has data
-	if len(precinct.CodeBlocks) == 0 {
-		bitBuf.writeBit(0)
-		return bitBuf.flush(), cbIncls, nil
-	}
-	bitBuf.writeBit(1) // Packet has data
-
-	// Second pass: encode packet header for each codeblock in stored order
-	for _, cb := range precinct.CodeBlocks {
-		// Determine if this code-block is included in this layer
-		included := false
-		newPasses := 0
-
-		if cb.LayerData != nil && layer < len(cb.LayerData) {
-			// Multi-layer data available
-			if layer < len(cb.LayerPasses) {
-				totalPasses := cb.LayerPasses[layer]
-				prevPasses := 0
-				if layer > 0 {
-					prevPasses = cb.LayerPasses[layer-1]
-				}
-				newPasses = totalPasses - prevPasses
-				included = newPasses > 0
-			}
-		} else {
-			// Fallback: use old single-layer method
-			hasData := len(cb.Data) > 0
-			included = hasData
-			newPasses = cb.NumPassesTotal
-		}
-
-		firstIncl := !cb.Included && included
-
-		cbIncl := CodeBlockIncl{
-			Included:       included,
-			FirstInclusion: firstIncl,
-		}
-
-		// Encode inclusion using tag-tree
-		if !cb.Included {
-			// First time this codeblock might be included
-			// Use tag-tree to encode inclusion layer
-			threshold := layer + 1
-			err := precinct.InclTree.Encode(bitBuf, cb.CBX, cb.CBY, threshold)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to encode inclusion tag-tree: %w", err)
-			}
-
-			if !included {
-				// Not included in this layer
-				cbIncls = append(cbIncls, cbIncl)
-				continue
-			}
-
-			// First inclusion - encode zero bitplanes using tag-tree
-			err = precinct.ZBPTree.Encode(bitBuf, cb.CBX, cb.CBY, 999)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to encode zero-bitplane tag-tree: %w", err)
-			}
-
-			cb.Included = true
-		} else {
-			// Already included in previous layer
-			if included {
-				// Still has data in this layer
-				bitBuf.writeBit(1)
-			} else {
-				// No data in this layer
-				bitBuf.writeBit(0)
-				cbIncls = append(cbIncls, cbIncl)
-				continue
-			}
-		}
-
-		// Encode number of coding passes for this layer
-		cbIncl.NumPasses = newPasses
-
-		// Encode number of passes using JPEG2000 standard encoding
-		// Matches OpenJPEG's opj_t2_putnumpasses() in t2.c:184-198
-		if err := encodeNumPasses(bitBuf, newPasses); err != nil {
-			return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
-		}
-
-		// Get data for this layer
-		var layerData []byte
-
-		if cb.LayerData != nil && layer < len(cb.LayerData) {
-			// Multi-layer: use pre-calculated layer data (incremental)
-			layerData = cb.LayerData[layer]
-		} else {
-			// Fallback to single-layer data
-			layerData = cb.Data
-		}
-
-		dataLen := len(layerData)
-		cbIncl.Data = layerData
-
-		// Copy PassLengths for multi-layer support
-		if cb.LayerData != nil && layer < len(cb.LayerPasses) {
+// layerContribution returns inclusion status, new passes and layer data for a block.
+// params: cb - code-block; layer - current layer
+// returns: included flag, new passes count, layer data bytes
+func (pe *PacketEncoder) layerContribution(cb *PrecinctCodeBlock, layer int) (bool, int, []byte) {
+	included := false
+	newPasses := 0
+	var layerData []byte
+	if cb.LayerData != nil && layer < len(cb.LayerData) {
+		if layer < len(cb.LayerPasses) {
 			totalPasses := cb.LayerPasses[layer]
 			prevPasses := 0
 			if layer > 0 {
 				prevPasses = cb.LayerPasses[layer-1]
 			}
-
-			if totalPasses <= len(cb.PassLengths) {
-				layerPassLengths := make([]int, totalPasses-prevPasses)
-				baseOffset := 0
-				if prevPasses > 0 && prevPasses <= len(cb.PassLengths) {
-					baseOffset = cb.PassLengths[prevPasses-1]
-				}
-				for i := prevPasses; i < totalPasses && i < len(cb.PassLengths); i++ {
-					layerPassLengths[i-prevPasses] = cb.PassLengths[i] - baseOffset
-				}
-				cbIncl.PassLengths = layerPassLengths
-			}
-		} else {
-			cbIncl.PassLengths = cb.PassLengths
+			newPasses = totalPasses - prevPasses
+			included = newPasses > 0
 		}
-		cbIncl.UseTERMALL = cb.UseTERMALL
-
-		cbIncl.DataLength = dataLen
-
-		// Encode length using OpenJPEG-style comma code + length indicators.
-		if cb.NumLenBits <= 0 {
-			cb.NumLenBits = 3
-		}
-
-		prevPasses := 0
-		totalPasses := newPasses
-		if cb.LayerPasses != nil && layer < len(cb.LayerPasses) {
-			totalPasses = cb.LayerPasses[layer]
-			if layer > 0 {
-				prevPasses = cb.LayerPasses[layer-1]
-			}
-		} else if cb.NumPassesTotal > 0 {
-			prevPasses = cb.NumPassesTotal - newPasses
-			if prevPasses < 0 {
-				prevPasses = 0
-			}
-			totalPasses = prevPasses + newPasses
-		}
-
-		termAll := cb.UseTERMALL
-		passLens := buildPassLengths(cb.PassLengths, cb.Passes)
-		if termAll && (passLens == nil || totalPasses > len(passLens)) {
-			termAll = false
-		}
-
-		encodeCodeBlockLengths(bitBuf, cb, cbIncl.DataLength, prevPasses, newPasses, termAll, passLens)
-
-		cbIncls = append(cbIncls, cbIncl)
+		layerData = cb.LayerData[layer]
+	} else {
+		included = len(cb.Data) > 0
+		newPasses = cb.NumPassesTotal
+		layerData = cb.Data
 	}
+	return included, newPasses, layerData
+}
 
-	// Flush remaining bits
-	return bitBuf.flush(), cbIncls, nil
+// writeInclusionAndZBP writes inclusion tag-tree and zero-bitplane for first inclusion.
+// params: bw - bit writer; precinct - precinct; cb - block; layer - current layer; included - inclusion flag
+// returns: proceed flag (true if block continues), error if any
+func (pe *PacketEncoder) writeInclusionAndZBP(bw *bioWriter, precinct *Precinct, cb *PrecinctCodeBlock, layer int, included bool) (bool, error) {
+	if !cb.Included {
+		threshold := layer + 1
+		if err := precinct.InclTree.Encode(bw, cb.CBX, cb.CBY, threshold); err != nil {
+			return false, fmt.Errorf("failed to encode inclusion tag-tree: %w", err)
+		}
+		if !included {
+			return false, nil
+		}
+		if err := precinct.ZBPTree.Encode(bw, cb.CBX, cb.CBY, 999); err != nil {
+			return false, fmt.Errorf("failed to encode zero-bitplane tag-tree: %w", err)
+		}
+		cb.Included = true
+		return true, nil
+	}
+	if included {
+		bw.writeBit(1)
+		return true, nil
+	}
+	bw.writeBit(0)
+	return false, nil
 }
 
 // encodePacketHeaderWithTagTreeMulti encodes a packet header across all bands in a precinct.
 // It writes a single packet-present bit, then iterates bands in order.
+// encodePacketHeaderWithTagTreeMulti encodes a packet header across all bands in precincts.
+// params: precincts - list of precincts; layer - current layer
+// returns: header bytes, block inclusions and error
 func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinct, layer int) ([]byte, []CodeBlockIncl, error) {
 	cbIncls := make([]CodeBlockIncl, 0)
 	bitBuf := newBioWriter()
@@ -243,25 +158,6 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 	}
 
 	hasBlocks := false
-	layerContribution := func(cb *PrecinctCodeBlock) (bool, int) {
-		included := false
-		newPasses := 0
-		if cb.LayerData != nil && layer < len(cb.LayerData) {
-			if layer < len(cb.LayerPasses) {
-				totalPasses := cb.LayerPasses[layer]
-				prevPasses := 0
-				if layer > 0 {
-					prevPasses = cb.LayerPasses[layer-1]
-				}
-				newPasses = totalPasses - prevPasses
-				included = newPasses > 0
-			}
-		} else {
-			included = len(cb.Data) > 0
-			newPasses = cb.NumPassesTotal
-		}
-		return included, newPasses
-	}
 
 	for _, precinct := range precincts {
 		if precinct != nil && len(precinct.CodeBlocks) > 0 {
@@ -289,20 +185,6 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 			return ai.CBX < aj.CBX
 		})
 
-		if precinct.NumCodeBlocksX == 0 || precinct.NumCodeBlocksY == 0 {
-			maxX, maxY := 0, 0
-			for _, cb := range precinct.CodeBlocks {
-				if cb.CBX+1 > maxX {
-					maxX = cb.CBX + 1
-				}
-				if cb.CBY+1 > maxY {
-					maxY = cb.CBY + 1
-				}
-			}
-			precinct.NumCodeBlocksX = maxX
-			precinct.NumCodeBlocksY = maxY
-		}
-
 		if precinct.InclTree == nil || precinct.ZBPTree == nil ||
 			precinct.InclTree.Width() != precinct.NumCodeBlocksX ||
 			precinct.InclTree.Height() != precinct.NumCodeBlocksY {
@@ -317,7 +199,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 
 		for _, cb := range precinct.CodeBlocks {
 			if !cb.Included {
-				included, _ := layerContribution(cb)
+				included, _, _ := pe.layerContribution(cb, layer)
 				if included {
 					precinct.InclTree.SetValue(cb.CBX, cb.CBY, layer)
 				}
@@ -334,7 +216,7 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 		}
 
 		for _, cb := range precinct.CodeBlocks {
-			included, newPasses := layerContribution(cb)
+			included, newPasses, layerData := pe.layerContribution(cb, layer)
 			firstIncl := !cb.Included && included
 
 			cbIncl := CodeBlockIncl{
@@ -342,30 +224,13 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 				FirstInclusion: firstIncl,
 			}
 
-			if !cb.Included {
-				threshold := layer + 1
-				if err := precinct.InclTree.Encode(bitBuf, cb.CBX, cb.CBY, threshold); err != nil {
-					return nil, nil, fmt.Errorf("failed to encode inclusion tag-tree: %w", err)
-				}
-
-				if !included {
-					cbIncls = append(cbIncls, cbIncl)
-					continue
-				}
-
-				if err := precinct.ZBPTree.Encode(bitBuf, cb.CBX, cb.CBY, 999); err != nil {
-					return nil, nil, fmt.Errorf("failed to encode zero-bitplane tag-tree: %w", err)
-				}
-
-				cb.Included = true
-			} else {
-				if included {
-					bitBuf.writeBit(1)
-				} else {
-					bitBuf.writeBit(0)
-					cbIncls = append(cbIncls, cbIncl)
-					continue
-				}
+			proceed, err := pe.writeInclusionAndZBP(bitBuf, precinct, cb, layer, included)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !proceed {
+				cbIncls = append(cbIncls, cbIncl)
+				continue
 			}
 
 			cbIncl.NumPasses = newPasses
@@ -373,53 +238,15 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 				return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
 			}
 
-			var layerData []byte
-			if cb.LayerData != nil && layer < len(cb.LayerData) {
-				layerData = cb.LayerData[layer]
-			} else {
-				layerData = cb.Data
-			}
 			dataLen := len(layerData)
 			cbIncl.Data = layerData
 
-			if cb.LayerData != nil && layer < len(cb.LayerPasses) {
-				totalPasses := cb.LayerPasses[layer]
-				prevPasses := 0
-				if layer > 0 {
-					prevPasses = cb.LayerPasses[layer-1]
-				}
-				if totalPasses <= len(cb.PassLengths) {
-					layerPassLengths := make([]int, totalPasses-prevPasses)
-					baseOffset := 0
-					if prevPasses > 0 && prevPasses <= len(cb.PassLengths) {
-						baseOffset = cb.PassLengths[prevPasses-1]
-					}
-					for i := prevPasses; i < totalPasses && i < len(cb.PassLengths); i++ {
-						layerPassLengths[i-prevPasses] = cb.PassLengths[i] - baseOffset
-					}
-					cbIncl.PassLengths = layerPassLengths
-				}
-			} else {
-				cbIncl.PassLengths = cb.PassLengths
-			}
+			cbIncl.PassLengths = pe.layerPassLengths(cb, layer)
 			cbIncl.UseTERMALL = cb.UseTERMALL
 
 			cbIncl.DataLength = dataLen
 
-			prevPasses := 0
-			totalPasses := newPasses
-			if cb.LayerPasses != nil && layer < len(cb.LayerPasses) {
-				totalPasses = cb.LayerPasses[layer]
-				if layer > 0 {
-					prevPasses = cb.LayerPasses[layer-1]
-				}
-			} else if cb.NumPassesTotal > 0 {
-				prevPasses = cb.NumPassesTotal - newPasses
-				if prevPasses < 0 {
-					prevPasses = 0
-				}
-				totalPasses = prevPasses + newPasses
-			}
+			prevPasses, totalPasses := pe.computePrevAndTotalPasses(cb, layer, newPasses)
 
 			termAll := cb.UseTERMALL
 			passLens := buildPassLengths(cb.PassLengths, cb.Passes)
@@ -434,6 +261,53 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 	}
 
 	return bitBuf.flush(), cbIncls, nil
+}
+
+// layerPassLengths computes per-layer pass lengths slice.
+// params: cb - code-block; layer - current layer
+// returns: per-pass lengths for the layer
+func (pe *PacketEncoder) layerPassLengths(cb *PrecinctCodeBlock, layer int) []int {
+	if cb.LayerData != nil && layer < len(cb.LayerPasses) {
+		totalPasses := cb.LayerPasses[layer]
+		prevPasses := 0
+		if layer > 0 {
+			prevPasses = cb.LayerPasses[layer-1]
+		}
+		if totalPasses <= len(cb.PassLengths) {
+			layerPassLengths := make([]int, totalPasses-prevPasses)
+			baseOffset := 0
+			if prevPasses > 0 && prevPasses <= len(cb.PassLengths) {
+				baseOffset = cb.PassLengths[prevPasses-1]
+			}
+			for i := prevPasses; i < totalPasses && i < len(cb.PassLengths); i++ {
+				layerPassLengths[i-prevPasses] = cb.PassLengths[i] - baseOffset
+			}
+			return layerPassLengths
+		}
+		return nil
+	}
+	return cb.PassLengths
+}
+
+// computePrevAndTotalPasses calculates previous and total pass counts for lengths coding.
+// params: cb - code-block; layer - current layer; newPasses - passes in this layer
+// returns: prevPasses and totalPasses
+func (pe *PacketEncoder) computePrevAndTotalPasses(cb *PrecinctCodeBlock, layer, newPasses int) (int, int) {
+	prevPasses := 0
+	totalPasses := newPasses
+	if cb.LayerPasses != nil && layer < len(cb.LayerPasses) {
+		totalPasses = cb.LayerPasses[layer]
+		if layer > 0 {
+			prevPasses = cb.LayerPasses[layer-1]
+		}
+	} else if cb.NumPassesTotal > 0 {
+		prevPasses = cb.NumPassesTotal - newPasses
+		if prevPasses < 0 {
+			prevPasses = 0
+		}
+		totalPasses = prevPasses + newPasses
+	}
+	return prevPasses, totalPasses
 }
 
 // encodeNumPasses encodes the number of coding passes using JPEG2000 standard encoding

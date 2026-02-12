@@ -1,3 +1,4 @@
+// Package htj2k contains tests that analyze VLC bit operations for HTJ2K.
 package htj2k
 
 import (
@@ -183,8 +184,8 @@ func TestVLCDecoderBitReading(t *testing.T) {
 		if packed != 0 {
 			rho := (packed >> 4) & 0xF
 			uOff := (packed >> 3) & 0x1
-			cwd_len := packed & 0x7
-			t.Logf("  Decoded: rho=%d, uOff=%d, cwd_len=%d", rho, uOff, cwd_len)
+			cwdLen := packed & 0x7
+			t.Logf("  Decoded: rho=%d, uOff=%d, cwd_len=%d", rho, uOff, cwdLen)
 		}
 	}
 }

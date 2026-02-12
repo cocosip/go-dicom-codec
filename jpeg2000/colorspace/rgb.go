@@ -94,6 +94,9 @@ func DeinterleaveComponents(data []int32, numComponents int) [][]int32 {
 	return components
 }
 
+// ConvertComponentsRGBToYCbCr converts separate R,G,B slices to Y,Cb,Cr using ICT.
+// params: r,g,b - input component slices
+// returns: y,cb,cr slices
 func ConvertComponentsRGBToYCbCr(r, g, b []int32) (y, cb, cr []int32) {
     n := len(r)
     y = make([]int32, n)
@@ -105,6 +108,9 @@ func ConvertComponentsRGBToYCbCr(r, g, b []int32) (y, cb, cr []int32) {
     return
 }
 
+// ConvertComponentsYCbCrToRGB converts Y,Cb,Cr slices back to R,G,B using ICT inverse.
+// params: y,cb,cr - transformed component slices
+// returns: r,g,b slices
 func ConvertComponentsYCbCrToRGB(y, cb, cr []int32) (r, g, b []int32) {
     n := len(y)
     r = make([]int32, n)

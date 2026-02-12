@@ -1,3 +1,4 @@
+// Package htj2k provides tests for context computation and VLC decoding.
 package htj2k
 
 import (
@@ -143,10 +144,10 @@ func TestVLCDecoderWithContext(t *testing.T) {
 		contexts := []uint8{0, 1, 2, 3, 4}
 
 		for _, ctx := range contexts {
-			rho, u_off, e_k, e_1, found := decoder.DecodeQuadWithContext(ctx, true)
+			rho, uOff, eK, e1, found := decoder.DecodeQuadWithContext(ctx, true)
 			if found {
 				t.Logf("Context %d: rho=0x%X, u_off=%d, e_k=%d, e_1=%d",
-					ctx, rho, u_off, e_k, e_1)
+					ctx, rho, uOff, eK, e1)
 			}
 
 			// Reset decoder for next test
@@ -159,21 +160,21 @@ func TestVLCDecoderWithContext(t *testing.T) {
 		decoder := NewVLCDecoder(testData)
 
 		// Decode as first row
-		rho1, u_off1, e_k1, e_11, found1 := decoder.DecodeQuadWithContext(1, true)
+		rho1, uOff1, eK1, e11, found1 := decoder.DecodeQuadWithContext(1, true)
 		if !found1 {
 			t.Fatal("First row decoding failed")
 		}
 		t.Logf("First row:     rho=0x%X, u_off=%d, e_k=%d, e_1=%d",
-			rho1, u_off1, e_k1, e_11)
+			rho1, uOff1, eK1, e11)
 
 		// Reset and decode as non-first row
 		decoder = NewVLCDecoder(testData)
-		rho2, u_off2, e_k2, e_12, found2 := decoder.DecodeQuadWithContext(1, false)
+		rho2, uOff2, eK2, e12, found2 := decoder.DecodeQuadWithContext(1, false)
 		if !found2 {
 			t.Fatal("Non-first row decoding failed")
 		}
 		t.Logf("Non-first row: rho=0x%X, u_off=%d, e_k=%d, e_1=%d",
-			rho2, u_off2, e_k2, e_12)
+			rho2, uOff2, eK2, e12)
 
 		// The decoded values may differ due to different table selection
 	})

@@ -3,9 +3,9 @@ package htj2k
 // MEL (Adaptive Run-Length Coding) - Based on ISO/IEC 15444-15:2019
 // Reference: Clause 7.3.3 - MEL symbol decoding procedure
 
-// MEL_E is the exponent table for MEL decoding
+// MelE is the exponent table for MEL decoding
 // Table 2 from ISO/IEC 15444-15:2019
-var MEL_E = [13]int{
+var MelE = [13]int{
 	0, // k=0
 	0, // k=1
 	0, // k=2
@@ -34,9 +34,9 @@ type MELDecoderSpec struct {
 	lastByte  byte
 
 	// State machine variables (from spec)
-	MEL_k   int // Current state (0-12)
-	MEL_run int // Run length
-	MEL_one int // One flag
+	MELK   int // Current state (0-12)
+	MELRun int // Run length
+	MELOne int // One flag
 }
 
 // NewMELDecoderSpec creates a new spec-compliant MEL decoder
@@ -55,9 +55,9 @@ func NewMELDecoderSpec(data []byte) *MELDecoderSpec {
 // initMELDecoder initializes the MEL decoder state
 // Procedure: initMELDecoder from ISO/IEC 15444-15:2019
 func (m *MELDecoderSpec) initMELDecoder() {
-	m.MEL_k = 0
-	m.MEL_run = 0
-	m.MEL_one = 0
+	m.MELK = 0
+	m.MELRun = 0
+	m.MELOne = 0
 }
 
 // DecodeMELSym decodes the next MEL symbol
@@ -66,8 +66,8 @@ func (m *MELDecoderSpec) initMELDecoder() {
 // Procedure: decodeMELSym from ISO/IEC 15444-15:2019 Clause 7.3.3
 func (m *MELDecoderSpec) DecodeMELSym() (int, bool) {
 	// if (MEL_run == 0) and (MEL_one == 0)
-	if m.MEL_run == 0 && m.MEL_one == 0 {
-		eval := MEL_E[m.MEL_k]
+	if m.MELRun == 0 && m.MELOne == 0 {
+		eval := MelE[m.MELK]
 		bit, ok := m.importMELBit()
 		if !ok {
 			return 0, false
@@ -75,12 +75,12 @@ func (m *MELDecoderSpec) DecodeMELSym() (int, bool) {
 
 		if bit == 1 {
 			// MEL_run = 1 << eval
-			m.MEL_run = 1 << eval
+			m.MELRun = 1 << eval
 			// MEL_k = min(12, MEL_k + 1)
-			m.MEL_k = min(12, m.MEL_k+1)
+			m.MELK = intMin(12, m.MELK+1)
 		} else {
 			// MEL_run = 0
-			m.MEL_run = 0
+			m.MELRun = 0
 			// while (eval > 0)
 			for eval > 0 {
 				bit, ok = m.importMELBit()
@@ -88,24 +88,23 @@ func (m *MELDecoderSpec) DecodeMELSym() (int, bool) {
 					return 0, false
 				}
 				// MEL_run = 2 * MEL_run + bit
-				m.MEL_run = 2*m.MEL_run + bit
+				m.MELRun = 2*m.MELRun + bit
 				eval--
 			}
 			// MEL_k = max(0, MEL_k - 1)
-			m.MEL_k = max(0, m.MEL_k-1)
+			m.MELK = intMax(0, m.MELK-1)
 			// MEL_one = 1
-			m.MEL_one = 1
+			m.MELOne = 1
 		}
 	}
 
 	// if (MEL_run > 0)
-	if m.MEL_run > 0 {
-		m.MEL_run--
+	if m.MELRun > 0 {
+		m.MELRun--
 		return 0, true // Continue run
-	} else {
-		m.MEL_one = 0
-		return 1, true // End run
 	}
+	m.MELOne = 0
+	return 1, true // End run
 }
 
 // importMELBit reads a single bit from the MEL bit-stream
@@ -136,14 +135,14 @@ func (m *MELDecoderSpec) importMELBit() (int, bool) {
 }
 
 // Helper functions
-func min(a, b int) int {
+func intMin(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
 
-func max(a, b int) int {
+func intMax(a, b int) int {
 	if a > b {
 		return a
 	}

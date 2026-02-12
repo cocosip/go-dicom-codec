@@ -1,6 +1,8 @@
 package htj2k
 
-// UVLC decoding tables generated from OpenJPH
+// UVLCDecodeEntry describes a packed decode entry used by HTJ2K UVLC tables.
+// The packed layout encodes total prefix/suffix lengths and per-quad prefixes/suffixes.
+// Generated based on OpenJPH references.
 // (ojph_block_common.cpp::uvlc_init_tables).
 // These tables help decode U-VLC prefix/suffix lengths and initial-row biases.
 // UVLCDecodeEntry packs per-quad prefix/suffix lengths and prefixes as:
@@ -10,19 +12,26 @@ package htj2k
 //	[7:9]  suffix length for quad0
 //	[10:12] prefix value for quad0
 //	[13:15] prefix value for quad1
+// UVLCDecodeEntry is a packed 16-bit value representing decode metadata.
 type UVLCDecodeEntry uint16
 
+// TotalPrefixLen returns the total prefix length (lp0+lp1).
 func (e UVLCDecodeEntry) TotalPrefixLen() int { return int(e & 0x7) }
+// TotalSuffixLen returns the total suffix length (ls0+ls1).
 func (e UVLCDecodeEntry) TotalSuffixLen() int { return int((e >> 3) & 0xF) }
-func (e UVLCDecodeEntry) U0SuffixLen() int    { return int((e >> 7) & 0x7) }
-func (e UVLCDecodeEntry) U0Prefix() int       { return int((e >> 10) & 0x7) }
-func (e UVLCDecodeEntry) U1Prefix() int       { return int((e >> 13) & 0x7) }
+// U0SuffixLen returns the suffix length for quad0.
+func (e UVLCDecodeEntry) U0SuffixLen() int { return int((e >> 7) & 0x7) }
+// U0Prefix returns the prefix value for quad0.
+func (e UVLCDecodeEntry) U0Prefix() int { return int((e >> 10) & 0x7) }
+// U1Prefix returns the prefix value for quad1.
+func (e UVLCDecodeEntry) U1Prefix() int { return int((e >> 13) & 0x7) }
 
-var (
-	UVLCTbl0 [256 + 64]UVLCDecodeEntry // Initial row pairs (includes MEL event).
-	UVLCTbl1 [256]UVLCDecodeEntry      // Non-initial rows.
-	UVLCBias [256 + 64]uint8           // Bias for initial row pairs (u_bias).
-)
+// UVLCTbl0 holds decode entries for initial row pairs (includes MEL event).
+var UVLCTbl0 [256 + 64]UVLCDecodeEntry
+// UVLCTbl1 holds decode entries for non-initial rows.
+var UVLCTbl1 [256]UVLCDecodeEntry
+// UVLCBias stores bias for initial row pairs (u_bias).
+var UVLCBias [256 + 64]uint8
 
 func init() {
 	generateUVLCTables()

@@ -490,10 +490,10 @@ func TestGetPassesForLayer(t *testing.T) {
 				tt.cbIndex, tt.layer, total, tt.expectedTotal)
 		}
 
-		new := alloc.GetNewPassesForLayer(tt.cbIndex, tt.layer)
-		if new != tt.expectedNew {
+		newPasses := alloc.GetNewPassesForLayer(tt.cbIndex, tt.layer)
+		if newPasses != tt.expectedNew {
 			t.Errorf("GetNewPassesForLayer(%d, %d) = %d, want %d",
-				tt.cbIndex, tt.layer, new, tt.expectedNew)
+				tt.cbIndex, tt.layer, newPasses, tt.expectedNew)
 		}
 	}
 }

@@ -222,7 +222,9 @@ func TestEncodeErrorHandling(t *testing.T) {
 	}
 
 	srcWithData := codecHelpers.NewTestPixelData(frameInfo)
-	srcWithData.AddFrame([]byte{1})
+	if err := srcWithData.AddFrame([]byte{1}); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	frameInfoSmall := &imagetypes.FrameInfo{
 		Width:           8,

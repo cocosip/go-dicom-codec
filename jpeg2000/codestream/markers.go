@@ -1,3 +1,4 @@
+// Package codestream defines JPEG 2000 codestream markers and helpers.
 package codestream
 
 // JPEG 2000 Marker Codes

@@ -1,3 +1,4 @@
+// Package baseline contains tests for JPEG Baseline codec.
 package baseline
 
 import (

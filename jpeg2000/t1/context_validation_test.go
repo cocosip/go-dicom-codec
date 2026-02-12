@@ -192,11 +192,11 @@ func parseOpenJPEGLUT(t *testing.T, name string, expectedLen int) []int {
 	if open == -1 {
 		t.Fatalf("OpenJPEG %s opening brace not found", name)
 	}
-	close := strings.Index(section, "};")
-	if close == -1 {
+	endIdx := strings.Index(section, "};")
+	if endIdx == -1 {
 		t.Fatalf("OpenJPEG %s closing brace not found", name)
 	}
-	section = section[open+1 : close]
+	section = section[open+1 : endIdx]
 
 	re := regexp.MustCompile(`0x[0-9a-fA-F]+|\d+`)
 	matches := re.FindAllString(section, -1)

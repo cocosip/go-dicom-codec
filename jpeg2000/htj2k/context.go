@@ -4,6 +4,8 @@ package htj2k
 // The context follows OpenJPH's implementation of ITU-T T.814 equations.
 // Reference: ojph_block_decoder32.cpp lines 870-1070
 
+// ContextComputer computes decoding contexts for HTJ2K VLC operations.
+// It tracks quad significance (rho) and auxiliary sigma buffer for neighbor rules.
 type ContextComputer struct {
 	width  int
 	height int

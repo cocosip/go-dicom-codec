@@ -13,19 +13,19 @@ import (
 // In HTJ2K, the VLC segment is written from back to front and then reversed
 // This matches OpenJPH's rev_struct behavior for encoding
 type VLCReverseWriter struct {
-	buf       []byte // Buffer written forwards, to be reversed
-	pos       int    // Current position
-	tmp       uint8  // Bit accumulator
-	bits      int    // Number of bits in accumulator
-	lastByte  uint8  // Last byte written (for unstuffing check)
-	isVLC     bool   // True for VLC segment, affects unstuffing rules
+	buf      []byte // Buffer written forwards, to be reversed
+	pos      int    // Current position
+	tmp      uint8  // Bit accumulator
+	bits     int    // Number of bits in accumulator
+	lastByte uint8  // Last byte written (for unstuffing check)
+	isVLC    bool   // True for VLC segment, affects unstuffing rules
 }
 
 // NewVLCReverseWriter creates a new reverse VLC writer
 func NewVLCReverseWriter() *VLCReverseWriter {
 	return &VLCReverseWriter{
 		buf:   make([]byte, 0, 4096),
-		bits:  4, // Start with 4 bits (0xF padding)
+		bits:  4,   // Start with 4 bits (0xF padding)
 		tmp:   0xF, // Initialize with 0xF
 		isVLC: true,
 	}
@@ -116,13 +116,14 @@ func (w *VLCReverseWriter) GetLength() int {
 // This is the main entry point for quad encoding
 //
 // Parameters:
-//   qx, qy: Quad coordinates
-//   rho: Significance pattern (4 bits)
-//   ek, e1: EMB patterns
-//   uOff: U-offset flag (1 if u != 0)
-//   context: VLC context (0-7)
-//   isFirstRow: True for initial row (y=0)
-//   encoder: VLCEncoder to use
+//
+//	qx, qy: Quad coordinates
+//	rho: Significance pattern (4 bits)
+//	ek, e1: EMB patterns
+//	uOff: U-offset flag (1 if u != 0)
+//	context: VLC context (0-7)
+//	isFirstRow: True for initial row (y=0)
+//	encoder: VLCEncoder to use
 //
 // Returns: Number of bits written, or error
 func EncodeQuadVLC(qx, qy int, rho, ek, e1, uOff, context uint8,
@@ -139,8 +140,9 @@ func EncodeQuadVLC(qx, qy int, rho, ek, e1, uOff, context uint8,
 // in the quad have exponent bits (ek) and mantissa MSB bits (e1)
 //
 // Parameters:
-//   samples: 4 sample values in quad [TL, TR, BL, BR]
-//   rho: Significance pattern (determines which samples to check)
+//
+//	samples: 4 sample values in quad [TL, TR, BL, BR]
+//	rho: Significance pattern (determines which samples to check)
 //
 // Returns: ek (4 bits), e1 (4 bits)
 func ComputeQuadEMB(samples [4]int32, rho uint8) (ek, e1 uint8) {
@@ -228,16 +230,17 @@ func ExtractQuadSamples(data []int32, width, qx, qy int) [4]int32 {
 // This is the basic unit of HTJ2K encoding
 //
 // Parameters:
-//   qx: X-coordinate of first quad (must be even)
-//   qy: Y-coordinate
-//   data: Coefficient array
-//   width: Block width
-//   context: Context computer
-//   vlcEnc: VLC encoder
-//   melEnc: MEL encoder
-//   msEnc: MagSgn encoder
-//   expPred: Exponent predictor (optional, can be nil)
-//   uvlcEnc: UVLC encoder (optional, can be nil)
+//
+//	qx: X-coordinate of first quad (must be even)
+//	qy: Y-coordinate
+//	data: Coefficient array
+//	width: Block width
+//	context: Context computer
+//	vlcEnc: VLC encoder
+//	melEnc: MEL encoder
+//	msEnc: MagSgn encoder
+//	expPred: Exponent predictor (optional, can be nil)
+//	uvlcEnc: UVLC encoder (optional, can be nil)
 //
 // Returns: error if any
 func EncodeQuadPair(qx, qy int, data []int32, width int,
@@ -488,32 +491,4 @@ func EncodeQuadPair(qx, qy int, data []int32, width int,
 	}
 
 	return nil
-}
-
-// countLeadingZeros counts leading zero bits in a uint32
-func countLeadingZeros(x uint32) int {
-	if x == 0 {
-		return 32
-	}
-	n := 0
-	if x <= 0x0000FFFF {
-		n += 16
-		x <<= 16
-	}
-	if x <= 0x00FFFFFF {
-		n += 8
-		x <<= 8
-	}
-	if x <= 0x0FFFFFFF {
-		n += 4
-		x <<= 4
-	}
-	if x <= 0x3FFFFFFF {
-		n += 2
-		x <<= 2
-	}
-	if x <= 0x7FFFFFFF {
-		n += 1
-	}
-	return n
 }

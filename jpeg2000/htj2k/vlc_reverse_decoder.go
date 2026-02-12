@@ -15,13 +15,6 @@ type reverseBitReader struct {
 	initDone bool
 }
 
-func newReverseBitReader(data []byte) *reverseBitReader {
-	return &reverseBitReader{
-		data: data,
-		pos:  len(data) - 1,
-	}
-}
-
 func (r *reverseBitReader) init() bool {
 	if r.initDone {
 		return true

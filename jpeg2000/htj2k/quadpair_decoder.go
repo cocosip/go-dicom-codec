@@ -113,15 +113,15 @@ func (d *QuadPairDecoder) DecodeQuadPair(g int, qy int) (*QuadPairResult, error)
 
 	// Step 1: Decode first quad's CxtVLC codeword
 	ctx1 := d.context.ComputeContext(qx1, qy, result.IsInitialLinePair)
-	rho1, u_off1, e_k1, e_1_1, err := d.decodeQuadWithContext(ctx1, result.IsInitialLinePair)
+	rho1, uOff1, eK1, e1_1, err := d.decodeQuadWithContext(ctx1, result.IsInitialLinePair)
 	if err != nil {
 		return nil, err
 	}
 
 	result.Rho1 = rho1
-	result.ULF1 = u_off1
-	result.E1_1 = e_1_1
-	result.EMax1 = e_k1
+	result.ULF1 = uOff1
+	result.E1_1 = e1_1
+	result.EMax1 = eK1
 
 	// Update significance map for first quad
 	d.context.UpdateQuadSignificance(qx1, qy, rho1)
@@ -138,15 +138,15 @@ func (d *QuadPairDecoder) DecodeQuadPair(g int, qy int) (*QuadPairResult, error)
 
 	// Step 3: Decode second quad's CxtVLC codeword
 	ctx2 := d.context.ComputeContext(qx2, qy, result.IsInitialLinePair)
-	rho2, u_off2, e_k2, e_1_2, err := d.decodeQuadWithContext(ctx2, result.IsInitialLinePair)
+	rho2, uOff2, eK2, e1_2, err := d.decodeQuadWithContext(ctx2, result.IsInitialLinePair)
 	if err != nil {
 		return nil, err
 	}
 
 	result.Rho2 = rho2
-	result.ULF2 = u_off2
-	result.E1_2 = e_1_2
-	result.EMax2 = e_k2
+	result.ULF2 = uOff2
+	result.E1_2 = e1_2
+	result.EMax2 = eK2
 
 	// Update significance map for second quad
 	d.context.UpdateQuadSignificance(qx2, qy, rho2)
