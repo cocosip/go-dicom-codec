@@ -174,17 +174,11 @@ func (t1 *T1Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, 
 
 		switch passType {
 		case 0:
-			if err := t1.encodeSigPropPass(raw); err != nil {
-				return nil, fmt.Errorf("significance propagation pass failed: %w", err)
-			}
+			t1.encodeSigPropPass(raw)
 		case 1:
-			if err := t1.encodeMagRefPass(raw); err != nil {
-				return nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
-			}
+			t1.encodeMagRefPass(raw)
 		case 2:
-			if err := t1.encodeCleanupPass(); err != nil {
-				return nil, fmt.Errorf("cleanup pass failed: %w", err)
-			}
+			t1.encodeCleanupPass()
 			if t1.segmentation {
 				t1.mqe.SegmarkEnc()
 			}
@@ -263,7 +257,7 @@ func (t1 *T1Encoder) findMaxBitplane() int {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Encoder) encodeSigPropPass(raw bool) error {
+func (t1 *T1Encoder) encodeSigPropPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -331,12 +325,11 @@ func (t1 *T1Encoder) encodeSigPropPass(raw bool) error {
 		}
 	}
 
-	return nil
 }
 
 // encodeMagRefPass encodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Encoder) encodeMagRefPass(raw bool) error {
+func (t1 *T1Encoder) encodeMagRefPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -373,14 +366,13 @@ func (t1 *T1Encoder) encodeMagRefPass(raw bool) error {
 		}
 	}
 
-	return nil
 }
 
 // encodeCleanupPass encodes the Cleanup Pass
 // This pass encodes all remaining coefficients not encoded in previous passes
 // IMPORTANT: Process in VERTICAL order (column-first) with 4-row groups for RL encoding
 // This matches OpenJPEG's opj_t1_enc_clnpass() implementation
-func (t1 *T1Encoder) encodeCleanupPass() error {
+func (t1 *T1Encoder) encodeCleanupPass() {
 	paddedWidth := t1.width + 2
 
 	// Process in groups of 4 rows (vertical RL encoding)
@@ -541,7 +533,6 @@ func (t1 *T1Encoder) encodeCleanupPass() error {
 		}
 	}
 
-	return nil
 }
 
 // updateNeighborFlags updates the neighbor significance flags

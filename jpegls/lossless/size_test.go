@@ -48,7 +48,7 @@ func TestDifferentSizes(t *testing.T) {
 		diffs := 0
 		firstDiff := -1
 		for i := 0; i < len(pixelData); i++ {
-			if byte(decoded[i]) != pixelData[i] {
+			if decoded[i] != pixelData[i] {
 				diffs++
 				if firstDiff == -1 {
 					firstDiff = i

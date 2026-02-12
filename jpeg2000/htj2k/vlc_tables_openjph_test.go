@@ -15,21 +15,21 @@ func TestVLCTablesMatchOpenJPH(t *testing.T) {
 	tbl0 := parseOpenJPHTable(t, "table0.h")
 	tbl1 := parseOpenJPHTable(t, "table1.h")
 
-	if len(tbl0) != len(VLC_tbl0) {
-		t.Fatalf("table0 entry count mismatch: openjph=%d go=%d", len(tbl0), len(VLC_tbl0))
+	if len(tbl0) != len(VLCTbl0) {
+		t.Fatalf("table0 entry count mismatch: openjph=%d go=%d", len(tbl0), len(VLCTbl0))
 	}
 	for i := range tbl0 {
-		if tbl0[i] != VLC_tbl0[i] {
-			t.Fatalf("table0[%d] mismatch: openjph=%+v go=%+v", i, tbl0[i], VLC_tbl0[i])
+		if tbl0[i] != VLCTbl0[i] {
+			t.Fatalf("table0[%d] mismatch: openjph=%+v go=%+v", i, tbl0[i], VLCTbl0[i])
 		}
 	}
 
-	if len(tbl1) != len(VLC_tbl1) {
-		t.Fatalf("table1 entry count mismatch: openjph=%d go=%d", len(tbl1), len(VLC_tbl1))
+	if len(tbl1) != len(VLCTbl1) {
+		t.Fatalf("table1 entry count mismatch: openjph=%d go=%d", len(tbl1), len(VLCTbl1))
 	}
 	for i := range tbl1 {
-		if tbl1[i] != VLC_tbl1[i] {
-			t.Fatalf("table1[%d] mismatch: openjph=%+v go=%+v", i, tbl1[i], VLC_tbl1[i])
+		if tbl1[i] != VLCTbl1[i] {
+			t.Fatalf("table1[%d] mismatch: openjph=%+v go=%+v", i, tbl1[i], VLCTbl1[i])
 		}
 	}
 }
@@ -42,7 +42,7 @@ func parseOpenJPHTable(t *testing.T, filename string) []VLCEntry {
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	pattern := regexp.MustCompile(`0x[0-9A-Fa-f]+|\d+`)
 	entries := make([]VLCEntry, 0, 512)

@@ -71,18 +71,12 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components, bitDe
 				return nil, 0, 0, 0, 0, err
 			}
 			// Convert to output format
-			pixelData, err = decoder.convertToPixels()
-			if err != nil {
-				return nil, 0, 0, 0, 0, err
-			}
+			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), decoder.precision, nil
 
 		case common.MarkerEOI:
 			// Should not reach here normally
-			pixelData, err = decoder.convertToPixels()
-			if err != nil {
-				return nil, 0, 0, 0, 0, err
-			}
+			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), decoder.precision, nil
 
 		default:
@@ -359,7 +353,7 @@ func (d *Decoder) decodeScan(reader *common.Reader) error {
 }
 
 // convertToPixels converts component data to byte array
-func (d *Decoder) convertToPixels() ([]byte, error) {
+func (d *Decoder) convertToPixels() []byte {
 	numComponents := len(d.components)
 	bytesPerSample := (d.precision + 7) / 8
 	pixelData := make([]byte, d.width*d.height*numComponents*bytesPerSample)
@@ -390,5 +384,5 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 		}
 	}
 
-	return pixelData, nil
+	return pixelData
 }

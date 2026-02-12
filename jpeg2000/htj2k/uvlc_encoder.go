@@ -123,13 +123,13 @@ func EncodeUVLCInitialPair(u uint32) UVLCCodeword {
 	return EncodeUVLC(u - 2)
 }
 
-// EncodePrefixBits converts u_pfx value to prefix bit pattern
+// EncodePrefixBits converts uPfx value to prefix bit pattern
 //
 // Prefix patterns (reading order):
-//   - u_pfx=1: "1"    (1 bit) - first bit is 1
-//   - u_pfx=2: "01"   (2 bits) - first bit is 0, second bit is 1
-//   - u_pfx=3: "001"  (3 bits) - first bit is 0, second bit is 0, third bit is 1
-//   - u_pfx=5: "000"  (3 bits) - first bit is 0, second bit is 0, third bit is 0
+//   - uPfx=1: "1"    (1 bit) - first bit is 1
+//   - uPfx=2: "01"   (2 bits) - first bit is 0, second bit is 1
+//   - uPfx=3: "001"  (3 bits) - first bit is 0, second bit is 0, third bit is 1
+//   - uPfx=5: "000"  (3 bits) - first bit is 0, second bit is 0, third bit is 0
 //
 // Returns bits in LSB-first encoding order for emitVLCBits.
 // For LSB-first, bit0 is written first, bit1 second, etc.
@@ -138,8 +138,8 @@ func EncodeUVLCInitialPair(u uint32) UVLCCodeword {
 //   - bit1 (written second, read second) = 0
 //   - bit2 (written third, read third) = 1
 //   - Value = (1 << 2) = 0x4
-func EncodePrefixBits(u_pfx uint8) (bits uint32, length int) {
-	switch u_pfx {
+func EncodePrefixBits(uPfx uint8) (bits uint32, length int) {
+	switch uPfx {
 	case 1:
 		return 0b1, 1 // "1": bit0=1 → value 0x1
 	case 2:

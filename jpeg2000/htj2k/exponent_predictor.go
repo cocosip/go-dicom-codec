@@ -78,12 +78,12 @@ func (e *ExponentPredictorComputer) ComputePredictor(qx, qy int) int {
 		return 1
 	}
 
-	E_top := 0
+	eTop := 0
 	if qy > 0 {
-		E_top = e.exponents[qy-1][qx]
+		eTop = e.exponents[qy-1][qx]
 	}
 
-	Kq := E_top - 1
+	Kq := eTop - 1
 	if Kq < 1 {
 		Kq = 1
 	}

@@ -92,10 +92,10 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Get encoding parameters
-	var htj2kParams *HTJ2KParameters
+	var htj2kParams *Parameters
 	if parameters != nil {
 		// Try to use typed parameters if provided
-		if hp, ok := parameters.(*HTJ2KParameters); ok {
+		if hp, ok := parameters.(*Parameters); ok {
 			htj2kParams = hp
 		} else {
 			// Fallback: create from generic parameters
@@ -212,10 +212,10 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 	}
 
 	// Get decoding parameters
-	var htj2kParams *HTJ2KParameters
+	var htj2kParams *Parameters
 	if parameters != nil {
 		// Try to use typed parameters if provided
-		if hp, ok := parameters.(*HTJ2KParameters); ok {
+		if hp, ok := parameters.(*Parameters); ok {
 			htj2kParams = hp
 		} else {
 			// Fallback: create from generic parameters
@@ -259,7 +259,7 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 
 		// Set HTJ2K block decoder factory
 		// The decoder will use this factory to create HTJ2K block decoders instead of EBCOT T1 decoders
-		decoder.SetBlockDecoderFactory(func(width, height int, cblkstyle int) t2.BlockDecoder {
+		decoder.SetBlockDecoderFactory(func(width, height int, _ int) t2.BlockDecoder {
 			return NewHTDecoder(width, height)
 		})
 

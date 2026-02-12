@@ -1,3 +1,4 @@
+// Package t1 contains Tier-1 (EBCOT) context modeling and state tables.
 package t1
 
 // EBCOT Tier-1 Context Modeling

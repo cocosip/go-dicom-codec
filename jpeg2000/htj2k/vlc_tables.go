@@ -16,8 +16,8 @@ type VLCEntry struct {
 	CwdLen uint8  // Codeword length
 }
 
-// VLC_tbl0 for initial quad rows
-var VLC_tbl0 = []VLCEntry{
+// VLCTbl0 for initial quad rows
+var VLCTbl0 = []VLCEntry{
 	{0, 0x1, 0x0, 0x0, 0x0, 0x06, 4},
 	{0, 0x1, 0x1, 0x1, 0x1, 0x3F, 7},
 	{0, 0x2, 0x0, 0x0, 0x0, 0x00, 3},
@@ -464,8 +464,8 @@ var VLC_tbl0 = []VLCEntry{
 	{7, 0xF, 0x1, 0xF, 0x4, 0x08, 4},
 }
 
-// VLC_tbl1 for non-initial quad rows
-var VLC_tbl1 = []VLCEntry{
+// VLCTbl1 for non-initial quad rows
+var VLCTbl1 = []VLCEntry{
 	{0, 0x1, 0x0, 0x0, 0x0, 0x00, 3},
 	{0, 0x1, 0x1, 0x1, 0x1, 0x27, 6},
 	{0, 0x2, 0x0, 0x0, 0x0, 0x06, 3},
@@ -835,12 +835,16 @@ var VLC_tbl1 = []VLCEntry{
 //   bits 12-15: e_k (4 bits) - EMB e_k pattern
 type VLCLookupEntry uint16
 
-// Extract fields from packed VLC lookup entry
+// CwdLen returns VLC codeword length (bits 0-2).
 func (e VLCLookupEntry) CwdLen() uint8 { return uint8(e & 0x07) }
-func (e VLCLookupEntry) UOff() uint8   { return uint8((e >> 3) & 0x01) }
-func (e VLCLookupEntry) Rho() uint8    { return uint8((e >> 4) & 0x0F) }
-func (e VLCLookupEntry) E1() uint8     { return uint8((e >> 8) & 0x0F) }
-func (e VLCLookupEntry) EK() uint8     { return uint8((e >> 12) & 0x0F) }
+// UOff returns U-VLC offset flag (bit 3).
+func (e VLCLookupEntry) UOff() uint8 { return uint8((e >> 3) & 0x01) }
+// Rho returns significance pattern (bits 4-7).
+func (e VLCLookupEntry) Rho() uint8 { return uint8((e >> 4) & 0x0F) }
+// E1 returns EMB e_1 pattern (bits 8-11).
+func (e VLCLookupEntry) E1() uint8 { return uint8((e >> 8) & 0x0F) }
+// EK returns EMB e_k pattern (bits 12-15).
+func (e VLCLookupEntry) EK() uint8 { return uint8((e >> 12) & 0x0F) }
 
 // Pack VLC entry into lookup format
 func packVLCEntry(rho, uOff, e1, ek, cwdLen uint8) VLCLookupEntry {
@@ -869,8 +873,8 @@ func InitVLCTables() {
 		cq := uint8(i >> 7)    // Extract 3-bit context
 
 		// Find matching entry in source table
-		for j := range VLC_tbl0 {
-			entry := &VLC_tbl0[j]
+		for j := range VLCTbl0 {
+			entry := &VLCTbl0[j]
 			if entry.CQ == cq {
 				// Check if codeword matches (mask by codeword length)
 				mask := (uint8(1) << entry.CwdLen) - 1
@@ -885,14 +889,14 @@ func InitVLCTables() {
 	}
 
 	// Initialize table 1 (non-initial rows of quads)
-	// Same logic as table 0, but using VLC_tbl1
+	// Same logic as table 0, but using VLCTbl1
 	for i := 0; i < 1024; i++ {
 		cwd := uint8(i & 0x7F) // Extract 7-bit codeword prefix
 		cq := uint8(i >> 7)    // Extract 3-bit context
 
 		// Find matching entry in source table
-		for j := range VLC_tbl1 {
-			entry := &VLC_tbl1[j]
+		for j := range VLCTbl1 {
+			entry := &VLCTbl1[j]
 			if entry.CQ == cq {
 				// Check if codeword matches (mask by codeword length)
 				mask := (uint8(1) << entry.CwdLen) - 1

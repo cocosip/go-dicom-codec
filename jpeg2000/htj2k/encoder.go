@@ -3,7 +3,6 @@ package htj2k
 import (
 	"encoding/binary"
 	"fmt"
-	"math/bits"
 )
 
 // HTEncoder implements the HTJ2K High-Throughput block encoder
@@ -14,7 +13,7 @@ import (
 // 1. MagSgn - Magnitude and sign bits
 // 2. MEL - Adaptive run-length coding for quad significance
 // 3. VLC - Variable-length coding for sample patterns with context and U-VLC
-
+// HTEncoder encodes HTJ2K blocks using MagSgn, MEL, VLC and UVLC segments.
 type HTEncoder struct {
 	// Block dimensions
 	width  int
@@ -65,7 +64,7 @@ func NewHTEncoder(width, height int) *HTEncoder {
 
 // Encode encodes a code-block using HTJ2K HT cleanup pass
 // Reference: ITU-T T.814 | ISO/IEC 15444-15:2019
-func (h *HTEncoder) Encode(data []int32, numPasses int, roishift int) ([]byte, error) {
+func (h *HTEncoder) Encode(data []int32, _ int, roishift int) ([]byte, error) {
 	if len(data) != h.width*h.height {
 		return nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			h.width*h.height, len(data))
@@ -155,44 +154,6 @@ type QuadInfo struct {
 	Eps         uint8    // Exponent mask (4 bits)
 	SigCount    int      // Number of significant samples
 	MelBit      int      // MEL bit (0=all zero, 1=has significant)
-}
-
-// preprocessSample computes magnitude, sign, and exponent for a sample
-// Reference: OpenJPH ojph_block_encoder.cpp lines 600-650
-//
-// Formula (ITU-T T.814):
-//
-//	val_adjusted = val << (p - missing_msbs)  // p = 30 for 32-bit
-//	mag = abs(val_adjusted) >> 1
-//	e_q = 31 - leading_zeros(mag)
-//
-// Returns:
-//
-//	mag: absolute magnitude
-//	sign: 0 for positive, 1 for negative
-//	eQ: exponent (bit position of MSB)
-func (h *HTEncoder) preprocessSample(val int32) (mag uint32, sign int, eQ int) {
-	if val == 0 {
-		return 0, 0, -1
-	}
-
-	if val < 0 {
-		mag = uint32(-val)
-		sign = 1
-	} else {
-		mag = uint32(val)
-		sign = 0
-	}
-
-	// Compute exponent: position of MSB (0-based)
-	// e_q = floor(log2(mag)) for mag > 0
-	if mag > 0 {
-		eQ = bits.Len32(mag) - 1
-	} else {
-		eQ = -1
-	}
-
-	return mag, sign, eQ
 }
 
 // assembleCodel assembles the three segments into final codeblock with MEL/VLC fusion

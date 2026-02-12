@@ -520,7 +520,7 @@ func (bw *bitWriter) flush() {
 
 // encodePacketHeaderLayered encodes a packet header for multi-layer support
 // This version properly handles layer-specific pass allocation
-func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, _ int) ([]byte, []CodeBlockIncl, error) {
+func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int, _ int) ([]byte, []CodeBlockIncl) {
 	header := &bytes.Buffer{}
 	cbIncls := make([]CodeBlockIncl, 0)
 
@@ -660,7 +660,7 @@ func (pe *PacketEncoder) encodePacketHeaderLayered(precinct *Precinct, layer int
 
 	headerBytes := header.Bytes()
 
-	return headerBytes, cbIncls, nil
+	return headerBytes, cbIncls
 }
 
 // GetPackets returns the encoded packets

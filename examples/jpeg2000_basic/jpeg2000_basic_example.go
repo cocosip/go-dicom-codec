@@ -1,3 +1,4 @@
+// Package main demonstrates basic JPEG2000 lossless and lossy compression.
 package main
 
 import (
@@ -48,7 +49,10 @@ func losslessExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Create parameters (default NumLevels=5)
 	params := lossless.NewLosslessParameters().WithNumLevels(5)
@@ -103,7 +107,10 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Try different quality levels
 	qualities := []int{95, 85, 70, 50}
@@ -158,7 +165,10 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Try different target ratios
 	targetRatios := []float64{5.0, 8.0, 10.0}

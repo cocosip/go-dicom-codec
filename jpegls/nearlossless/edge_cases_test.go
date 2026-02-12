@@ -41,7 +41,9 @@ func TestSinglePixelImage(t *testing.T) {
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)
-			src.AddFrame(pixelData)
+			if err := src.AddFrame(pixelData); err != nil {
+				t.Fatalf("AddFrame failed: %v", err)
+			}
 
 			params := codec.NewBaseParameters()
 			params.SetParameter("near", tc.near)
@@ -112,7 +114,9 @@ func TestSingleLineImage(t *testing.T) {
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)
-			src.AddFrame(pixelData)
+			if err := src.AddFrame(pixelData); err != nil {
+				t.Fatalf("AddFrame failed: %v", err)
+			}
 
 			params := codec.NewBaseParameters()
 			params.SetParameter("near", tc.near)
@@ -190,7 +194,9 @@ func TestSingleColumnImage(t *testing.T) {
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)
-			src.AddFrame(pixelData)
+			if err := src.AddFrame(pixelData); err != nil {
+				t.Fatalf("AddFrame failed: %v", err)
+			}
 
 			params := codec.NewBaseParameters()
 			params.SetParameter("near", tc.near)

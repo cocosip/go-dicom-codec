@@ -9,10 +9,10 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
-var _ codec.Codec = (*ExtendedCodec)(nil)
+var _ codec.Codec = (*Codec)(nil)
 
-// ExtendedCodec implements the external codec.Codec interface for JPEG Extended
-type ExtendedCodec struct {
+// Codec implements the external codec.Codec interface for JPEG Extended
+type Codec struct {
 	quality  int
 	bitDepth int // 8 or 12
 }
@@ -20,31 +20,31 @@ type ExtendedCodec struct {
 // NewExtendedCodec creates a new JPEG Extended codec
 // bitDepth: 8 or 12 bits per sample
 // quality: 1-100, where 100 is best quality (default 85)
-func NewExtendedCodec(bitDepth int, quality int) *ExtendedCodec {
+func NewExtendedCodec(bitDepth int, quality int) *Codec {
 	if bitDepth != 8 && bitDepth != 12 {
 		bitDepth = 12 // Default to 12-bit (main feature of Extended)
 	}
 	if quality < 1 || quality > 100 {
 		quality = 85 // Default quality
 	}
-	return &ExtendedCodec{
+	return &Codec{
 		quality:  quality,
 		bitDepth: bitDepth,
 	}
 }
 
 // Name returns the codec name
-func (c *ExtendedCodec) Name() string {
+func (c *Codec) Name() string {
 	return fmt.Sprintf("JPEG Extended (%d-bit, Quality %d)", c.bitDepth, c.quality)
 }
 
 // TransferSyntax returns the transfer syntax this codec handles
-func (c *ExtendedCodec) TransferSyntax() *transfer.Syntax {
+func (c *Codec) TransferSyntax() *transfer.Syntax {
 	return transfer.JPEGProcess2_4
 }
 
 // GetDefaultParameters returns the default codec parameters
-func (c *ExtendedCodec) GetDefaultParameters() codec.Parameters {
+func (c *Codec) GetDefaultParameters() codec.Parameters {
 	params := NewExtendedParameters()
 	params.Quality = c.quality
 	params.BitDepth = c.bitDepth
@@ -52,7 +52,7 @@ func (c *ExtendedCodec) GetDefaultParameters() codec.Parameters {
 }
 
 // Encode encodes pixel data using JPEG Extended
-func (c *ExtendedCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
+func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, parameters codec.Parameters) error {
 	// Get frame info
 	frameInfo := oldPixelData.GetFrameInfo()
 	if frameInfo == nil {
@@ -134,7 +134,7 @@ func (c *ExtendedCodec) Encode(oldPixelData imagetypes.PixelData, newPixelData i
 }
 
 // Decode decodes JPEG Extended data
-func (c *ExtendedCodec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
+func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetypes.PixelData, _ codec.Parameters) error {
 	// Process all frames
 	frameCount := oldPixelData.FrameCount()
 	for frameIndex := 0; frameIndex < frameCount; frameIndex++ {

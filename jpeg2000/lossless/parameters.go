@@ -240,6 +240,7 @@ func (p *JPEG2000LosslessParameters) WithAppendLosslessLayer(enable bool) *JPEG2
 	return p
 }
 
+// WithMCTBindings sets multi-component transform bindings.
 func (p *JPEG2000LosslessParameters) WithMCTBindings(bindings []jpeg2000.MCTBindingParams) *JPEG2000LosslessParameters {
 	p.SetParameter("mctBindings", bindings)
 	return p

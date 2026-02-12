@@ -29,14 +29,11 @@ func floorDiv(a, b int) int {
 	return -(((-a) + b - 1) / b)
 }
 
-func splitLengths(n int, even bool) (low, high int) {
+func splitLengths(n int, even bool) int {
 	if even {
-		low = (n + 1) / 2
-	} else {
-		low = n / 2
+		return (n + 1) / 2
 	}
-	high = n - low
-	return
+	return n / 2
 }
 
 func isEven(value int) bool {
@@ -63,8 +60,8 @@ func resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res int) (resW, 
 	resX0 = x0
 	resY0 = y0
 	for i := 0; i < levelNo; i++ {
-		lowW, _ := splitLengths(resW, isEven(resX0))
-		lowH, _ := splitLengths(resH, isEven(resY0))
+		lowW := splitLengths(resW, isEven(resX0))
+		lowH := splitLengths(resH, isEven(resY0))
 		resW = lowW
 		resH = lowH
 		resX0 = nextCoord(resX0)

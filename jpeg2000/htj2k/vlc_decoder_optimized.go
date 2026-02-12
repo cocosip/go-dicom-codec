@@ -24,7 +24,7 @@ func NewVLCDecoderOptimized(data []byte) *VLCDecoderOptimized {
 
 	// Generate tables if not already generated
 	// In production, tables should be pre-generated at package init
-	if VLCDecodeTbl0[0].CwdLen == 0 && VLC_tbl0[0].CwdLen != 0 {
+	if VLCDecodeTbl0[0].CwdLen == 0 && VLCTbl0[0].CwdLen != 0 {
 		_ = GenerateVLCTables()
 	}
 
@@ -42,7 +42,7 @@ func NewVLCDecoderOptimized(data []byte) *VLCDecoderOptimized {
 func (v *VLCDecoderOptimized) readBits(n int) (uint32, bool) {
 	// Refill bit buffer if needed
 	for v.bitCount < n && v.pos < len(v.data) {
-		b := uint8(v.data[v.pos])
+		b := v.data[v.pos]
 		v.pos++
 
 		// Check for bit-unstuffing condition
@@ -87,7 +87,7 @@ func (v *VLCDecoderOptimized) readBits(n int) (uint32, bool) {
 func (v *VLCDecoderOptimized) DecodeQuadWithContext(context uint8, isFirstRow bool) (rho, uOff, ek, e1 uint8, found bool) {
 	// Progressive decode: read bits one at a time until we find a match
 	// This matches the original decoder's behavior exactly
-	var bits uint32 = 0
+	var bits uint32
 
 	for length := 1; length <= 7; length++ {
 		b, ok := v.readBits(1)

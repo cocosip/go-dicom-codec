@@ -1,5 +1,5 @@
-// Package common provides minimal math helpers for JPEG-LS modules.
-package common
+// Package runmode provides minimal math helpers for JPEG-LS modules.
+package runmode
 
 // Abs returns the absolute value of an integer
 func Abs(x int) int {

@@ -138,17 +138,11 @@ func (t1 *T1Encoder) EncodeLayered(data []int32, numPasses int, roishift int, la
 
 		switch passType {
 		case 0:
-			if err := t1.encodeSigPropPass(raw); err != nil {
-				return nil, nil, fmt.Errorf("significance propagation pass failed: %w", err)
-			}
+			t1.encodeSigPropPass(raw)
 		case 1:
-			if err := t1.encodeMagRefPass(raw); err != nil {
-				return nil, nil, fmt.Errorf("magnitude refinement pass failed: %w", err)
-			}
+			t1.encodeMagRefPass(raw)
 		case 2:
-			if err := t1.encodeCleanupPass(); err != nil {
-				return nil, nil, fmt.Errorf("cleanup pass failed: %w", err)
-			}
+			t1.encodeCleanupPass()
 			if (t1.cblkstyle & CblkStyleSegsym) != 0 {
 				t1.mqe.SegmarkEnc()
 			}

@@ -9,7 +9,7 @@ import (
 )
 
 // TestCodecInterface verifies the codec implements the interface
-func TestCodecInterface(t *testing.T) {
+func TestCodecInterface(_ *testing.T) {
 	var _ codec.Codec = (*Codec)(nil)
 }
 

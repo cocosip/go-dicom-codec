@@ -1,3 +1,4 @@
+// Package main demonstrates basic usage of the codecs.
 package main
 
 import (
@@ -71,9 +72,9 @@ func rgbExample() {
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			offset := (y*width + x) * 3
-			pixelData[offset+0] = byte(x * 4)        // R
-			pixelData[offset+1] = byte(y * 4)        // G
-			pixelData[offset+2] = byte((x + y) * 2)  // B
+			pixelData[offset+0] = byte(x * 4)       // R
+			pixelData[offset+1] = byte(y * 4)       // G
+			pixelData[offset+2] = byte((x + y) * 2) // B
 		}
 	}
 

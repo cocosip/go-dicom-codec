@@ -60,7 +60,9 @@ func TestBasicEncodeDecode(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Test encoding
 	c := NewCodecWithRate()
@@ -175,7 +177,9 @@ func TestLargerImage(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	c := NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -245,7 +249,9 @@ func TestRGBImage(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	c := NewCodecWithRate(80)
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
@@ -317,7 +323,9 @@ func TestRateControlAndLayers(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// 自定义参数：目标压缩比 5:1，多层，量化倍率 1.2，并提供显式子带步长（长度需匹配 3*numLevels+1）。
 	params := NewLossyParameters().

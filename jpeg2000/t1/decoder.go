@@ -156,17 +156,11 @@ func (t1 *T1Decoder) DecodeLayeredWithMode(data []byte, passLengths []int, maxBi
 
 		switch passType {
 		case 0:
-			if err := t1.decodeSigPropPass(raw); err != nil {
-				return fmt.Errorf("significance propagation pass failed: %w", err)
-			}
+			t1.decodeSigPropPass(raw)
 		case 1:
-			if err := t1.decodeMagRefPass(raw); err != nil {
-				return fmt.Errorf("magnitude refinement pass failed: %w", err)
-			}
+			t1.decodeMagRefPass(raw)
 		case 2:
-			if err := t1.decodeCleanupPass(); err != nil {
-				return fmt.Errorf("cleanup pass failed: %w", err)
-			}
+			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
 					t1.mqc.Decode(CTX_UNI)
@@ -235,17 +229,11 @@ func (t1 *T1Decoder) DecodeWithOptions(data []byte, numPasses int, maxBitplane i
 		raw := isLazyRawPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
 		switch passType {
 		case 0:
-			if err := t1.decodeSigPropPass(raw); err != nil {
-				return fmt.Errorf("significance propagation pass failed: %w", err)
-			}
+			t1.decodeSigPropPass(raw)
 		case 1:
-			if err := t1.decodeMagRefPass(raw); err != nil {
-				return fmt.Errorf("magnitude refinement pass failed: %w", err)
-			}
+			t1.decodeMagRefPass(raw)
 		case 2:
-			if err := t1.decodeCleanupPass(); err != nil {
-				return fmt.Errorf("cleanup pass failed: %w", err)
-			}
+			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
 					t1.mqc.Decode(CTX_UNI)
@@ -341,17 +329,11 @@ func (t1 *T1Decoder) Decode(data []byte, numPasses int, roishift int) error {
 		raw := isLazyRawPass(t1.bitplane, startBitplane, passType, t1.cblkstyle)
 		switch passType {
 		case 0:
-			if err := t1.decodeSigPropPass(raw); err != nil {
-				return fmt.Errorf("significance propagation pass failed: %w", err)
-			}
+			t1.decodeSigPropPass(raw)
 		case 1:
-			if err := t1.decodeMagRefPass(raw); err != nil {
-				return fmt.Errorf("magnitude refinement pass failed: %w", err)
-			}
+			t1.decodeMagRefPass(raw)
 		case 2:
-			if err := t1.decodeCleanupPass(); err != nil {
-				return fmt.Errorf("cleanup pass failed: %w", err)
-			}
+			t1.decodeCleanupPass()
 			if t1.segmentation {
 				for i := 0; i < 4; i++ {
 					t1.mqc.Decode(CTX_UNI)
@@ -401,7 +383,7 @@ func (t1 *T1Decoder) GetData() []int32 {
 // This pass encodes coefficients that:
 // - Are not yet significant
 // - Have at least one significant neighbor
-func (t1 *T1Decoder) decodeSigPropPass(raw bool) error {
+func (t1 *T1Decoder) decodeSigPropPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -470,12 +452,11 @@ func (t1 *T1Decoder) decodeSigPropPass(raw bool) error {
 		}
 	}
 
-	return nil
 }
 
 // decodeMagRefPass decodes the Magnitude Refinement Pass
 // This pass refines coefficients that are already significant
-func (t1 *T1Decoder) decodeMagRefPass(raw bool) error {
+func (t1 *T1Decoder) decodeMagRefPass(raw bool) {
 	paddedWidth := t1.width + 2
 
 	// JPEG 2000 passes are stripe-coded: process 4-row groups, then columns, then rows in stripe.
@@ -515,13 +496,12 @@ func (t1 *T1Decoder) decodeMagRefPass(raw bool) error {
 		}
 	}
 
-	return nil
 }
 
 // decodeCleanupPass decodes the Cleanup Pass
 // IMPORTANT: Process in VERTICAL order (column-first) with 4-row groups for RL decoding
 // This matches OpenJPEG's opj_t1_dec_clnpass() implementation and the encoder
-func (t1 *T1Decoder) decodeCleanupPass() error {
+func (t1 *T1Decoder) decodeCleanupPass() {
 	paddedWidth := t1.width + 2
 
 	// Process in groups of 4 rows (vertical RL decoding)
@@ -665,7 +645,6 @@ func (t1 *T1Decoder) decodeCleanupPass() error {
 		}
 	}
 
-	return nil
 }
 
 // updateNeighborFlags updates the neighbor significance flags

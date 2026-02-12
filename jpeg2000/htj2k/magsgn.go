@@ -165,6 +165,7 @@ func (m *MagSgnDecoder) readBits(n int) (uint64, bool) {
 	if n == 0 {
 		return 0, true
 	}
+	ok := true
 	for m.bitCount < n && m.pos < len(m.data) {
 		b := m.data[m.pos]
 		m.pos++
@@ -181,6 +182,9 @@ func (m *MagSgnDecoder) readBits(n int) (uint64, bool) {
 	}
 
 	if m.bitCount < n {
+		if m.pos >= len(m.data) {
+			ok = false
+		}
 		// When exhausted, MagSgn feeds 0xFF bytes (all-ones padding).
 		for m.bitCount < n {
 			b := byte(0xFF)
@@ -199,7 +203,7 @@ func (m *MagSgnDecoder) readBits(n int) (uint64, bool) {
 	value := m.bitBuffer & mask
 	m.bitBuffer >>= n
 	m.bitCount -= n
-	return value, true
+	return value, ok
 }
 
 // HasMore returns true if more data is available

@@ -1,6 +1,6 @@
 package lossless
 
-import "github.com/cocosip/go-dicom-codec/jpegls/common"
+import "github.com/cocosip/go-dicom-codec/jpegls/runmode"
 
 // MED (Median Edge Detection) predictor for JPEG-LS
 // This is the LOCO-I predictor that detects horizontal or vertical edges
@@ -158,5 +158,5 @@ func ApplySign(i, sign int) int {
 // Returns true if we should use run mode
 func EdgeDetection(a, b, c, d int, threshold int) bool {
 	// Check if values are close enough to trigger run mode
-	return common.Abs(a-b) <= threshold && common.Abs(b-c) <= threshold && common.Abs(c-d) <= threshold
+	return runmode.Abs(a-b) <= threshold && runmode.Abs(b-c) <= threshold && runmode.Abs(c-d) <= threshold
 }

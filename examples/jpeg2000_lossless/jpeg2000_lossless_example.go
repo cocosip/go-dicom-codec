@@ -1,3 +1,4 @@
+// Package main provides examples for using the JPEG 2000 lossless codec.
 package main
 
 import (

@@ -31,7 +31,9 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Test with type-safe parameters
 	c := NewCodecWithRate(80)
@@ -86,7 +88,9 @@ func TestBackwardCompatibility(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	c := NewCodecWithRate(80)
 
@@ -179,7 +183,9 @@ func TestNilParameters(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	c := NewCodecWithRate(85) // Codec default rate
 

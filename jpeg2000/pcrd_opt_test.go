@@ -45,7 +45,7 @@ func TestTruncateAtLambda(t *testing.T) {
 		{PassIndex: 1, Rate: 20, ActualBytes: 20, Distortion: 180},
 		{PassIndex: 2, Rate: 30, ActualBytes: 30, Distortion: 240},
 	}}
-	slopes, _, cum, _ := computeIncrementals(passes)
+	slopes, cum, _ := computeIncrementals(passes)
 	s1, r1 := truncateAtLambda(passes, slopes, cum, slopes[0][1], nil)
 	if s1[0] < 2 {
 		t.Errorf("expected at least 2 passes for lambda at slope1")

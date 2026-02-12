@@ -1,3 +1,4 @@
+// Package main demonstrates a simple DICOM transcoder CLI.
 package main
 
 import (
@@ -287,5 +288,5 @@ func formatBytes(bytes int64) string {
 func waitForExit() {
 	fmt.Println("\n" + strings.Repeat("-", 70))
 	fmt.Print("Press Enter to exit...")
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
+	_, _ = bufio.NewReader(os.Stdin).ReadBytes('\n')
 }

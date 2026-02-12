@@ -86,7 +86,7 @@ func TestUVLCEncodeDecode(t *testing.T) {
 				if !ok {
 					t.Fatalf("Failed to read suffix")
 				}
-				decoded := uint32(3 + suffix)
+				decoded := 3 + suffix
 				t.Logf("Decoded (prefix=001): suffix=%d, u=%d", suffix, decoded)
 				if decoded != tt.u {
 					t.Errorf("Mismatch: got %d, want %d", decoded, tt.u)
@@ -106,13 +106,13 @@ func TestUVLCEncodeDecode(t *testing.T) {
 				if !ok {
 					t.Fatalf("Failed to read extension")
 				}
-				decoded := uint32(5 + suffix + 4*ext)
+				decoded := 5 + suffix + 4*ext
 				t.Logf("Decoded (prefix=000, ext): suffix=%d, ext=%d, u=%d", suffix, ext, decoded)
 				if decoded != tt.u {
 					t.Errorf("Mismatch: got %d, want %d", decoded, tt.u)
 				}
 			} else {
-				decoded := uint32(5 + suffix)
+				decoded := 5 + suffix
 				t.Logf("Decoded (prefix=000): suffix=%d, u=%d", suffix, decoded)
 				if decoded != tt.u {
 					t.Errorf("Mismatch: got %d, want %d", decoded, tt.u)

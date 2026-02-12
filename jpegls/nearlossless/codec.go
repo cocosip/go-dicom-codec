@@ -1,3 +1,4 @@
+// Package nearlossless implements a JPEG-LS Near-Lossless example codec.
 package nearlossless
 
 import (

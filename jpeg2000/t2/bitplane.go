@@ -1,3 +1,4 @@
+// Package t2 contains Tier-2 packet coding helpers.
 package t2
 
 import "github.com/cocosip/go-dicom-codec/jpeg2000/codestream"

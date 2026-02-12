@@ -89,7 +89,7 @@ func TestLarge8BitImage(t *testing.T) {
 	diffs := 0
 	firstDiffIdx := -1
 	for i := 0; i < len(pixelData); i++ {
-		if byte(decoded[i]) != pixelData[i] {
+		if decoded[i] != pixelData[i] {
 			diffs++
 			if firstDiffIdx == -1 {
 				firstDiffIdx = i
@@ -143,7 +143,7 @@ func TestFlatRegion8Bit(t *testing.T) {
 	// 验证
 	diffs := 0
 	for i := 0; i < len(pixelData); i++ {
-		if byte(decoded[i]) != pixelData[i] {
+		if decoded[i] != pixelData[i] {
 			diffs++
 			if diffs <= 5 {
 				t.Logf("差异 %d: 索引%d, 期望%d, 得到%d", diffs, i, pixelData[i], decoded[i])

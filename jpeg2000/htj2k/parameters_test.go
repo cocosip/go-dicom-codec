@@ -109,7 +109,7 @@ func TestHTJ2KParameters_SetParameter(t *testing.T) {
 func TestHTJ2KParameters_Validate(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func(*HTJ2KParameters)
+		setup       func(*Parameters)
 		wantQuality int
 		wantBW      int
 		wantBH      int
@@ -117,7 +117,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 	}{
 		{
 			name: "Valid parameters",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.Quality = 80
 				p.BlockWidth = 64
 				p.BlockHeight = 64
@@ -130,7 +130,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "Quality too low",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.Quality = 0
 			},
 			wantQuality: 1,
@@ -140,7 +140,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "Quality too high",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.Quality = 150
 			},
 			wantQuality: 100,
@@ -150,7 +150,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "BlockWidth too small",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.BlockWidth = 2
 			},
 			wantQuality: 80,
@@ -160,7 +160,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "BlockWidth not power of 2",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.BlockWidth = 100 // Should round to 128
 			},
 			wantQuality: 80,
@@ -170,7 +170,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "BlockHeight too large",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.BlockHeight = 2000
 			},
 			wantQuality: 80,
@@ -180,7 +180,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "NumLevels negative",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.NumLevels = -1
 			},
 			wantQuality: 80,
@@ -190,7 +190,7 @@ func TestHTJ2KParameters_Validate(t *testing.T) {
 		},
 		{
 			name: "NumLevels too high",
-			setup: func(p *HTJ2KParameters) {
+			setup: func(p *Parameters) {
 				p.NumLevels = 10
 			},
 			wantQuality: 80,

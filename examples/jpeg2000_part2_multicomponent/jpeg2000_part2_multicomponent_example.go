@@ -1,3 +1,4 @@
+// Package main demonstrates JPEG2000 Part-2 multicomponent transforms.
 package main
 
 import (

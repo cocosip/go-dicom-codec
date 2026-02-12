@@ -1,3 +1,4 @@
+// Package main exports decoded DICOM pixel data to PNG.
 package main
 
 import (

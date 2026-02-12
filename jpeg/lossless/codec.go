@@ -1,3 +1,4 @@
+// Package lossless provides the JPEG Lossless (SV1) codec implementation.
 package lossless
 
 import (

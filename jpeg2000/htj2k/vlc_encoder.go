@@ -70,8 +70,8 @@ func (v *VLCEncoder) initVLCPacker() {
 
 // buildEncodeTables builds CxtVLC encoding tables from decode tables
 func (v *VLCEncoder) buildEncodeTables() {
-	// Build hash map from VLC_tbl0 (initial row)
-	for _, entry := range VLC_tbl0 {
+	// Build hash map from VLCTbl0 (initial row)
+	for _, entry := range VLCTbl0 {
 		key := encodeKey{
 			cq:   entry.CQ,
 			rho:  entry.Rho,
@@ -86,8 +86,8 @@ func (v *VLCEncoder) buildEncodeTables() {
 		}
 	}
 
-	// Build hash map from VLC_tbl1 (non-initial rows)
-	for _, entry := range VLC_tbl1 {
+	// Build hash map from VLCTbl1 (non-initial rows)
+	for _, entry := range VLCTbl1 {
 		key := encodeKey{
 			cq:   entry.CQ,
 			rho:  entry.Rho,
@@ -171,73 +171,10 @@ func (v *VLCEncoder) EncodeCxtVLC(context, rho, uOff, ek, e1 uint8, isFirstRow b
 	if !found {
 		// Fallback: search entry with matching (context, rho, uOff) and most EMB bits
 		// Per ISO/IEC 15444-15:2019 Annex C: select entry with most set bits in (EK & ek_table) | (E1 & e1_table)
-        if isFirstRow {
-            maxBits := -1
-            var best VLCEncodeEntry
-            for _, tblEntry := range VLC_tbl0 {
-                if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-                    // Count matching EMB bits
-                    ekMatch := ek & tblEntry.EK
-                    e1Match := e1 & tblEntry.E1
-                    matchBits := countBits(ekMatch) + countBits(e1Match)
-
-                    if matchBits > maxBits {
-                        maxBits = matchBits
-                        best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
-                    }
-                }
-            }
-            if maxBits >= 0 {
-                entry = best
-                found = true
-            }
-        } else {
-            maxBits := -1
-            var best VLCEncodeEntry
-            for _, tblEntry := range VLC_tbl1 {
-                if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
-                    // Count matching EMB bits
-                    ekMatch := ek & tblEntry.EK
-                    e1Match := e1 & tblEntry.E1
-                    matchBits := countBits(ekMatch) + countBits(e1Match)
-
-                    if matchBits > maxBits {
-                        maxBits = matchBits
-                        best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
-                    }
-                }
-            }
-            if maxBits >= 0 {
-                entry = best
-                found = true
-            }
-        }
-		if !found {
-			return fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d, ek=0x%X, e1=0x%X", context, rho, uOff, ek, e1)
-		}
-	}
-
-	// Emit the codeword
-	return v.emitVLCBits(uint32(entry.Codeword), int(entry.Length))
-}
-
-func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFirstRow bool) (int, error) {
-	// Create lookup key
-	key := encodeKey{cq: context, rho: rho, uOff: uOff, ek: ek, e1: e1}
-	var entry VLCEncodeEntry
-	var found bool
-	if isFirstRow {
-		entry, found = v.encodeMap0[key]
-	} else {
-		entry, found = v.encodeMap1[key]
-	}
-	if !found {
-		// Fallback: search entry with matching (context, rho, uOff) and most EMB bits
-		// Per ISO/IEC 15444-15:2019 Annex C: select entry with most set bits in (EK & ek_table) | (E1 & e1_table)
 		if isFirstRow {
 			maxBits := -1
 			var best VLCEncodeEntry
-			for _, tblEntry := range VLC_tbl0 {
+			for _, tblEntry := range VLCTbl0 {
 				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
 					// Count matching EMB bits
 					ekMatch := ek & tblEntry.EK
@@ -257,7 +194,71 @@ func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFir
 		} else {
 			maxBits := -1
 			var best VLCEncodeEntry
-			for _, tblEntry := range VLC_tbl1 {
+			for _, tblEntry := range VLCTbl1 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					// Count matching EMB bits
+					ekMatch := ek & tblEntry.EK
+					e1Match := e1 & tblEntry.E1
+					matchBits := countBits(ekMatch) + countBits(e1Match)
+
+					if matchBits > maxBits {
+						maxBits = matchBits
+						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+					}
+				}
+			}
+			if maxBits >= 0 {
+				entry = best
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("no VLC entry found for context=%d, rho=0x%X, uOff=%d, ek=0x%X, e1=0x%X", context, rho, uOff, ek, e1)
+		}
+	}
+
+	// Emit the codeword
+	return v.emitVLCBits(uint32(entry.Codeword), int(entry.Length))
+}
+
+// EncodeCxtVLCWithLen encodes context-based VLC and returns the codeword length.
+func (v *VLCEncoder) EncodeCxtVLCWithLen(context, rho, uOff, ek, e1 uint8, isFirstRow bool) (int, error) {
+	// Create lookup key
+	key := encodeKey{cq: context, rho: rho, uOff: uOff, ek: ek, e1: e1}
+	var entry VLCEncodeEntry
+	var found bool
+	if isFirstRow {
+		entry, found = v.encodeMap0[key]
+	} else {
+		entry, found = v.encodeMap1[key]
+	}
+	if !found {
+		// Fallback: search entry with matching (context, rho, uOff) and most EMB bits
+		// Per ISO/IEC 15444-15:2019 Annex C: select entry with most set bits in (EK & ek_table) | (E1 & e1_table)
+		if isFirstRow {
+			maxBits := -1
+			var best VLCEncodeEntry
+			for _, tblEntry := range VLCTbl0 {
+				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
+					// Count matching EMB bits
+					ekMatch := ek & tblEntry.EK
+					e1Match := e1 & tblEntry.E1
+					matchBits := countBits(ekMatch) + countBits(e1Match)
+
+					if matchBits > maxBits {
+						maxBits = matchBits
+						best = VLCEncodeEntry{Codeword: tblEntry.Cwd, Length: tblEntry.CwdLen, Valid: true}
+					}
+				}
+			}
+			if maxBits >= 0 {
+				entry = best
+				found = true
+			}
+		} else {
+			maxBits := -1
+			var best VLCEncodeEntry
+			for _, tblEntry := range VLCTbl1 {
 				if tblEntry.CQ == context && tblEntry.Rho == rho && tblEntry.UOff == uOff {
 					// Count matching EMB bits
 					ekMatch := ek & tblEntry.EK
@@ -370,9 +371,9 @@ func countBits(val uint8) int {
 // Returns: (codeword_length, table_e_k, error)
 // The table_e_k is used by the caller for MagSgn encoding: mn = Uq - ekBit
 func (v *VLCEncoder) EncodeQuadVLCByEMB(context, rho, uOff, emb uint8, isFirstRow bool) (int, uint8, error) {
-	tbl := VLC_tbl0
+	tbl := VLCTbl0
 	if !isFirstRow {
-		tbl = VLC_tbl1
+		tbl = VLCTbl1
 	}
 
 	if uOff == 0 || emb == 0 {

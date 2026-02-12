@@ -1025,15 +1025,25 @@ func (e *Encoder) writeSIZ(buf *bytes.Buffer) error {
 	sizData := &bytes.Buffer{}
 
 	// Rsiz - Capabilities (0 = baseline)
-	_ = binary.Write(sizData, binary.BigEndian, uint16(0))
+	if err := binary.Write(sizData, binary.BigEndian, uint16(0)); err != nil {
+		return err
+	}
 
 	// Xsiz, Ysiz - Image size
-	_ = binary.Write(sizData, binary.BigEndian, uint32(p.Width))
-	_ = binary.Write(sizData, binary.BigEndian, uint32(p.Height))
+	if err := binary.Write(sizData, binary.BigEndian, uint32(p.Width)); err != nil {
+		return err
+	}
+	if err := binary.Write(sizData, binary.BigEndian, uint32(p.Height)); err != nil {
+		return err
+	}
 
 	// XOsiz, YOsiz - Image offset
-	_ = binary.Write(sizData, binary.BigEndian, uint32(0))
-	_ = binary.Write(sizData, binary.BigEndian, uint32(0))
+	if err := binary.Write(sizData, binary.BigEndian, uint32(0)); err != nil {
+		return err
+	}
+	if err := binary.Write(sizData, binary.BigEndian, uint32(0)); err != nil {
+		return err
+	}
 
 	// XTsiz, YTsiz - Tile size
 	tileWidth := p.TileWidth
@@ -1044,15 +1054,25 @@ func (e *Encoder) writeSIZ(buf *bytes.Buffer) error {
 	if tileHeight == 0 {
 		tileHeight = p.Height
 	}
-	_ = binary.Write(sizData, binary.BigEndian, uint32(tileWidth))
-	_ = binary.Write(sizData, binary.BigEndian, uint32(tileHeight))
+	if err := binary.Write(sizData, binary.BigEndian, uint32(tileWidth)); err != nil {
+		return err
+	}
+	if err := binary.Write(sizData, binary.BigEndian, uint32(tileHeight)); err != nil {
+		return err
+	}
 
 	// XTOsiz, YTOsiz - Tile offset
-	_ = binary.Write(sizData, binary.BigEndian, uint32(0))
-	_ = binary.Write(sizData, binary.BigEndian, uint32(0))
+	if err := binary.Write(sizData, binary.BigEndian, uint32(0)); err != nil {
+		return err
+	}
+	if err := binary.Write(sizData, binary.BigEndian, uint32(0)); err != nil {
+		return err
+	}
 
 	// Csiz - Number of components
-	_ = binary.Write(sizData, binary.BigEndian, uint16(p.Components))
+	if err := binary.Write(sizData, binary.BigEndian, uint16(p.Components)); err != nil {
+		return err
+	}
 
 	// Component information
 	ssiz := uint8(p.BitDepth - 1)
@@ -1060,15 +1080,27 @@ func (e *Encoder) writeSIZ(buf *bytes.Buffer) error {
 		ssiz |= 0x80
 	}
 	for i := 0; i < p.Components; i++ {
-		_ = binary.Write(sizData, binary.BigEndian, ssiz)
-		_ = binary.Write(sizData, binary.BigEndian, uint8(1)) // XRsiz - horizontal separation
-		_ = binary.Write(sizData, binary.BigEndian, uint8(1)) // YRsiz - vertical separation
+		if err := binary.Write(sizData, binary.BigEndian, ssiz); err != nil {
+			return err
+		}
+		if err := binary.Write(sizData, binary.BigEndian, uint8(1)); err != nil {
+			return err
+		}
+		if err := binary.Write(sizData, binary.BigEndian, uint8(1)); err != nil {
+			return err
+		}
 	}
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSIZ))
-	_ = binary.Write(buf, binary.BigEndian, uint16(sizData.Len()+2))
-	buf.Write(sizData.Bytes())
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSIZ); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.BigEndian, uint16(sizData.Len()+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write(sizData.Bytes()); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1090,27 +1122,41 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	if p.BlockEncoderFactory != nil {
 		scod |= 0x40 // Enable HTJ2K mode
 	}
-	_ = binary.Write(codData, binary.BigEndian, scod)
+	if err := binary.Write(codData, binary.BigEndian, scod); err != nil {
+		return err
+	}
 
 	// SGcod - Progression order and layers
-	_ = binary.Write(codData, binary.BigEndian, p.ProgressionOrder)
-	_ = binary.Write(codData, binary.BigEndian, uint16(p.NumLayers))
+	if err := binary.Write(codData, binary.BigEndian, p.ProgressionOrder); err != nil {
+		return err
+	}
+	if err := binary.Write(codData, binary.BigEndian, uint16(p.NumLayers)); err != nil {
+		return err
+	}
 
 	// MCT - Multiple component transformation (1 for RGB, 0 for grayscale)
 	mct := uint8(0)
 	if p.EnableMCT && (len(p.MCTBindings) > 0 || (p.MCTMatrix != nil && len(p.MCTMatrix) == p.Components) || p.Components >= 3) {
 		mct = 1
 	}
-	_ = binary.Write(codData, binary.BigEndian, mct)
+	if err := binary.Write(codData, binary.BigEndian, mct); err != nil {
+		return err
+	}
 
 	// SPcod - Decomposition levels and code-block size
-	_ = binary.Write(codData, binary.BigEndian, uint8(p.NumLevels))
+	if err := binary.Write(codData, binary.BigEndian, uint8(p.NumLevels)); err != nil {
+		return err
+	}
 
 	// Code-block size (log2(width) - 2, log2(height) - 2)
 	cbWidthExp := uint8(log2(p.CodeBlockWidth) - 2)
 	cbHeightExp := uint8(log2(p.CodeBlockHeight) - 2)
-	_ = binary.Write(codData, binary.BigEndian, cbWidthExp)
-	_ = binary.Write(codData, binary.BigEndian, cbHeightExp)
+	if err := binary.Write(codData, binary.BigEndian, cbWidthExp); err != nil {
+		return err
+	}
+	if err := binary.Write(codData, binary.BigEndian, cbHeightExp); err != nil {
+		return err
+	}
 
 	// Code-block style
 	// Bit 2 (0x04): Termination on each coding pass (TERMALL mode)
@@ -1120,14 +1166,18 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 	if p.NumLayers > 1 || p.TargetRatio > 0 {
 		codeBlockStyle |= 0x04
 	}
-	_ = binary.Write(codData, binary.BigEndian, codeBlockStyle)
+	if err := binary.Write(codData, binary.BigEndian, codeBlockStyle); err != nil {
+		return err
+	}
 
 	// Transformation (0 = 9/7 irreversible, 1 = 5/3 reversible)
 	transform := uint8(1)
 	if !p.Lossless {
 		transform = 0
 	}
-	_ = binary.Write(codData, binary.BigEndian, transform)
+	if err := binary.Write(codData, binary.BigEndian, transform); err != nil {
+		return err
+	}
 
 	// Write precinct sizes if enabled (Scod bit 0 = 1)
 	if scod&0x01 != 0 {
@@ -1140,14 +1190,22 @@ func (e *Encoder) writeCOD(buf *bytes.Buffer) error {
 
 			// Pack PPx and PPy into single byte: PPy (high 4 bits) | PPx (low 4 bits)
 			ppxppy := (ppy << 4) | ppx
-			_ = binary.Write(codData, binary.BigEndian, ppxppy)
+			if err := binary.Write(codData, binary.BigEndian, ppxppy); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerCOD)
-	_ = binary.Write(buf, binary.BigEndian, uint16(codData.Len()+2))
-	buf.Write(codData.Bytes())
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerCOD); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.BigEndian, uint16(codData.Len()+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write(codData.Bytes()); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1547,15 +1605,23 @@ func (e *Encoder) writeVersionCOM(buf *bytes.Buffer) error {
 	data := &bytes.Buffer{}
 
 	// Rcom = 0x0001 (Binary data, Latin alphabet)
-	_ = binary.Write(data, binary.BigEndian, uint16(0x0001))
+	if err := binary.Write(data, binary.BigEndian, uint16(0x0001)); err != nil {
+		return err
+	}
 
 	// Comment text
 	data.WriteString(version)
 
 	// Write marker and length
-	_ = binary.Write(buf, binary.BigEndian, codestream.MarkerCOM)
-	_ = binary.Write(buf, binary.BigEndian, uint16(data.Len()+2))
-	buf.Write(data.Bytes())
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerCOM); err != nil {
+		return err
+	}
+	if err := binary.Write(buf, binary.BigEndian, uint16(data.Len()+2)); err != nil {
+		return err
+	}
+	if _, err := buf.Write(data.Bytes()); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -1782,10 +1848,7 @@ func (e *Encoder) writeTilesWithGlobalRateDistortion(buf *bytes.Buffer, tileWidt
 		}
 
 		// Apply wavelet transform
-		transformedData, err := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
-		if err != nil {
-			return fmt.Errorf("wavelet transform failed for tile %d: %w", tileIdx, err)
-		}
+		transformedData := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
 
 		packetEnc, blocks := e.buildTilePacketEncoder(transformedData, actualWidth, actualHeight)
 		tileEncodings = append(tileEncodings, tileEncoding{
@@ -1819,7 +1882,9 @@ func (e *Encoder) writeTilesWithGlobalRateDistortion(buf *bytes.Buffer, tileWidt
 			return fmt.Errorf("failed to write tile-part RGN: %w", err)
 		}
 
-		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOT); err != nil {
+			return err
+		}
 		_ = binary.Write(buf, binary.BigEndian, uint16(10)) // Lsot
 
 		_ = binary.Write(buf, binary.BigEndian, uint16(tile.idx)) // Isot
@@ -1832,9 +1897,13 @@ func (e *Encoder) writeTilesWithGlobalRateDistortion(buf *bytes.Buffer, tileWidt
 			return err
 		}
 
-		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOD); err != nil {
+			return err
+		}
 
-		buf.Write(tileBytes)
+		if _, err := buf.Write(tileBytes); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1860,10 +1929,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	}
 
 	// Apply wavelet transform
-	transformedData, err := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
-	if err != nil {
-		return fmt.Errorf("wavelet transform failed: %w", err)
-	}
+	transformedData := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
 
 	// Encode tile data
 	tileBytes := e.encodeTileData(transformedData, actualWidth, actualHeight)
@@ -1899,10 +1965,10 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 }
 
 // applyWaveletTransform applies wavelet transform to tile data
-func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y0 int) ([][]int32, error) {
+func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y0 int) [][]int32 {
 	if e.params.NumLevels == 0 {
 		// No transform
-		return tileData, nil
+		return tileData
 	}
 
 	if e.params.Lossless {
@@ -1916,7 +1982,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 			// Apply forward multilevel DWT
 			wavelet.ForwardMultilevelWithParity(transformed[c], width, height, e.params.NumLevels, x0, y0)
 		}
-		return transformed, nil
+		return transformed
 	}
 	// Apply 9/7 irreversible wavelet transform (lossy)
 	transformed := make([][]int32, len(tileData))
@@ -1930,7 +1996,7 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 		// Apply quantization per subband using float coefficients
 		transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, x0, y0, quantParams.StepSizes)
 	}
-	return transformed, nil
+	return transformed
 }
 
 // applyQuantizationBySubbandFloat applies quantization to each subband separately.
@@ -1953,7 +2019,7 @@ func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, heigh
 	subbandIdx := 0
 
 	// LL subband (resolution 0)
-	_, _, _, _, bands := bandInfosForResolution(width, height, x0, y0, numLevels, 0)
+	bands := bandInfosForResolution(width, height, x0, y0, numLevels, 0)
 	if len(bands) > 0 && subbandIdx < len(stepSizes) {
 		b := bands[0]
 		if b.width > 0 && b.height > 0 {
@@ -1964,7 +2030,7 @@ func (e *Encoder) applyQuantizationBySubbandFloat(coeffs []float64, width, heigh
 
 	// HL/LH/HH subbands from low to high resolution
 	for res := 1; res <= numLevels; res++ {
-		_, _, _, _, bands = bandInfosForResolution(width, height, x0, y0, numLevels, res)
+		bands = bandInfosForResolution(width, height, x0, y0, numLevels, res)
 		for _, b := range bands {
 			if subbandIdx < len(stepSizes) && b.width > 0 && b.height > 0 {
 				e.quantizeSubbandFloat(coeffs, quantized, b.offsetX, b.offsetY, b.width, b.height, width, stepSizes[subbandIdx])
@@ -2004,14 +2070,11 @@ type bandInfo struct {
 	offsetX, offsetY int
 }
 
-func splitLengths(n int, even bool) (low, high int) {
+func splitLengths(n int, even bool) (low int) {
 	if even {
-		low = (n + 1) / 2
-	} else {
-		low = n / 2
+		return (n + 1) / 2
 	}
-	high = n - low
-	return
+	return n / 2
 }
 
 func isEven(value int) bool {
@@ -2022,18 +2085,18 @@ func nextCoord(value int) int {
 	return (value + 1) >> 1
 }
 
-func resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res int) (resW, resH, resX0, resY0 int) {
+func resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res int) (resW, resH int) {
 	levelNo := numLevels - res
 	if levelNo < 0 {
 		levelNo = 0
 	}
 	resW = width
 	resH = height
-	resX0 = x0
-	resY0 = y0
+	resX0 := x0
+	resY0 := y0
 	for i := 0; i < levelNo; i++ {
-		lowW, _ := splitLengths(resW, isEven(resX0))
-		lowH, _ := splitLengths(resH, isEven(resY0))
+		lowW := splitLengths(resW, isEven(resX0))
+		lowH := splitLengths(resH, isEven(resY0))
 		resW = lowW
 		resH = lowH
 		resX0 = nextCoord(resX0)
@@ -2042,25 +2105,23 @@ func resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res int) (resW, 
 	return
 }
 
-func bandInfosForResolution(width, height, x0, y0, numLevels, res int) (resW, resH, resX0, resY0 int, bands []bandInfo) {
-	resW, resH, resX0, resY0 = resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res)
+func bandInfosForResolution(width, height, x0, y0, numLevels, res int) []bandInfo {
+	resW, resH := resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res)
 	if res == 0 {
-		bands = []bandInfo{{
+		return []bandInfo{{
 			band:   0,
 			width:  resW,
 			height: resH,
 		}}
-		return
 	}
-	lowW, lowH, _, _ := resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res-1)
+	lowW, lowH := resolutionDimsWithOrigin(width, height, x0, y0, numLevels, res-1)
 	highW := resW - lowW
 	highH := resH - lowH
-	bands = []bandInfo{
+	return []bandInfo{
 		{band: 1, width: highW, height: lowH, offsetX: lowW, offsetY: 0},
 		{band: 2, width: lowW, height: highH, offsetX: 0, offsetY: lowH},
 		{band: 3, width: highW, height: highH, offsetX: lowW, offsetY: lowH},
 	}
-	return
 }
 
 func (e *Encoder) buildTilePacketEncoder(tileData [][]int32, width, height int) (*t2.PacketEncoder, []*t2.PrecinctCodeBlock) {
@@ -2169,28 +2230,48 @@ func (e *Encoder) packetsToBytes(packets []t2.Packet) []byte {
 func (e *Encoder) estimateFixedOverhead() int {
 	buf := &bytes.Buffer{}
 	// SOC
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOC))
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOC); err != nil {
+		return buf.Len()
+	}
 	// SIZ, COD, QCD, RGN, COM
-	_ = e.writeSIZ(buf)
-	_ = e.writeCOD(buf)
-	_ = e.writeQCD(buf)
-	_ = e.writeRGN(buf)
-	_ = e.writeCOM(buf)
+	if err := e.writeSIZ(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeCOD(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeQCD(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeRGN(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeCOM(buf); err != nil {
+		return buf.Len()
+	}
 	// Assume single tile overhead: SOT(12) + SOD(2) without data
 	// We still include tile-part RGN if ROI present
 	tile := &bytes.Buffer{}
-	_ = binary.Write(tile, binary.BigEndian, uint16(codestream.MarkerSOT))
+	if err := binary.Write(tile, binary.BigEndian, codestream.MarkerSOT); err != nil {
+		return buf.Len()
+	}
 	_ = binary.Write(tile, binary.BigEndian, uint16(10))
 	_ = binary.Write(tile, binary.BigEndian, uint16(0))
 	_ = binary.Write(tile, binary.BigEndian, uint32(14))
 	_ = binary.Write(tile, binary.BigEndian, uint8(0))
 	_ = binary.Write(tile, binary.BigEndian, uint8(1))
-	_ = e.writeTileRGN(tile)
-	_ = binary.Write(tile, binary.BigEndian, uint16(codestream.MarkerSOD))
+	if err := e.writeTileRGN(tile); err != nil {
+		return buf.Len()
+	}
+	if err := binary.Write(tile, binary.BigEndian, codestream.MarkerSOD); err != nil {
+		return buf.Len()
+	}
 	// Append tile overhead
 	buf.Write(tile.Bytes())
 	// EOC
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC))
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerEOC); err != nil {
+		return buf.Len()
+	}
 	// Byte-stuffing applies to packet data; headers here are marker-coded, do not stuff
 	return buf.Len()
 }
@@ -2200,25 +2281,43 @@ func (e *Encoder) estimateFixedOverheadForTiles(numTiles int) int {
 		return e.estimateFixedOverhead()
 	}
 	buf := &bytes.Buffer{}
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOC))
-	_ = e.writeSIZ(buf)
-	_ = e.writeCOD(buf)
-	_ = e.writeQCD(buf)
-	_ = e.writeRGN(buf)
-	_ = e.writeCOM(buf)
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOC); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeSIZ(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeCOD(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeQCD(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeRGN(buf); err != nil {
+		return buf.Len()
+	}
+	if err := e.writeCOM(buf); err != nil {
+		return buf.Len()
+	}
 	for tile := 0; tile < numTiles; tile++ {
 		tileHeader := &bytes.Buffer{}
-		_ = e.writeTileRGN(tileHeader)
-		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOT))
+		if err := e.writeTileRGN(tileHeader); err != nil {
+			return buf.Len()
+		}
+		_ = binary.Write(buf, binary.BigEndian, codestream.MarkerSOT)
 		_ = binary.Write(buf, binary.BigEndian, uint16(10))
 		_ = binary.Write(buf, binary.BigEndian, uint16(tile))
 		_ = binary.Write(buf, binary.BigEndian, uint32(14+tileHeader.Len()))
 		_ = binary.Write(buf, binary.BigEndian, uint8(0))
 		_ = binary.Write(buf, binary.BigEndian, uint8(1))
 		buf.Write(tileHeader.Bytes())
-		_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerSOD))
+		if err := binary.Write(buf, binary.BigEndian, codestream.MarkerSOD); err != nil {
+			return buf.Len()
+		}
 	}
-	_ = binary.Write(buf, binary.BigEndian, uint16(codestream.MarkerEOC))
+	if err := binary.Write(buf, binary.BigEndian, codestream.MarkerEOC); err != nil {
+		return buf.Len()
+	}
 	return buf.Len()
 }
 
@@ -2412,23 +2511,33 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 	if len(blocks) == 0 {
 		return
 	}
+	passesPerBlock, totalRate := e.collectPassesAndRate(blocks)
+	budget, alloc := e.computeBudgetAndAlloc(passesPerBlock, numLayers, totalRate, origBytes)
+	if budget > 0 && budget < totalRate {
+		e.enforceGlobalBudget(alloc, passesPerBlock, numLayers, totalRate, budget)
+	}
+	for idx, cb := range blocks {
+		e.finalizeBlock(cb, numLayers, alloc, idx, appendLossless)
+	}
+}
 
+func passBytes(passes []t1.PassData, count int) int {
+	if count <= 0 {
+		return 0
+	}
+	if count > len(passes) {
+		count = len(passes)
+	}
+	b := passes[count-1].ActualBytes
+	if b == 0 {
+		b = passes[count-1].Rate
+	}
+	return b
+}
+
+func (e *Encoder) collectPassesAndRate(blocks []*t2.PrecinctCodeBlock) ([][]t1.PassData, float64) {
 	passesPerBlock := make([][]t1.PassData, 0, len(blocks))
 	totalRate := 0.0
-	passBytes := func(passes []t1.PassData, count int) int {
-		if count <= 0 {
-			return 0
-		}
-		if count > len(passes) {
-			count = len(passes)
-		}
-		b := passes[count-1].ActualBytes
-		if b == 0 {
-			b = passes[count-1].Rate
-		}
-		return b
-	}
-
 	for _, cb := range blocks {
 		passesPerBlock = append(passesPerBlock, cb.Passes)
 		if len(cb.Passes) > 0 {
@@ -2440,12 +2549,13 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 			totalRate += float64(bytes)
 		}
 	}
+	return passesPerBlock, totalRate
+}
 
+func (e *Encoder) computeBudgetAndAlloc(passesPerBlock [][]t1.PassData, numLayers int, totalRate float64, origBytes int) (float64, *LayerAllocation) {
 	budget := totalRate
 	if e.params.TargetRatio > 0 && origBytes > 0 {
 		effectiveTargetRatio := e.params.TargetRatio
-		// Non-PCRD path is quality-oriented: avoid over-aggressive truncation that
-		// collapses texture/detail at high requested ratios.
 		if !e.params.UsePCRDOpt && effectiveTargetRatio > 6.0 {
 			effectiveTargetRatio = 6.0
 		}
@@ -2454,7 +2564,6 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 			budget = target
 		}
 	}
-
 	var alloc *LayerAllocation
 	if e.params.UsePCRDOpt {
 		layerBudgets := ComputeLayerBudgets(budget, numLayers, e.params.LayerBudgetStrategy)
@@ -2462,129 +2571,117 @@ func (e *Encoder) applyRateDistortion(blocks []*t2.PrecinctCodeBlock, origBytes 
 	} else {
 		alloc = AllocateLayersRateDistortionPasses(passesPerBlock, numLayers, budget)
 	}
+	return budget, alloc
+}
 
-	// Enforce global budget proportionally when budget is less than full rate.
-	if budget > 0 && budget < totalRate {
-		for idx, passes := range passesPerBlock {
-			fullBytes := passBytes(passes, len(passes))
-			if fullBytes == 0 {
-				continue
-			}
-			allowed := int(math.Floor(budget * float64(fullBytes) / totalRate))
-			if allowed <= 0 && len(passes) > 0 {
-				allowed = passBytes(passes, 1)
-			}
-			passCount := 0
-			for i := 0; i < len(passes); i++ {
-				if passBytes(passes, i+1) <= allowed {
-					passCount = i + 1
-				} else {
-					break
-				}
-			}
-			if passCount == 0 && len(passes) > 0 {
-				passCount = 1
-			}
-			for layer := 0; layer < numLayers; layer++ {
-				frac := float64(layer+1) / float64(numLayers)
-				layerPass := int(math.Ceil(frac * float64(passCount)))
-				if layerPass > passCount {
-					layerPass = passCount
-				}
-				if layer > 0 && layerPass < alloc.CodeBlockPasses[idx][layer-1] {
-					layerPass = alloc.CodeBlockPasses[idx][layer-1]
-				}
-				alloc.CodeBlockPasses[idx][layer] = layerPass
-			}
-		}
-	}
-
-	for idx, cb := range blocks {
-		if len(cb.Passes) == 0 || cb.CompleteData == nil {
-			// Fallback: keep existing data
+func (e *Encoder) enforceGlobalBudget(alloc *LayerAllocation, passesPerBlock [][]t1.PassData, numLayers int, totalRate, budget float64) {
+	for idx, passes := range passesPerBlock {
+		fullBytes := passBytes(passes, len(passes))
+		if fullBytes == 0 {
 			continue
 		}
-
-		if len(cb.PassLengths) == 0 {
-			cb.PassLengths = make([]int, len(cb.Passes))
-			for i, p := range cb.Passes {
-				cb.PassLengths[i] = p.ActualBytes
+		allowed := int(math.Floor(budget * float64(fullBytes) / totalRate))
+		if allowed <= 0 && len(passes) > 0 {
+			allowed = passBytes(passes, 1)
+		}
+		passCount := 0
+		for i := 0; i < len(passes); i++ {
+			if passBytes(passes, i+1) <= allowed {
+				passCount = i + 1
+			} else {
+				break
 			}
 		}
-
-		cb.LayerPasses = make([]int, numLayers)
-		cb.LayerData = make([][]byte, numLayers)
-
-		prevEnd := 0
+		if passCount == 0 && len(passes) > 0 {
+			passCount = 1
+		}
 		for layer := 0; layer < numLayers; layer++ {
-			passCount := alloc.GetPassesForLayer(idx, layer)
-			if passCount > len(cb.Passes) {
-				passCount = len(cb.Passes)
+			frac := float64(layer+1) / float64(numLayers)
+			layerPass := int(math.Ceil(frac * float64(passCount)))
+			if layerPass > passCount {
+				layerPass = passCount
 			}
-			cb.LayerPasses[layer] = passCount
-
-			end := prevEnd
-			if passCount > 0 {
-				end = cb.Passes[passCount-1].ActualBytes
-				if end == 0 {
-					end = cb.Passes[passCount-1].Rate
-				}
+			if layer > 0 && layerPass < alloc.CodeBlockPasses[idx][layer-1] {
+				layerPass = alloc.CodeBlockPasses[idx][layer-1]
 			}
-
-			if end < prevEnd {
-				end = prevEnd
-			}
-			if end > len(cb.CompleteData) {
-				end = len(cb.CompleteData)
-			}
-
-			cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
-			prevEnd = end
+			alloc.CodeBlockPasses[idx][layer] = layerPass
 		}
-
-		if appendLossless && len(cb.Passes) > 0 {
-			last := numLayers - 1
-			prevPasses := 0
-			if last > 0 && (last-1) < len(cb.LayerPasses) {
-				prevPasses = cb.LayerPasses[last-1]
-			}
-			if prevPasses < 0 {
-				prevPasses = 0
-			}
-			if prevPasses > len(cb.Passes) {
-				prevPasses = len(cb.Passes)
-			}
-
-			fullPasses := len(cb.Passes)
-			cb.LayerPasses[last] = fullPasses
-
-			start := 0
-			if prevPasses > 0 {
-				start = cb.Passes[prevPasses-1].ActualBytes
-				if start == 0 {
-					start = cb.Passes[prevPasses-1].Rate
-				}
-			}
-			end := cb.Passes[fullPasses-1].ActualBytes
-			if end == 0 {
-				end = cb.Passes[fullPasses-1].Rate
-			}
-			if start < 0 {
-				start = 0
-			}
-			if end < start {
-				end = start
-			}
-			if end > len(cb.CompleteData) {
-				end = len(cb.CompleteData)
-			}
-			cb.LayerData[last] = cb.CompleteData[start:end]
-		}
-
-		// Keep full data for compatibility
-		cb.Data = cb.CompleteData
-		cb.UseTERMALL = numLayers > 1 // Only use TERMALL for multi-layer
 	}
+}
+
+func (e *Encoder) finalizeBlock(cb *t2.PrecinctCodeBlock, numLayers int, alloc *LayerAllocation, idx int, appendLossless bool) {
+	if len(cb.Passes) == 0 || cb.CompleteData == nil {
+		return
+	}
+	if len(cb.PassLengths) == 0 {
+		cb.PassLengths = make([]int, len(cb.Passes))
+		for i, p := range cb.Passes {
+			cb.PassLengths[i] = p.ActualBytes
+		}
+	}
+	cb.LayerPasses = make([]int, numLayers)
+	cb.LayerData = make([][]byte, numLayers)
+	prevEnd := 0
+	for layer := 0; layer < numLayers; layer++ {
+		passCount := alloc.GetPassesForLayer(idx, layer)
+		if passCount > len(cb.Passes) {
+			passCount = len(cb.Passes)
+		}
+		cb.LayerPasses[layer] = passCount
+		end := prevEnd
+		if passCount > 0 {
+			end = cb.Passes[passCount-1].ActualBytes
+			if end == 0 {
+				end = cb.Passes[passCount-1].Rate
+			}
+		}
+		if end < prevEnd {
+			end = prevEnd
+		}
+		if end > len(cb.CompleteData) {
+			end = len(cb.CompleteData)
+		}
+		cb.LayerData[layer] = cb.CompleteData[prevEnd:end]
+		prevEnd = end
+	}
+	if appendLossless && len(cb.Passes) > 0 {
+		last := numLayers - 1
+		prevPasses := 0
+		if last > 0 && (last-1) < len(cb.LayerPasses) {
+			prevPasses = cb.LayerPasses[last-1]
+		}
+		if prevPasses < 0 {
+			prevPasses = 0
+		}
+		if prevPasses > len(cb.Passes) {
+			prevPasses = len(cb.Passes)
+		}
+		fullPasses := len(cb.Passes)
+		cb.LayerPasses[last] = fullPasses
+		start := 0
+		if prevPasses > 0 {
+			start = cb.Passes[prevPasses-1].ActualBytes
+			if start == 0 {
+				start = cb.Passes[prevPasses-1].Rate
+			}
+		}
+		end := cb.Passes[fullPasses-1].ActualBytes
+		if end == 0 {
+			end = cb.Passes[fullPasses-1].Rate
+		}
+		if start < 0 {
+			start = 0
+		}
+		if end < start {
+			end = start
+		}
+		if end > len(cb.CompleteData) {
+			end = len(cb.CompleteData)
+		}
+		cb.LayerData[last] = cb.CompleteData[start:end]
+	}
+	cb.Data = cb.CompleteData
+	cb.UseTERMALL = numLayers > 1
 }
 
 func stuffedLen(data []byte) int {

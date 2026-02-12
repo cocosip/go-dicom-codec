@@ -26,7 +26,7 @@ func TestNewLossyParameters(t *testing.T) {
 	}
 }
 
-func TestParametersInterface(t *testing.T) {
+func TestParametersInterface(_ *testing.T) {
 	var _ codec.Parameters = (*JPEG2000LossyParameters)(nil)
 
 	params := NewLossyParameters()

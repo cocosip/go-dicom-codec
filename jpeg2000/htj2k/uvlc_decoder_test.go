@@ -91,55 +91,55 @@ func TestUVLCDecoder_DecodeUPrefix(t *testing.T) {
 func TestUVLCDecoder_DecodeUSuffix(t *testing.T) {
 	tests := []struct {
 		name     string
-		u_pfx    uint8
+		uPfx     uint8
 		bits     []uint8 // Little-endian bits
 		expected uint8
 	}{
 		{
 			name:     "u_pfx=1, no suffix",
-			u_pfx:    1,
+			uPfx:     1,
 			bits:     []uint8{},
 			expected: 0,
 		},
 		{
 			name:     "u_pfx=2, no suffix",
-			u_pfx:    2,
+			uPfx:     2,
 			bits:     []uint8{},
 			expected: 0,
 		},
 		{
 			name:     "u_pfx=3, 1-bit suffix=0",
-			u_pfx:    3,
+			uPfx:     3,
 			bits:     []uint8{0},
 			expected: 0,
 		},
 		{
 			name:     "u_pfx=3, 1-bit suffix=1",
-			u_pfx:    3,
+			uPfx:     3,
 			bits:     []uint8{1},
 			expected: 1,
 		},
 		{
 			name:     "u_pfx=5, 5-bit suffix=00000b (0)",
-			u_pfx:    5,
+			uPfx:     5,
 			bits:     []uint8{0, 0, 0, 0, 0}, // LSB first: 00000b = 0
 			expected: 0,
 		},
 		{
 			name:     "u_pfx=5, 5-bit suffix=10000b (1)",
-			u_pfx:    5,
+			uPfx:     5,
 			bits:     []uint8{1, 0, 0, 0, 0}, // LSB first: bit0=1, rest=0 -> 1
 			expected: 1,
 		},
 		{
 			name:     "u_pfx=5, 5-bit suffix=01011b (13)",
-			u_pfx:    5,
+			uPfx:     5,
 			bits:     []uint8{1, 1, 0, 1, 0}, // LSB first: 1 + 2 + 0 + 8 + 0 = 11 (wait, let me recalc)
-			expected: 11,                      // bit0=1(1) + bit1=1(2) + bit2=0(0) + bit3=1(8) + bit4=0(0) = 11
+			expected: 11,                     // bit0=1(1) + bit1=1(2) + bit2=0(0) + bit3=1(8) + bit4=0(0) = 11
 		},
 		{
 			name:     "u_pfx=5, 5-bit suffix=11111b (31)",
-			u_pfx:    5,
+			uPfx:     5,
 			bits:     []uint8{1, 1, 1, 1, 1}, // LSB first: 1+2+4+8+16 = 31
 			expected: 31,
 		},
@@ -150,7 +150,7 @@ func TestUVLCDecoder_DecodeUSuffix(t *testing.T) {
 			reader := NewMockBitReader(tt.bits)
 			decoder := NewUVLCDecoder(reader)
 
-			got, err := decoder.decodeUSuffix(tt.u_pfx)
+			got, err := decoder.decodeUSuffix(tt.uPfx)
 			if err != nil {
 				t.Fatalf("decodeUSuffix() error = %v", err)
 			}
@@ -165,37 +165,37 @@ func TestUVLCDecoder_DecodeUSuffix(t *testing.T) {
 func TestUVLCDecoder_DecodeUExtension(t *testing.T) {
 	tests := []struct {
 		name     string
-		u_sfx    uint8
+		uSfx     uint8
 		bits     []uint8 // Little-endian bits
 		expected uint8
 	}{
 		{
 			name:     "u_sfx=0, no extension",
-			u_sfx:    0,
+			uSfx:     0,
 			bits:     []uint8{},
 			expected: 0,
 		},
 		{
 			name:     "u_sfx=27, no extension",
-			u_sfx:    27,
+			uSfx:     27,
 			bits:     []uint8{},
 			expected: 0,
 		},
 		{
 			name:     "u_sfx=28, 4-bit extension=0000b (0)",
-			u_sfx:    28,
+			uSfx:     28,
 			bits:     []uint8{0, 0, 0, 0},
 			expected: 0,
 		},
 		{
 			name:     "u_sfx=28, 4-bit extension=0101b (10)",
-			u_sfx:    28,
+			uSfx:     28,
 			bits:     []uint8{0, 1, 0, 1}, // LSB first: bit0=0(0) + bit1=1(2) + bit2=0(0) + bit3=1(8) = 10
 			expected: 10,
 		},
 		{
 			name:     "u_sfx=31, 4-bit extension=1111b (15)",
-			u_sfx:    31,
+			uSfx:     31,
 			bits:     []uint8{1, 1, 1, 1},
 			expected: 15,
 		},
@@ -206,7 +206,7 @@ func TestUVLCDecoder_DecodeUExtension(t *testing.T) {
 			reader := NewMockBitReader(tt.bits)
 			decoder := NewUVLCDecoder(reader)
 
-			got, err := decoder.decodeUExtension(tt.u_sfx)
+			got, err := decoder.decodeUExtension(tt.uSfx)
 			if err != nil {
 				t.Fatalf("decodeUExtension() error = %v", err)
 			}
@@ -373,35 +373,35 @@ func TestUVLCDecoder_DecodeUnsignedResidualSecondQuad(t *testing.T) {
 func TestUVLCDecoder_Table3Examples(t *testing.T) {
 	// Test examples from Table 3 of ISO/IEC 15444-15:2019
 	// Verify the complete encoding: prefix + suffix + extension
-	// Note: u_pfx can only be {1, 2, 3, 5}, never 4
+	// Note: uPfx can only be {1, 2, 3, 5}, never 4
 	tests := []struct {
 		u        uint32
 		prefix   string
-		u_pfx    uint8
-		u_sfx    uint8
-		u_ext    uint8
+		uPfx     uint8
+		uSfx     uint8
+		uExt     uint8
 		lp       int
 		ls       int
 		le       int
 		totalLen int
 	}{
-		{u: 1, prefix: "1", u_pfx: 1, u_sfx: 0, u_ext: 0, lp: 1, ls: 0, le: 0, totalLen: 1},
-		{u: 2, prefix: "01", u_pfx: 2, u_sfx: 0, u_ext: 0, lp: 2, ls: 0, le: 0, totalLen: 2},
-		{u: 3, prefix: "001", u_pfx: 3, u_sfx: 0, u_ext: 0, lp: 3, ls: 1, le: 0, totalLen: 4},
-		{u: 4, prefix: "001", u_pfx: 3, u_sfx: 1, u_ext: 0, lp: 3, ls: 1, le: 0, totalLen: 4},
-		{u: 5, prefix: "000", u_pfx: 5, u_sfx: 0, u_ext: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
-		{u: 6, prefix: "000", u_pfx: 5, u_sfx: 1, u_ext: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
-		{u: 7, prefix: "000", u_pfx: 5, u_sfx: 2, u_ext: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
+		{u: 1, prefix: "1", uPfx: 1, uSfx: 0, uExt: 0, lp: 1, ls: 0, le: 0, totalLen: 1},
+		{u: 2, prefix: "01", uPfx: 2, uSfx: 0, uExt: 0, lp: 2, ls: 0, le: 0, totalLen: 2},
+		{u: 3, prefix: "001", uPfx: 3, uSfx: 0, uExt: 0, lp: 3, ls: 1, le: 0, totalLen: 4},
+		{u: 4, prefix: "001", uPfx: 3, uSfx: 1, uExt: 0, lp: 3, ls: 1, le: 0, totalLen: 4},
+		{u: 5, prefix: "000", uPfx: 5, uSfx: 0, uExt: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
+		{u: 6, prefix: "000", uPfx: 5, uSfx: 1, uExt: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
+		{u: 7, prefix: "000", uPfx: 5, uSfx: 2, uExt: 0, lp: 3, ls: 5, le: 0, totalLen: 8},
 		// Additional test cases can be added
 	}
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("u=%d", tt.u), func(t *testing.T) {
-			// Verify the formula: u = u_pfx + u_sfx + 4*u_ext
-			calculated := uint32(tt.u_pfx) + uint32(tt.u_sfx) + 4*uint32(tt.u_ext)
+			// Verify the formula: u = uPfx + uSfx + 4*uExt
+			calculated := uint32(tt.uPfx) + uint32(tt.uSfx) + 4*uint32(tt.uExt)
 			if calculated != tt.u {
 				t.Errorf("Formula verification failed: %d + %d + 4*%d = %d, want %d",
-					tt.u_pfx, tt.u_sfx, tt.u_ext, calculated, tt.u)
+					tt.uPfx, tt.uSfx, tt.uExt, calculated, tt.u)
 			}
 		})
 	}

@@ -64,7 +64,7 @@ func TestDirectCoefficientComparison192x192(t *testing.T) {
 
 	// Compare coefficients
 	mismatchCount := 0
-	var firstMismatch int = -1
+	firstMismatch := -1
 	for i := 0; i < len(encoderCoeffs); i++ {
 		if encoderCoeffs[i] != decoderCoeffs[i] {
 			if firstMismatch < 0 {

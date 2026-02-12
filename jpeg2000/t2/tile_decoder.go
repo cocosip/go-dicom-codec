@@ -408,18 +408,14 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 		return nil, fmt.Errorf("failed to decode packets: %w", err)
 	}
 
-	if err := td.decodeAllCodeBlocks(packets); err != nil {
-		return nil, fmt.Errorf("failed to decode code-blocks: %w", err)
-	}
+	td.decodeAllCodeBlocks(packets)
 
 	// Process each component
 	for i := 0; i < numComponents; i++ {
 		comp := td.components[i]
 
 		// Assemble subbands
-		if err := td.assembleSubbands(comp); err != nil {
-			return nil, fmt.Errorf("failed to assemble subbands for component %d: %w", i, err)
-		}
+		td.assembleSubbands(comp)
 
 		// Apply IDWT
 		if err := td.applyIDWT(comp); err != nil {
@@ -440,7 +436,7 @@ func (td *TileDecoder) Decode() ([][]int32, error) {
 // decodeAllCodeBlocks decodes code-blocks for all components from packets.
 // params: packets - parsed packet list for the tile
 // returns: error - non-nil on any decoding failure
-func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
+func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) {
 	cbWidth, cbHeight := td.cod.CodeBlockSize()
 	for _, comp := range td.components {
 		precinctOrder := td.buildPrecinctOrder(comp, cbWidth, cbHeight)
@@ -449,7 +445,6 @@ func (td *TileDecoder) decodeAllCodeBlocks(packets []Packet) error {
 		comp.resolutions = make([]*ResolutionLevel, comp.numLevels+1)
 		comp.codeBlocks = codeBlocks
 	}
-	return nil
 }
 
 // gatherCBData accumulates per-code-block data across all packets for a component.
@@ -826,13 +821,13 @@ func (td *TileDecoder) precinctSizeForResolution(resolution int) (int, int) {
 }
 
 // assembleSubbands assembles code-block coefficients into subband arrays
-func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
+func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) {
 	// Initialize the full coefficient array
 	comp.coefficients = make([]int32, comp.width*comp.height)
 
 	if len(comp.codeBlocks) == 0 {
 		// No code-blocks decoded - use zeros
-		return nil
+		return
 	}
 
 	// The code-blocks are organized in the same order as they were encoded:
@@ -869,8 +864,6 @@ func (td *TileDecoder) assembleSubbands(comp *ComponentDecoder) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 // applyIDWT applies the inverse discrete wavelet transform

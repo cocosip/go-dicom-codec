@@ -33,10 +33,7 @@ func TestPacketHeaderEncoding(t *testing.T) {
 	pe := NewPacketEncoder(1, 1, 1, ProgressionLRCP)
 
 	// Encode with old method
-	headerOld, _, err := pe.encodePacketHeaderLayered(precinct, 0, 0)
-	if err != nil {
-		t.Fatalf("Old encoding failed: %v", err)
-	}
+	headerOld, _ := pe.encodePacketHeaderLayered(precinct, 0, 0)
 
 	// Reset precinct
 	for _, cb := range precinct.CodeBlocks {

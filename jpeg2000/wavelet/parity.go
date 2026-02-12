@@ -1,13 +1,10 @@
 package wavelet
 
-func splitLengths(n int, even bool) (low, high int) {
+func splitLengths(n int, even bool) (low int) {
 	if even {
-		low = (n + 1) / 2
-	} else {
-		low = n / 2
+		return (n + 1) / 2
 	}
-	high = n - low
-	return
+	return n / 2
 }
 
 func isEven(value int) bool {

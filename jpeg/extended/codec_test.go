@@ -47,7 +47,9 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 
 	// Create source PixelData
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	extCodec := NewExtendedCodec(8, 85)
 
@@ -157,7 +159,9 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 
 	// Create source PixelData
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	extCodec := NewExtendedCodec(12, 85)
 
@@ -273,7 +277,9 @@ func TestExtendedCodecRGB(t *testing.T) {
 
 	// Create source PixelData
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	extCodec := NewExtendedCodec(8, 85)
 
@@ -376,7 +382,9 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 
 	// Create source PixelData
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	extCodec := NewExtendedCodec(8, 50)
 
@@ -481,7 +489,9 @@ func TestExtendedCodecRegistry(t *testing.T) {
 
 	// Create source PixelData
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create encoded PixelData
 	encodedFrameInfo := &imagetypes.FrameInfo{
@@ -540,7 +550,9 @@ func TestExtendedCodecRejects16Bit(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encodedFrameInfo := &imagetypes.FrameInfo{
 		Width:                     uint16(width),

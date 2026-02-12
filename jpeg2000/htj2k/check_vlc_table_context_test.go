@@ -22,7 +22,7 @@ func TestCheckVLCTableContext(t *testing.T) {
 		var codeword uint8
 		var length uint8
 
-		for _, entry := range VLC_tbl1 {
+		for _, entry := range VLCTbl1 {
 			if entry.CQ == ctx && entry.Rho == rho && entry.UOff == uOff {
 				// Found a match (ignoring ek/e1 for now)
 				found = true
@@ -45,7 +45,7 @@ func TestCheckVLCTableContext(t *testing.T) {
 	for ctx := uint8(2); ctx <= 7; ctx += 5 {
 		t.Logf("\nContext %d:", ctx)
 		matchCount := 0
-		for _, entry := range VLC_tbl1 {
+		for _, entry := range VLCTbl1 {
 			if entry.CQ == ctx && entry.Rho == rho && entry.UOff == uOff {
 				t.Logf("    ek=%d, e1=%d: codeword=0x%02X, length=%d",
 					entry.EK, entry.E1, entry.Cwd, entry.CwdLen)

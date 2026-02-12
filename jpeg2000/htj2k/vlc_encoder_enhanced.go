@@ -126,7 +126,7 @@ func (w *VLCReverseWriter) GetLength() int {
 //	encoder: VLCEncoder to use
 //
 // Returns: Number of bits written, or error
-func EncodeQuadVLC(qx, qy int, rho, ek, e1, uOff, context uint8,
+func EncodeQuadVLC(_, _ int, rho, ek, e1, uOff, context uint8,
 	isFirstRow bool, encoder *VLCEncoder) (int, error) {
 
 	// Use encoder's context-aware encoding

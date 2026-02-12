@@ -88,8 +88,8 @@ func generateGoCode(tbl0, tbl1 []string) {
 	fmt.Fprintln(out)
 
 	// Table 0
-	fmt.Fprintln(out, "// VLC_tbl0 for initial quad rows")
-	fmt.Fprintf(out, "var VLC_tbl0 = []VLCEntry{\n")
+	fmt.Fprintln(out, "// VLCTbl0 for initial quad rows")
+	fmt.Fprintf(out, "var VLCTbl0 = []VLCEntry{\n")
 	for _, entry := range tbl0 {
 		fmt.Fprintf(out, "\t%s,\n", entry)
 	}
@@ -97,8 +97,8 @@ func generateGoCode(tbl0, tbl1 []string) {
 	fmt.Fprintln(out)
 
 	// Table 1
-	fmt.Fprintln(out, "// VLC_tbl1 for non-initial quad rows")
-	fmt.Fprintf(out, "var VLC_tbl1 = []VLCEntry{\n")
+	fmt.Fprintln(out, "// VLCTbl1 for non-initial quad rows")
+	fmt.Fprintf(out, "var VLCTbl1 = []VLCEntry{\n")
 	for _, entry := range tbl1 {
 		fmt.Fprintf(out, "\t%s,\n", entry)
 	}

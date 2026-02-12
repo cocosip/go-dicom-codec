@@ -24,16 +24,16 @@ type Component struct {
 
 // Decoder represents a JPEG Baseline decoder
 type Decoder struct {
-	width      int                        // Image width
-	height     int                        // Image height
-	components []*Component               // Color components
-	qtables    [4][64]int32               // Quantization tables
-	dcTables   [4]*common.HuffmanTable    // DC Huffman tables
-	acTables   [4]*common.HuffmanTable    // AC Huffman tables
-	mcuWidth   int                        // MCU width in blocks
-	mcuHeight  int                        // MCU height in blocks
-	restartInt int                        // Restart interval
-	precision  int                        // Sample precision (bits)
+	width      int                     // Image width
+	height     int                     // Image height
+	components []*Component            // Color components
+	qtables    [4][64]int32            // Quantization tables
+	dcTables   [4]*common.HuffmanTable // DC Huffman tables
+	acTables   [4]*common.HuffmanTable // AC Huffman tables
+	mcuWidth   int                     // MCU width in blocks
+	mcuHeight  int                     // MCU height in blocks
+	restartInt int                     // Restart interval
+	precision  int                     // Sample precision (bits)
 }
 
 // Decode decodes JPEG Baseline data
@@ -90,18 +90,12 @@ func Decode(jpegData []byte) (pixelData []byte, width, height, components int, e
 			}
 			// After decoding scan, we're done (baseline JPEG has only one scan)
 			// Convert to output format
-			pixelData, err = decoder.convertToPixels()
-			if err != nil {
-				return nil, 0, 0, 0, err
-			}
+			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), nil
 
 		case common.MarkerEOI:
 			// End of image, convert to output format
-			pixelData, err = decoder.convertToPixels()
-			if err != nil {
-				return nil, 0, 0, 0, err
-			}
+			pixelData = decoder.convertToPixels()
 			return pixelData, decoder.width, decoder.height, len(decoder.components), nil
 
 		default:
@@ -208,7 +202,7 @@ func (d *Decoder) parseDQT(reader *common.Reader) error {
 		}
 
 		pqTq := data[offset]
-		pq := pqTq >> 4  // Precision (0=8-bit, 1=16-bit)
+		pq := pqTq >> 4   // Precision (0=8-bit, 1=16-bit)
 		tq := pqTq & 0x0F // Table ID
 
 		if tq > 3 {
@@ -255,7 +249,7 @@ func (d *Decoder) parseDHT(reader *common.Reader) error {
 		}
 
 		tcTh := data[offset]
-		tc := tcTh >> 4  // Table class (0=DC, 1=AC)
+		tc := tcTh >> 4   // Table class (0=DC, 1=AC)
 		th := tcTh & 0x0F // Table ID
 
 		if th > 3 {
@@ -333,10 +327,10 @@ func (d *Decoder) parseSOS(reader *common.Reader) error {
 
 	// Parse component selectors
 	for i := 0; i < ns; i++ {
-		cs := data[1+i*2]        // Component selector
-		tdTa := data[1+i*2+1]    // DC and AC table selectors
-		td := int(tdTa >> 4)     // DC table
-		ta := int(tdTa & 0x0F)   // AC table
+		cs := data[1+i*2]      // Component selector
+		tdTa := data[1+i*2+1]  // DC and AC table selectors
+		td := int(tdTa >> 4)   // DC table
+		ta := int(tdTa & 0x0F) // AC table
 
 		// Find the component
 		var comp *Component
@@ -510,7 +504,7 @@ func (d *Decoder) decodeBlock(huffDec *common.HuffmanDecoder, comp *Component, b
 }
 
 // convertToPixels converts component data to interleaved pixel data
-func (d *Decoder) convertToPixels() ([]byte, error) {
+func (d *Decoder) convertToPixels() []byte {
 	numComponents := len(d.components)
 	pixelData := make([]byte, d.width*d.height*numComponents)
 
@@ -581,7 +575,7 @@ func (d *Decoder) convertToPixels() ([]byte, error) {
 		}
 	}
 
-	return pixelData, nil
+	return pixelData
 }
 
 // ycbcrToRGB converts YCbCr to RGB

@@ -84,34 +84,34 @@ func TestDistortionMonotonicity(t *testing.T) {
 // TestDistortionWithDifferentPatterns tests distortion calculation with various patterns
 func TestDistortionWithDifferentPatterns(t *testing.T) {
 	patterns := []struct {
-		name        string
-		generator   func(x, y, w, h int) byte
-		minPSNR     float64
+		name      string
+		generator func(x, y, w, h int) byte
+		minPSNR   float64
 	}{
 		{
 			name: "Uniform",
-			generator: func(x, y, w, h int) byte {
+			generator: func(_, _, _, _ int) byte {
 				return 128
 			},
 			minPSNR: 50.0, // Should be very high for uniform
 		},
 		{
 			name: "Horizontal gradient",
-			generator: func(x, y, w, h int) byte {
+			generator: func(x, _, w, _ int) byte {
 				return byte((x * 255) / w)
 			},
 			minPSNR: 30.0,
 		},
 		{
 			name: "Vertical gradient",
-			generator: func(x, y, w, h int) byte {
+			generator: func(_, y, _, h int) byte {
 				return byte((y * 255) / h)
 			},
 			minPSNR: 30.0,
 		},
 		{
 			name: "Checkerboard",
-			generator: func(x, y, w, h int) byte {
+			generator: func(x, y, _, _ int) byte {
 				if (x/8+y/8)%2 == 0 {
 					return 255
 				}

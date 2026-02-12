@@ -1,6 +1,6 @@
-// Package common provides shared utilities and tables for JPEG-LS modules,
+// Package runmode provides shared utilities and tables for JPEG-LS modules,
 // including run-mode constants and helpers used by encoder/decoder implementations.
-package common
+package runmode
 
 // J array for run mode encoding
 // This is defined in lossless package and re-exported here for convenience

@@ -56,20 +56,16 @@ func (pp *PacketParser) ParsePacket() (*Packet, error) {
 	}
 
 	// Parse packet header
-	if err := pp.parsePacketHeader(packet); err != nil {
-		return nil, fmt.Errorf("failed to parse packet header: %w", err)
-	}
+	pp.parsePacketHeader(packet)
 
 	// Parse packet body
-	if err := pp.parsePacketBody(packet); err != nil {
-		return nil, fmt.Errorf("failed to parse packet body: %w", err)
-	}
+	pp.parsePacketBody(packet)
 
 	return packet, nil
 }
 
 // parsePacketHeader parses the packet header
-func (pp *PacketParser) parsePacketHeader(packet *Packet) error {
+func (pp *PacketParser) parsePacketHeader(packet *Packet) {
 	headerStart := pp.pos
 
 	// For each code-block in the precinct
@@ -89,11 +85,10 @@ func (pp *PacketParser) parsePacketHeader(packet *Packet) error {
 	}
 
 	packet.Header = pp.data[headerStart:pp.pos]
-	return nil
 }
 
 // parsePacketBody parses the packet body (compressed code-block data)
-func (pp *PacketParser) parsePacketBody(packet *Packet) error {
+func (pp *PacketParser) parsePacketBody(packet *Packet) {
 	// Read code-block contributions
 	// Each contribution has:
 	// - Length (already parsed from header)
@@ -111,7 +106,6 @@ func (pp *PacketParser) parsePacketBody(packet *Packet) error {
 		pp.pos = len(pp.data)
 	}
 
-	return nil
 }
 
 // readBit reads a single bit from the data stream

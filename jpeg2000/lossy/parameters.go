@@ -248,6 +248,7 @@ func (p *JPEG2000LossyParameters) WithSubbandSteps(steps []float64) *JPEG2000Los
 	return p
 }
 
+// WithMCTBindings sets multi-component transform bindings.
 func (p *JPEG2000LossyParameters) WithMCTBindings(bindings []jpeg2000.MCTBindingParams) *JPEG2000LossyParameters {
 	p.SetParameter("mctBindings", bindings)
 	return p

@@ -41,7 +41,7 @@ func init() {
 }
 
 // GenerateVLCTables generates the complete 1024-entry lookup tables
-// from the compact source tables VLC_tbl0 and VLC_tbl1
+// from the compact source tables VLCTbl0 and VLCTbl1
 //
 // The lookup table index is 10 bits composed of:
 //   - 7 LSBs: codeword (which might be shorter than 7 bits)
@@ -56,14 +56,14 @@ func init() {
 //     - Source entry codeword equals (extracted codeword masked by codeword length)
 //  5. If match found, populate lookup table with decoded values
 func GenerateVLCTables() error {
-	// Generate VLC_tbl0 (for initial quad rows)
+	// Generate VLCTbl0 (for initial quad rows)
 	for i := 0; i < 1024; i++ {
 		cwd := i & 0x7F   // Extract 7-bit codeword
 		context := i >> 7 // Extract 3-bit context (0-7)
 
-		// Search source table VLC_tbl0 for matching entry
+		// Search source table VLCTbl0 for matching entry
 		found := false
-		for _, entry := range VLC_tbl0 {
+		for _, entry := range VLCTbl0 {
 			if entry.CQ != uint8(context) {
 				continue
 			}
@@ -89,13 +89,13 @@ func GenerateVLCTables() error {
 		_ = found // Entry is already zero-initialized if not found
 	}
 
-	// Generate VLC_tbl1 (for non-initial quad rows)
+	// Generate VLCTbl1 (for non-initial quad rows)
 	for i := 0; i < 1024; i++ {
 		cwd := i & 0x7F
 		context := i >> 7
 
 		found := false
-		for _, entry := range VLC_tbl1 {
+		for _, entry := range VLCTbl1 {
 			if entry.CQ != uint8(context) {
 				continue
 			}
@@ -128,14 +128,14 @@ func GenerateVLCTables() error {
 //  3. Contexts are in valid range (0-7)
 //  4. No duplicate codewords within same context
 func ValidateVLCTables() error {
-	// Validate VLC_tbl0
-	if err := validateTable("VLC_tbl0", VLC_tbl0, VLCDecodeTbl0); err != nil {
-		return fmt.Errorf("VLC_tbl0 validation failed: %w", err)
+	// Validate VLCTbl0
+	if err := validateTable("VLCTbl0", VLCTbl0, VLCDecodeTbl0); err != nil {
+		return fmt.Errorf("VLCTbl0 validation failed: %w", err)
 	}
 
-	// Validate VLC_tbl1
-	if err := validateTable("VLC_tbl1", VLC_tbl1, VLCDecodeTbl1); err != nil {
-		return fmt.Errorf("VLC_tbl1 validation failed: %w", err)
+	// Validate VLCTbl1
+	if err := validateTable("VLCTbl1", VLCTbl1, VLCDecodeTbl1); err != nil {
+		return fmt.Errorf("VLCTbl1 validation failed: %w", err)
 	}
 
 	return nil
@@ -195,8 +195,8 @@ func validateTable(name string, source []VLCEntry, lookup [1024]VLCDecoderEntry)
 
 // GetVLCTableStats returns statistics about the VLC tables
 func GetVLCTableStats() (tbl0Entries, tbl1Entries, tbl0Valid, tbl1Valid int) {
-	tbl0Entries = len(VLC_tbl0)
-	tbl1Entries = len(VLC_tbl1)
+	tbl0Entries = len(VLCTbl0)
+	tbl1Entries = len(VLCTbl1)
 
 	// Count valid (non-zero) entries in lookup tables
 	for i := 0; i < 1024; i++ {

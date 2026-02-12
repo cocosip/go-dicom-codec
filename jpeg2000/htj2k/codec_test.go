@@ -105,7 +105,9 @@ func TestHTJ2KCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(testData)
+	if err := src.AddFrame(testData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Test with lossless codec
 	t.Run("Lossless", func(t *testing.T) {

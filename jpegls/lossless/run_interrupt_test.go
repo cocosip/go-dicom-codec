@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	jplscommon "github.com/cocosip/go-dicom-codec/jpegls/common"
+	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 func TestRunInterruptionSymmetry(t *testing.T) {
@@ -40,7 +40,7 @@ func TestRunInterruptionSymmetry(t *testing.T) {
 		t.Logf("mapBit=%v", mapBit)
 
 		// Compute eMappedErrorValue
-		eMappedErrorValue := 2*jplscommon.Abs(tc.errorValue) - encCtx.runInterruptionType
+		eMappedErrorValue := 2*runmode.Abs(tc.errorValue) - encCtx.runInterruptionType
 		if mapBit {
 			eMappedErrorValue--
 		}

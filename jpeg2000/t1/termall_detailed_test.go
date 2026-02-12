@@ -71,12 +71,9 @@ func TestTERMALLDetailed(t *testing.T) {
 	decoder0.mqc.SetContextState(0, 4)
 	decoder0.roishift = 0
 	decoder0.bitplane = maxBitplane
-	if err := decoder0.decodeCleanupPass(); err != nil {
-		t.Logf("Pass 0 decode failed: %v", err)
-	} else {
-		decoded0 := decoder0.GetData()
-		t.Logf("After pass 0: %v", decoded0[:16])
-	}
+	decoder0.decodeCleanupPass()
+	decoded0 := decoder0.GetData()
+	t.Logf("After pass 0: %v", decoded0[:16])
 
 	// Check error after the cleanup pass
 	maxError := int32(0)

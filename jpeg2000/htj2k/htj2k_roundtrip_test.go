@@ -3,8 +3,8 @@ package htj2k
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 // TestHTJ2KLosslessRoundTrip tests HTJ2K lossless encoding and decoding
@@ -44,7 +44,9 @@ func TestHTJ2KLosslessRoundTrip(t *testing.T) {
 				PhotometricInterpretation: "MONOCHROME2",
 			}
 			src := codecHelpers.NewTestPixelData(frameInfo)
-			src.AddFrame(testData)
+			if err := src.AddFrame(testData); err != nil {
+				t.Fatalf("AddFrame failed: %v", err)
+			}
 
 			// Create HTJ2K lossless codec
 			htCodec := NewLosslessCodec()
@@ -123,7 +125,9 @@ func TestHTJ2KLosslessRPCLRoundTrip(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(testData)
+	if err := src.AddFrame(testData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create HTJ2K lossless RPCL codec
 	htCodec := NewLosslessRPCLCodec()
@@ -193,7 +197,9 @@ func TestHTJ2KLossyRoundTrip(t *testing.T) {
 				PhotometricInterpretation: "MONOCHROME2",
 			}
 			src := codecHelpers.NewTestPixelData(frameInfo)
-			src.AddFrame(testData)
+			if err := src.AddFrame(testData); err != nil {
+				t.Fatalf("AddFrame failed: %v", err)
+			}
 
 			// Create HTJ2K lossy codec
 			htCodec := NewCodec(tt.quality)
@@ -271,7 +277,9 @@ func TestHTJ2KRGBRoundTrip(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(testData)
+	if err := src.AddFrame(testData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Test lossless
 	t.Run("RGB_Lossless", func(t *testing.T) {
@@ -334,7 +342,9 @@ func TestHTJ2K12BitRoundTrip(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(testData)
+	if err := src.AddFrame(testData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	htCodec := NewLosslessCodec()
 

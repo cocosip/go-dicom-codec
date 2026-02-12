@@ -32,7 +32,9 @@ func Example_typeSafeParameters() {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		log.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Method 1: Type-safe parameters (RECOMMENDED)
 	c := lossy.NewCodecWithRate(80)
@@ -76,7 +78,9 @@ func Example_legacyParameters() {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		log.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Method 2: Generic parameters (for backward compatibility)
 	c := lossy.NewCodecWithRate(80)
@@ -110,7 +114,9 @@ func Example_directFieldAccess() {
 	params.NumLevels = 4
 
 	// Validate before use
-	params.Validate()
+	if err := params.Validate(); err != nil {
+		fmt.Println("validation error:", err)
+	}
 
 	fmt.Printf("Rate: %d, Levels: %d\n", params.Rate, params.NumLevels)
 

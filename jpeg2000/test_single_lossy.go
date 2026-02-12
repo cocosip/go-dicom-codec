@@ -4,6 +4,7 @@ import (
 	"testing"
 )
 
+// TestSingleLayerLossy verifies single-layer lossy encode/decode accuracy.
 func TestSingleLayerLossy(t *testing.T) {
 	width, height := 8, 8
 	pixelData := make([]byte, width*height)

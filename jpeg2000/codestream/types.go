@@ -165,6 +165,7 @@ type POCSegment struct {
 
 // MCTArrayType enumerates multi-component transform array types.
 type MCTArrayType uint8
+
 // MCTElementType enumerates element types used in MCT arrays.
 type MCTElementType uint8
 
@@ -403,6 +404,7 @@ type Subband struct {
 // SubbandType identifies the subband orientation
 type SubbandType int
 
+// Subband type constants for LL/HL/LH/HH orientations
 const (
 	SubbandLL SubbandType = iota // Low-Low (approximation)
 	SubbandHL                    // High-Low (horizontal detail)

@@ -1,3 +1,4 @@
+// Package main shows pixel extraction examples.
 package main
 
 import (

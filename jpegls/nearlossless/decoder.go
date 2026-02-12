@@ -6,8 +6,8 @@ import (
 	"io"
 
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
-	jpegcommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 	"github.com/cocosip/go-dicom-codec/jpegls/lossless"
+	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 // Decoder represents a JPEG-LS near-lossless decoder
@@ -392,8 +392,9 @@ func (dec *Decoder) correctPrediction(predicted int) int {
 
 // getNeighbors gets neighboring pixels following CharLS edge handling
 // CharLS initializes edge pixels as:
-//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
-//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
+//
+//	current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//	previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (dec *Decoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := dec.components
 	offset := comp
@@ -521,7 +522,7 @@ func (dec *Decoder) doRunMode(gr *lossless.GolombReader, pixels []int, x, y, com
 
 // decodeRunInterruptionPixel decodes the pixel that interrupts a run
 func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb int) (int, error) {
-	if jpegcommon.Abs(ra-rb) <= dec.near {
+	if runmode.Abs(ra-rb) <= dec.near {
 		// Use run mode context 1
 		quantizedError, err := dec.runModeScanner.DecodeRunInterruption(gr, dec.runModeScanner.RunModeContexts[1])
 		if err != nil {
@@ -540,6 +541,6 @@ func (dec *Decoder) decodeRunInterruptionPixel(gr *lossless.GolombReader, ra, rb
 	}
 
 	// ComputeReconstructedSample will dequantize internally
-	reconstructed := dec.traits.ComputeReconstructedSample(rb, quantizedError*jpegcommon.Sign(rb-ra))
+	reconstructed := dec.traits.ComputeReconstructedSample(rb, quantizedError*runmode.Sign(rb-ra))
 	return reconstructed, nil
 }

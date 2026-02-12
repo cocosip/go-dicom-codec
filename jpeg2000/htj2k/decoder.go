@@ -107,78 +107,20 @@ func (h *HTDecoder) parseCodeblock(codeblock []byte) error {
 	return nil
 }
 
-// decodeQuad decodes a single quad using the simplified format:
-// rho(4bit) + per-sample length (6bit) + MagSgn(numBits).
-func (h *HTDecoder) decodeQuad(qx, qy int) error {
-	melBit, hasMore := h.mel.DecodeBit()
-	if !hasMore {
-		return nil
-	}
-	if melBit == 0 {
-		return nil
-	}
-
-	rhoBits, ok := h.vlc.readBits(4)
-	if !ok {
-		return fmt.Errorf("VLC exhausted while reading rho")
-	}
-	rho := uint8(rhoBits)
-
-	x0 := qx * 2
-	y0 := qy * 2
-	positions := [][2]int{
-		{x0, y0}, {x0, y0 + 1},
-		{x0 + 1, y0}, {x0 + 1, y0 + 1},
-	}
-
-	for i, pos := range positions {
-		px, py := pos[0], pos[1]
-		if px >= h.width || py >= h.height {
-			continue
-		}
-
-		if (rho>>i)&1 != 0 {
-			lenMinus1, ok := h.vlc.readBits(6)
-			if !ok {
-				return fmt.Errorf("VLC exhausted while reading length")
-			}
-			numBits := int(lenMinus1) + 1
-			if numBits <= 0 || numBits > 32 {
-				return fmt.Errorf("invalid magnitude bit length %d", numBits)
-			}
-
-			mag, sign, hasMagSgn := h.magsgn.DecodeMagSgn(numBits)
-			if !hasMagSgn {
-				mag = 0
-				sign = 0
-			}
-
-			idx := py*h.width + px
-			if sign == 0 {
-				h.data[idx] = int32(mag)
-			} else {
-				h.data[idx] = -int32(mag)
-			}
-		}
-	}
-
-	return nil
-}
-
 // GetData returns decoded data.
 func (h *HTDecoder) GetData() []int32 {
 	return h.data
 }
 
 // DecodeWithBitplane implements BlockDecoder interface.
-func (h *HTDecoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, roishift int) error {
+func (h *HTDecoder) DecodeWithBitplane(data []byte, numPasses int, maxBitplane int, _ int) error {
 	h.maxBitplane = maxBitplane
 	_, err := h.Decode(data, numPasses)
 	return err
 }
 
 // DecodeLayered implements BlockDecoder interface.
-func (h *HTDecoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, roishift int) error {
+func (h *HTDecoder) DecodeLayered(data []byte, passLengths []int, maxBitplane int, _ int) error {
 	h.maxBitplane = maxBitplane
 	numPasses := len(passLengths)
 	if numPasses == 0 {

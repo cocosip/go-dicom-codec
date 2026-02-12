@@ -1,3 +1,4 @@
+// Package main demonstrates JPEG2000 ROI usage.
 package main
 
 import (

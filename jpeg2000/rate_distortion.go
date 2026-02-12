@@ -344,16 +344,14 @@ func getPassBytes(passes []t1.PassData, count int) int {
 	return b
 }
 
-func computeIncrementals(passesPerBlock [][]t1.PassData) ([][]float64, [][]int, [][]int, float64) {
+func computeIncrementals(passesPerBlock [][]t1.PassData) ([][]float64, [][]int, float64) {
 	numBlocks := len(passesPerBlock)
 	slopes := make([][]float64, numBlocks)
-	incRates := make([][]int, numBlocks)
 	cumRates := make([][]int, numBlocks)
 	maxSlope := 0.0
 	for i := 0; i < numBlocks; i++ {
 		p := passesPerBlock[i]
 		slopes[i] = make([]float64, len(p))
-		incRates[i] = make([]int, len(p))
 		cumRates[i] = make([]int, len(p))
 		prevRate := 0
 		prevDist := 0.0
@@ -375,13 +373,12 @@ func computeIncrementals(passesPerBlock [][]t1.PassData) ([][]float64, [][]int, 
 			if s > maxSlope {
 				maxSlope = s
 			}
-			incRates[i][j] = inc
 			cumRates[i][j] = r
 			prevRate = r
 			prevDist = p[j].Distortion
 		}
 	}
-	return slopes, incRates, cumRates, maxSlope
+	return slopes, cumRates, maxSlope
 }
 
 func truncateAtLambda(passesPerBlock [][]t1.PassData, slopes [][]float64, _ [][]int, lambda float64, minPasses []int) ([]int, float64) {
@@ -406,11 +403,12 @@ func truncateAtLambda(passesPerBlock [][]t1.PassData, slopes [][]float64, _ [][]
 	return selected, total
 }
 
+// FindOptimalLambda computes the lambda yielding target rate via PCRD-style truncation.
 func FindOptimalLambda(passesPerBlock [][]t1.PassData, targetRate float64, tolerance float64, minPasses []int) (float64, []int, float64) {
 	if tolerance <= 0 {
 		tolerance = 0.01
 	}
-	slopes, _, cumRates, maxSlope := computeIncrementals(passesPerBlock)
+	slopes, cumRates, maxSlope := computeIncrementals(passesPerBlock)
 	low := 0.0
 	high := maxSlope
 	var sel []int
@@ -435,6 +433,7 @@ func FindOptimalLambda(passesPerBlock [][]t1.PassData, targetRate float64, toler
 	return high, sel, rate
 }
 
+// ComputeLayerBudgets splits total budget across layers according to strategy.
 func ComputeLayerBudgets(totalBudget float64, numLayers int, strategy string) []float64 {
 	if numLayers <= 0 {
 		numLayers = 1
@@ -465,6 +464,7 @@ func ComputeLayerBudgets(totalBudget float64, numLayers int, strategy string) []
 	return budgets
 }
 
+// AllocateLayersWithLambda assigns code-block passes per layer based on lambda optimization.
 func AllocateLayersWithLambda(passesPerBlock [][]t1.PassData, numLayers int, layerBudgets []float64, tolerance float64) *LayerAllocation {
 	numBlocks := len(passesPerBlock)
 	if numBlocks == 0 {
@@ -558,12 +558,9 @@ func adjustSelectionToBudget(passesPerBlock [][]t1.PassData, prev []int, selecte
 					delta += 2
 				}
 				if delta > 0 {
-					prevRate := 0
 					if selected[i] > 0 {
-						prevRate = p[selected[i]-1].ActualBytes
-						if prevRate == 0 {
-							prevRate = p[selected[i]-1].Rate
-						}
+						_ = p[selected[i]-1].ActualBytes
+						_ = p[selected[i]-1].Rate
 					}
 					incRate := delta
 					incDist := p[next-1].Distortion

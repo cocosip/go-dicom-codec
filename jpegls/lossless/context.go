@@ -1,6 +1,6 @@
 package lossless
 
-import "github.com/cocosip/go-dicom-codec/jpegls/common"
+import runmode "github.com/cocosip/go-dicom-codec/jpegls/runmode"
 
 // Context holds the statistical model for a specific context
 type Context struct {
@@ -42,12 +42,12 @@ func (ctx *Context) UpdateContext(errValue, nearLossless, resetThreshold int) {
 	const minC = -128
 	const overflowLimit = 65536 * 256 // CharLS overflow protection
 
-	ctx.A += common.Abs(errValue)
+	ctx.A += runmode.Abs(errValue)
 	ctx.B += errValue * (2*nearLossless + 1)
 
 	// CharLS overflow protection: check if context values exceed limits
 	// This indicates corrupted or invalid encoded data
-	if ctx.A >= overflowLimit || common.Abs(ctx.B) >= overflowLimit {
+	if ctx.A >= overflowLimit || runmode.Abs(ctx.B) >= overflowLimit {
 		// In Go we can't throw errors from this function, but this should never
 		// happen with valid JPEG-LS data. Just clamp to prevent overflow.
 		if ctx.A >= overflowLimit {

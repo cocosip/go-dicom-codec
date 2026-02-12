@@ -409,10 +409,7 @@ func (p *Parser) parseTile(cs *Codestream) (*Tile, error) {
 	}
 
 	// Read tile data using Psot length when available.
-	tile.Data, err = p.readTileDataWithLength(tileStart, sot.Psot)
-	if err != nil {
-		return nil, err
-	}
+	tile.Data = p.readTileDataWithLength(tileStart, sot.Psot)
 
 	return tile, nil
 }
@@ -541,7 +538,7 @@ func (p *Parser) parseRGN(siz *SIZSegment) (*RGNSegment, error) {
 		return nil, fmt.Errorf("invalid RGN length: %d", length)
 	}
 
-	crgn, _, err := p.readComponentIndex(siz)
+	crgn, err := p.readComponentIndex(siz)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +554,7 @@ func (p *Parser) parseRGN(siz *SIZSegment) (*RGNSegment, error) {
 	// Skip remaining bytes if any
 	remain := int(length) - int(minLen)
 	if remain > 0 {
-		if _, err := p.read(make([]byte, remain)); err != nil {
+		if err := p.read(make([]byte, remain)); err != nil {
 			return nil, err
 		}
 	}
@@ -684,7 +681,7 @@ func (p *Parser) parseCOC(siz *SIZSegment) (*COCSegment, error) {
 		return nil, err
 	}
 	start := p.offset
-	comp, _, err := p.readComponentIndex(siz)
+	comp, err := p.readComponentIndex(siz)
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +721,7 @@ func (p *Parser) parseQCC(siz *SIZSegment) (*QCCSegment, error) {
 		return nil, err
 	}
 	start := p.offset
-	comp, _, err := p.readComponentIndex(siz)
+	comp, err := p.readComponentIndex(siz)
 	if err != nil {
 		return nil, err
 	}
@@ -738,7 +735,7 @@ func (p *Parser) parseQCC(siz *SIZSegment) (*QCCSegment, error) {
 	}
 	spqcc := make([]byte, dataLen)
 	if dataLen > 0 {
-		if _, err := p.read(spqcc); err != nil {
+		if err := p.read(spqcc); err != nil {
 			return nil, err
 		}
 	}
@@ -771,7 +768,7 @@ func (p *Parser) parsePOC(siz *SIZSegment) (*POCSegment, error) {
 		if err != nil {
 			return nil, err
 		}
-		csVal, _, err := p.readComponentIndex(siz)
+		csVal, err := p.readComponentIndex(siz)
 		if err != nil {
 			return nil, err
 		}
@@ -783,7 +780,7 @@ func (p *Parser) parsePOC(siz *SIZSegment) (*POCSegment, error) {
 		if err != nil {
 			return nil, err
 		}
-		ceVal, _, err := p.readComponentIndex(siz)
+		ceVal, err := p.readComponentIndex(siz)
 		if err != nil {
 			return nil, err
 		}
@@ -857,7 +854,7 @@ func (p *Parser) parseQCD() (*QCDSegment, error) {
 	// Read quantization step size values
 	dataLength := int(length) - 3 // length includes itself (2) and Sqcd (1)
 	qcd.SPqcd = make([]byte, dataLength)
-	if _, err := p.read(qcd.SPqcd); err != nil {
+	if err := p.read(qcd.SPqcd); err != nil {
 		return nil, err
 	}
 
@@ -879,7 +876,7 @@ func (p *Parser) parseCOM() (*COMSegment, error) {
 
 	dataLength := int(length) - 4 // length includes itself (2) and Rcom (2)
 	com.Data = make([]byte, dataLength)
-	if _, err := p.read(com.Data); err != nil {
+	if err := p.read(com.Data); err != nil {
 		return nil, err
 	}
 
@@ -918,7 +915,7 @@ func (p *Parser) parseMCT() (*MCTSegment, error) {
 	et := uint8((imct >> 10) & 0x3)
 	dataLen := payloadLen - 6
 	buf := make([]byte, dataLen)
-	if _, err := p.read(buf); err != nil {
+	if err := p.read(buf); err != nil {
 		return nil, err
 	}
 	return &MCTSegment{Index: idx, ElementType: MCTElementType(et), ArrayType: MCTArrayType(at), Data: buf}, nil
@@ -1038,7 +1035,7 @@ func (p *Parser) parseMCC() (*MCCSegment, error) {
 	remain := payloadLen - consumed
 	if remain > 0 {
 		buf := make([]byte, remain)
-		if _, err := p.read(buf); err != nil {
+		if err := p.read(buf); err != nil {
 			return nil, err
 		}
 	}
@@ -1080,7 +1077,7 @@ func (p *Parser) parseMCO() (*MCOSegment, error) {
 	remain := payloadLen - (1 + stageCount)
 	if remain > 0 {
 		buf := make([]byte, remain)
-		if _, err := p.read(buf); err != nil {
+		if err := p.read(buf); err != nil {
 			return nil, err
 		}
 	}
@@ -1157,13 +1154,13 @@ func (p *Parser) readUint32() (uint32, error) {
 	return val, nil
 }
 
-func (p *Parser) read(buf []byte) (int, error) {
+func (p *Parser) read(buf []byte) error {
 	if p.offset+len(buf) > len(p.data) {
-		return 0, io.EOF
+		return io.EOF
 	}
-	n := copy(buf, p.data[p.offset:p.offset+len(buf)])
-	p.offset += n
-	return n, nil
+	copy(buf, p.data[p.offset:p.offset+len(buf)])
+	p.offset += len(buf)
+	return nil
 }
 
 func (p *Parser) skipSegment() error {
@@ -1199,21 +1196,21 @@ func (p *Parser) readTileData() []byte {
 	return p.data[start:p.offset]
 }
 
-func (p *Parser) readTileDataWithLength(tileStart int, psot uint32) ([]byte, error) {
+func (p *Parser) readTileDataWithLength(tileStart int, psot uint32) []byte {
 	if psot == 0 {
-		return p.readTileData(), nil
+		return p.readTileData()
 	}
 	consumed := p.offset - tileStart
 	if int(psot) < consumed {
-		return p.readTileData(), nil
+		return p.readTileData()
 	}
 	remaining := int(psot) - consumed
 	if p.offset+remaining > len(p.data) {
-		return p.readTileData(), nil
+		return p.readTileData()
 	}
 	start := p.offset
 	p.offset += remaining
-	return p.data[start:p.offset], nil
+	return p.data[start:p.offset]
 }
 
 func componentIndexSize(siz *SIZSegment) int {
@@ -1223,13 +1220,13 @@ func componentIndexSize(siz *SIZSegment) int {
 	return 1
 }
 
-func (p *Parser) readComponentIndex(siz *SIZSegment) (uint16, int, error) {
+func (p *Parser) readComponentIndex(siz *SIZSegment) (uint16, error) {
 	if componentIndexSize(siz) == 2 {
 		val, err := p.readUint16()
-		return val, 2, err
+		return val, err
 	}
 	val, err := p.readUint8()
-	return uint16(val), 1, err
+	return uint16(val), err
 }
 
 func cocEqual(a, b *COCSegment) bool {

@@ -1,3 +1,4 @@
+// Package colorspace provides color transform utilities for JPEG 2000.
 package colorspace
 
 import "math"

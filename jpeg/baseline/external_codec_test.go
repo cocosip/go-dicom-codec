@@ -345,7 +345,9 @@ func TestBaselineCodecRegistry(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)
@@ -384,7 +386,9 @@ func TestBaselineQualityLevels(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	qualities := []int{50, 75, 85, 95}
 	for _, quality := range qualities {

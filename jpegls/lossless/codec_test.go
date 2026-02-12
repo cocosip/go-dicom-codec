@@ -51,7 +51,9 @@ func TestCodecEncodeDecode8Bit(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Encode(src, encoded, nil); err != nil {
@@ -120,7 +122,9 @@ func TestCodecEncodeDecode12Bit(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Encode(src, encoded, nil); err != nil {
@@ -178,7 +182,9 @@ func TestCodecRGB(t *testing.T) {
 		PhotometricInterpretation: "RGB",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	if err := c.Encode(src, encoded, nil); err != nil {
@@ -237,7 +243,9 @@ func TestCodecRegistry(t *testing.T) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
 
 	encoded := codecHelpers.NewTestPixelData(frameInfo)
 	err := retrievedCodec.Encode(src, encoded, nil)

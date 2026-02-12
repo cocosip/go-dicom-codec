@@ -3,11 +3,11 @@ package lossless
 import (
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpegls/common"
+	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 // J array (JPEG-LS A.2.1)
-var J = common.J
+var J = runmode.J
 
 // RunModeContext matches CharLS context_run_mode
 type RunModeContext struct {
@@ -121,6 +121,7 @@ func (r *RunModeScanner) incRunIndex() {
 		r.RunIndex++
 	}
 }
+
 // DecRunIndex decrements the run index with bounds checking.
 func (r *RunModeScanner) DecRunIndex() {
 	if r.RunIndex > 0 {
@@ -191,7 +192,7 @@ func (r *RunModeScanner) DecodeRunLength(gr *GolombReader, remainingInLine int) 
 func (r *RunModeScanner) EncodeRunInterruption(gw *GolombWriter, ctx *RunModeContext, errorValue int) error {
 	k := ctx.GetGolombCode()
 	mapBit := ctx.ComputeMap(errorValue, k)
-	eMapped := 2*common.Abs(errorValue) - ctx.runInterruptionType
+	eMapped := 2*runmode.Abs(errorValue) - ctx.runInterruptionType
 	if mapBit {
 		eMapped--
 	}

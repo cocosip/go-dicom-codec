@@ -32,7 +32,9 @@ func ExampleCodec_Encode() {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		log.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Create codec with default rate (80)
 	c := lossy.NewCodecWithRate(80)
@@ -74,7 +76,9 @@ func ExampleCodec_Encode_withRateParameter() {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		log.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Test different rate levels
 	qualities := []int{100, 80, 50}
@@ -152,7 +156,9 @@ func ExampleCodec_Decode() {
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		log.Fatalf("AddFrame failed: %v", err)
+	}
 
 	// Encode
 	c := lossy.NewCodecWithRate(80)

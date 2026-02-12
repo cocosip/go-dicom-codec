@@ -17,22 +17,17 @@ func TestMQ47StatesMachine(t *testing.T) {
 
 	// Verify state tables are the expected size
 	t.Run("State Table Sizes", func(t *testing.T) {
-		qeTable := mqc.GetQeTable()
-		nmpsTable := mqc.GetNmpsTable()
-		nlpsTable := mqc.GetNlpsTable()
-		switchTable := mqc.GetSwitchTable()
-
-		if len(qeTable) != 47 {
-			t.Errorf("qeTable size = %d, want 47", len(qeTable))
+		if len(mqc.GetQeTable()) != 47 {
+			t.Errorf("qeTable size = %d, want 47", len(mqc.GetQeTable()))
 		}
-		if len(nmpsTable) != 47 {
-			t.Errorf("nmpsTable size = %d, want 47", len(nmpsTable))
+		if len(mqc.GetNmpsTable()) != 47 {
+			t.Errorf("nmpsTable size = %d, want 47", len(mqc.GetNmpsTable()))
 		}
-		if len(nlpsTable) != 47 {
-			t.Errorf("nlpsTable size = %d, want 47", len(nlpsTable))
+		if len(mqc.GetNlpsTable()) != 47 {
+			t.Errorf("nlpsTable size = %d, want 47", len(mqc.GetNlpsTable()))
 		}
-		if len(switchTable) != 47 {
-			t.Errorf("switchTable size = %d, want 47", len(switchTable))
+		if len(mqc.GetSwitchTable()) != 47 {
+			t.Errorf("switchTable size = %d, want 47", len(mqc.GetSwitchTable()))
 		}
 
 		t.Log("✅ All state tables have 47 entries")

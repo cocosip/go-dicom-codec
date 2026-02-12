@@ -1,3 +1,4 @@
+// Package main demonstrates progressive/multi-layer JPEG2000 encoding.
 package main
 
 import (
@@ -50,7 +51,10 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Create parameters with 5 quality layers
 	params := lossy.NewLossyParameters().
@@ -113,7 +117,10 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Create parameters with layers + target ratio
 	params := lossy.NewLossyParameters().
@@ -166,7 +173,10 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 		PhotometricInterpretation: "MONOCHROME2",
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
-	src.AddFrame(pixelData)
+	if err := src.AddFrame(pixelData); err != nil {
+		fmt.Printf("   ERROR: AddFrame failed: %v\n", err)
+		return
+	}
 
 	// Encode with 5 layers
 	params := lossy.NewLossyParameters().

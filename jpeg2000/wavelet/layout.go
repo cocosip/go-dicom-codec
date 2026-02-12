@@ -36,8 +36,8 @@ func nextLowpassWindow(width, height, x0, y0 int) (nextWidth, nextHeight, nextX0
 	evenRow := isEven(x0)
 	evenCol := isEven(y0)
 
-	nextWidth, _ = splitLengths(width, evenRow)
-	nextHeight, _ = splitLengths(height, evenCol)
+	nextWidth = splitLengths(width, evenRow)
+	nextHeight = splitLengths(height, evenCol)
 	nextX0 = nextCoord(x0)
 	nextY0 = nextCoord(y0)
 	return

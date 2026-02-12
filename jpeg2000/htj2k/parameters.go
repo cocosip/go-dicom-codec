@@ -2,11 +2,11 @@ package htj2k
 
 import "github.com/cocosip/go-dicom/pkg/imaging/codec"
 
-// Ensure HTJ2KParameters implements codec.Parameters
-var _ codec.Parameters = (*HTJ2KParameters)(nil)
+// Ensure Parameters implements codec.Parameters
+var _ codec.Parameters = (*Parameters)(nil)
 
-// HTJ2KParameters contains parameters for HTJ2K (High-Throughput JPEG 2000) compression
-type HTJ2KParameters struct {
+// Parameters contains parameters for HTJ2K (High-Throughput JPEG 2000) compression
+type Parameters struct {
 	// Quality controls lossy compression quality (1-100)
 	// - 1: Maximum compression, lowest quality
 	// - 50: Medium quality
@@ -38,9 +38,9 @@ type HTJ2KParameters struct {
 	params map[string]interface{}
 }
 
-// NewHTJ2KParameters creates a new HTJ2KParameters with default values
-func NewHTJ2KParameters() *HTJ2KParameters {
-	return &HTJ2KParameters{
+// NewHTJ2KParameters creates default Parameters for HTJ2K
+func NewHTJ2KParameters() *Parameters {
+	return &Parameters{
 		Quality:     80, // Default quality 80 for lossy
 		BlockWidth:  64, // Default block width
 		BlockHeight: 64, // Default block height
@@ -50,8 +50,8 @@ func NewHTJ2KParameters() *HTJ2KParameters {
 }
 
 // NewHTJ2KLosslessParameters creates parameters optimized for lossless encoding
-func NewHTJ2KLosslessParameters() *HTJ2KParameters {
-	return &HTJ2KParameters{
+func NewHTJ2KLosslessParameters() *Parameters {
+	return &Parameters{
 		Quality:     100, // Quality 100 for lossless
 		BlockWidth:  64,
 		BlockHeight: 64,
@@ -61,7 +61,7 @@ func NewHTJ2KLosslessParameters() *HTJ2KParameters {
 }
 
 // GetParameter retrieves a parameter by name (implements codec.Parameters)
-func (p *HTJ2KParameters) GetParameter(name string) interface{} {
+func (p *Parameters) GetParameter(name string) interface{} {
 	switch name {
 	case "quality":
 		return p.Quality
@@ -78,7 +78,7 @@ func (p *HTJ2KParameters) GetParameter(name string) interface{} {
 }
 
 // SetParameter sets a parameter value (implements codec.Parameters)
-func (p *HTJ2KParameters) SetParameter(name string, value interface{}) {
+func (p *Parameters) SetParameter(name string, value interface{}) {
 	switch name {
 	case "quality":
 		if v, ok := value.(int); ok {
@@ -103,7 +103,7 @@ func (p *HTJ2KParameters) SetParameter(name string, value interface{}) {
 }
 
 // Validate checks if the parameters are valid and adjusts them if needed
-func (p *HTJ2KParameters) Validate() error {
+func (p *Parameters) Validate() error {
 	// Quality must be in range 1-100
 	if p.Quality < 1 {
 		p.Quality = 1
@@ -140,20 +140,20 @@ func (p *HTJ2KParameters) Validate() error {
 }
 
 // WithQuality sets the quality and returns the parameters for chaining
-func (p *HTJ2KParameters) WithQuality(quality int) *HTJ2KParameters {
+func (p *Parameters) WithQuality(quality int) *Parameters {
 	p.Quality = quality
 	return p
 }
 
 // WithBlockSize sets both block width and height and returns the parameters for chaining
-func (p *HTJ2KParameters) WithBlockSize(width, height int) *HTJ2KParameters {
+func (p *Parameters) WithBlockSize(width, height int) *Parameters {
 	p.BlockWidth = width
 	p.BlockHeight = height
 	return p
 }
 
 // WithNumLevels sets the number of decomposition levels and returns the parameters for chaining
-func (p *HTJ2KParameters) WithNumLevels(numLevels int) *HTJ2KParameters {
+func (p *Parameters) WithNumLevels(numLevels int) *Parameters {
 	p.NumLevels = numLevels
 	return p
 }

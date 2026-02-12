@@ -41,7 +41,7 @@ func TestRLEncodingPatterns(t *testing.T) {
 			name:   "3x3_uniform",
 			width:  3,
 			height: 3,
-			pattern: func(x, y int) int32 {
+			pattern: func(_, _ int) int32 {
 				return -128
 			},
 		},
@@ -49,7 +49,7 @@ func TestRLEncodingPatterns(t *testing.T) {
 			name:   "16x16_uniform",
 			width:  16,
 			height: 16,
-			pattern: func(x, y int) int32 {
+			pattern: func(_, _ int) int32 {
 				return -128
 			},
 		},

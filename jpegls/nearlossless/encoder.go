@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
-	jpegcommon "github.com/cocosip/go-dicom-codec/jpegls/common"
 	"github.com/cocosip/go-dicom-codec/jpegls/lossless"
+	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 // Encoder represents a JPEG-LS near-lossless encoder
@@ -333,8 +333,9 @@ func (enc *Encoder) correctPrediction(predicted int) int {
 
 // getNeighbors gets neighboring pixels following CharLS edge handling
 // CharLS initializes edge pixels as:
-//   current_line_[-1] = previous_line_[0]  (left edge = pixel above)
-//   previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
+//
+//	current_line_[-1] = previous_line_[0]  (left edge = pixel above)
+//	previous_line_[width_] = previous_line_[width_ - 1] (right padding = rightmost top pixel)
 func (enc *Encoder) getNeighbors(pixels []int, x, y, comp int) (int, int, int, int) {
 	stride := enc.components
 	offset := comp
@@ -428,7 +429,7 @@ func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, com
 
 		// Check if pixel is close enough to ra to be in the run
 		// According to JPEG-LS T.87 standard, RUN mode continues while |Ix - Ra| <= NEAR
-		if jpegcommon.Abs(currPixel-ra) <= enc.near {
+		if runmode.Abs(currPixel-ra) <= enc.near {
 			runLength++
 		} else {
 			break
@@ -482,7 +483,7 @@ func (enc *Encoder) doRunMode(gw *lossless.GolombWriter, pixels []int, x, y, com
 // Matches CharLS encode_run_interruption_pixel (scan.h lines 779-791)
 func (enc *Encoder) encodeRunInterruptionPixel(gw *lossless.GolombWriter, x, ra, rb int) (int, error) {
 	// CharLS: if (std::abs(ra - rb) <= traits_.near_lossless)
-	if jpegcommon.Abs(ra-rb) <= enc.near {
+	if runmode.Abs(ra-rb) <= enc.near {
 		// Use run mode context 1
 		// CharLS: const int32_t error_value{traits_.compute_error_value(x - ra)};
 		errorValue := enc.computeErrorValue(x - ra)
@@ -498,13 +499,13 @@ func (enc *Encoder) encodeRunInterruptionPixel(gw *lossless.GolombWriter, x, ra,
 
 	// Use run mode context 0
 	// CharLS: const int32_t error_value{traits_.compute_error_value((x - rb) * sign(rb - ra))};
-	errorValue := enc.computeErrorValue((x - rb) * jpegcommon.Sign(rb-ra))
+	errorValue := enc.computeErrorValue((x - rb) * runmode.Sign(rb-ra))
 
 	if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], errorValue); err != nil {
 		return 0, err
 	}
 
 	// CharLS: return traits_.compute_reconstructed_sample(rb, error_value * sign(rb - ra))
-	reconstructed := enc.traits.ComputeReconstructedSample(rb, errorValue*jpegcommon.Sign(rb-ra))
+	reconstructed := enc.traits.ComputeReconstructedSample(rb, errorValue*runmode.Sign(rb-ra))
 	return reconstructed, nil
 }

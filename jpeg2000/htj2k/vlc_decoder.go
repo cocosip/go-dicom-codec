@@ -30,7 +30,7 @@ func NewVLCDecoder(data []byte) *VLCDecoder {
 	return v
 }
 
-// buildLookupTables builds the lookup tables from VLC_tbl0 and VLC_tbl1
+// buildLookupTables builds the lookup tables from VLCTbl0 and VLCTbl1
 // This follows the OpenJPEG approach in vlc_init_tables()
 func (v *VLCDecoder) buildLookupTables() {
 	// Build lookup table for tbl0
@@ -39,8 +39,8 @@ func (v *VLCDecoder) buildLookupTables() {
 		cQ := i >> 7
 		bestLen := uint8(0)
 		var packed uint16
-		for j := range VLC_tbl0 {
-			entry := &VLC_tbl0[j]
+		for j := range VLCTbl0 {
+			entry := &VLCTbl0[j]
 			if int(entry.CQ) != cQ {
 				continue
 			}
@@ -65,8 +65,8 @@ func (v *VLCDecoder) buildLookupTables() {
 		cQ := i >> 7
 		bestLen := uint8(0)
 		var packed uint16
-		for j := range VLC_tbl1 {
-			entry := &VLC_tbl1[j]
+		for j := range VLCTbl1 {
+			entry := &VLCTbl1[j]
 			if int(entry.CQ) != cQ {
 				continue
 			}
@@ -91,7 +91,7 @@ func (v *VLCDecoder) buildLookupTables() {
 func (v *VLCDecoder) readBits(n int) (uint32, bool) {
 	// Ensure we have enough bits in buffer (read forward)
 	for v.bitCount < n && v.pos < len(v.data) {
-		b := uint8(v.data[v.pos])
+		b := v.data[v.pos]
 		v.pos++
 
 		// Check for bit-unstuffing: if lastByte > 0x8F and b == 0x7F
@@ -144,7 +144,7 @@ func (v *VLCDecoder) ReadBitsLE(n int) (uint32, error) {
 // Returns: (rho, u_off, e_k, e_1, found)
 func (v *VLCDecoder) DecodeInitialRow(context uint8) (uint8, uint8, uint8, uint8, bool) {
 	// Progressive decode to select exact-length match
-	var bits uint32 = 0
+	var bits uint32
 	for length := 1; length <= 7; length++ {
 		b, ok := v.readBits(1)
 		if !ok {
@@ -152,7 +152,7 @@ func (v *VLCDecoder) DecodeInitialRow(context uint8) (uint8, uint8, uint8, uint8
 		}
 		bits |= (b << (length - 1))
 		// search entries with this length
-		for _, entry := range VLC_tbl0 {
+		for _, entry := range VLCTbl0 {
 			if entry.CQ != context || int(entry.CwdLen) != length {
 				continue
 			}
@@ -171,14 +171,14 @@ func (v *VLCDecoder) DecodeInitialRow(context uint8) (uint8, uint8, uint8, uint8
 
 // DecodeNonInitialRow decodes VLC for non-initial quad row
 func (v *VLCDecoder) DecodeNonInitialRow(context uint8) (uint8, uint8, uint8, uint8, bool) {
-	var bits uint32 = 0
+	var bits uint32
 	for length := 1; length <= 7; length++ {
 		b, ok := v.readBits(1)
 		if !ok {
 			return 0, 0, 0, 0, false
 		}
 		bits |= (b << (length - 1))
-		for _, entry := range VLC_tbl1 {
+		for _, entry := range VLCTbl1 {
 			if entry.CQ != context || int(entry.CwdLen) != length {
 				continue
 			}
@@ -253,7 +253,6 @@ func (v *VLCDecoder) DecodeQuad() (uint8, []uint32, bool) {
 func (v *VLCDecoder) DecodeQuadWithContext(context uint8, isFirstRow bool) (uint8, uint8, uint8, uint8, bool) {
 	if isFirstRow {
 		return v.DecodeInitialRow(context)
-	} else {
-		return v.DecodeNonInitialRow(context)
 	}
+	return v.DecodeNonInitialRow(context)
 }

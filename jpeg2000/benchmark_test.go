@@ -1,3 +1,4 @@
+// Package jpeg2000 provides tests and benchmarks for the JPEG2000 implementation.
 package jpeg2000
 
 import (

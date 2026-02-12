@@ -109,7 +109,7 @@ func TestNearLosslessParameters_WithNEAR(t *testing.T) {
 	}
 }
 
-func TestNearLosslessParameters_ImplementsCodecParameters(t *testing.T) {
+func TestNearLosslessParameters_ImplementsCodecParameters(_ *testing.T) {
 	var _ codec.Parameters = (*JPEGLSNearLosslessParameters)(nil)
 	var _ codec.Parameters = NewNearLosslessParameters()
 }

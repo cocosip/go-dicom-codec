@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cocosip/go-dicom-codec/jpeg/common"
-	jplscommon "github.com/cocosip/go-dicom-codec/jpegls/common"
+	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
 )
 
 // Encoder represents a JPEG-LS lossless encoder
@@ -336,7 +336,7 @@ func (enc *Encoder) encodeComponent(gw *GolombWriter, pixels []int, comp int) er
 
 // encodeRunInterruptionPixel encodes the pixel that interrupts a run (CharLS: encode_run_interruption_pixel)
 func (enc *Encoder) encodeRunInterruptionPixel(gw *GolombWriter, x, ra, rb int) (int, error) {
-	if jplscommon.Abs(ra-rb) <= enc.traits.Near {
+	if runmode.Abs(ra-rb) <= enc.traits.Near {
 		// Use run mode context 1
 		errorValue := enc.computeErrorValue(x - ra)
 		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[1], errorValue); err != nil {
