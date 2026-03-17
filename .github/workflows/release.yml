@@ -51,7 +51,7 @@ jobs:
           {
             echo "## What's Changed"
             echo ""
-            git log "${PREV_TAG}..HEAD" --pretty=tformat:"- %s" --no-merges
+            git log "${PREV_TAG}..HEAD" --pretty=tformat:"- %s" --no-merges | sed 's/`/\\`/g'
             echo ""
             echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${CURR_TAG}"
           } > CHANGELOG_BODY.md
@@ -62,3 +62,4 @@ jobs:
           body_path: CHANGELOG_BODY.md
           draft: false
           prerelease: false
+          make_latest: true
