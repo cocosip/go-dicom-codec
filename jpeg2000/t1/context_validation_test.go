@@ -220,6 +220,9 @@ func readOpenJPEGFile(t *testing.T, name string) string {
 	path := filepath.Join(root, "fo-dicom-codec-code", "Native", "Common", "OpenJPEG", name)
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("OpenJPEG source not available (fo-dicom-codec-code not checked out): %s", path)
+		}
 		t.Fatalf("read OpenJPEG file %s: %v", path, err)
 	}
 	return string(data)

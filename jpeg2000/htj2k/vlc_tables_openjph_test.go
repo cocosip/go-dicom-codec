@@ -40,6 +40,9 @@ func parseOpenJPHTable(t *testing.T, filename string) []VLCEntry {
 
 	file, err := os.Open(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			t.Skipf("OpenJPH source not available (fo-dicom-codec-code not checked out): %s", path)
+		}
 		t.Fatalf("open %s: %v", path, err)
 	}
 	defer func() { _ = file.Close() }()
