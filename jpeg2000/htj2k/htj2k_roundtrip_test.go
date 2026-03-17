@@ -13,17 +13,21 @@ func TestHTJ2KLosslessRoundTrip(t *testing.T) {
 		name   string
 		width  uint16
 		height uint16
+		large  bool
 	}{
-		{"16x16", 16, 16},
-		{"64x64", 64, 64},
-		{"128x128", 128, 128},
-		{"256x256", 256, 256},
-		{"512x512", 512, 512},
-		{"1024x1024", 1024, 1024},
+		{"16x16", 16, 16, false},
+		{"64x64", 64, 64, false},
+		{"128x128", 128, 128, false},
+		{"256x256", 256, 256, false},
+		{"512x512", 512, 512, true},
+		{"1024x1024", 1024, 1024, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.large && testing.Short() {
+				t.Skip("Skipping large image test in short mode")
+			}
 			// Create test image (grayscale gradient)
 			size := int(tt.width) * int(tt.height)
 			testData := make([]byte, size)
