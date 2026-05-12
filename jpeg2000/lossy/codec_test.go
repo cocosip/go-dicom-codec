@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
+	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
 // TestCodecName tests the codec name
