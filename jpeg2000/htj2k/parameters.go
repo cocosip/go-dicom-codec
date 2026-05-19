@@ -5,6 +5,13 @@ import "github.com/cocosip/go-dicom/pkg/imaging/codec"
 // Ensure Parameters implements codec.Parameters
 var _ codec.Parameters = (*Parameters)(nil)
 
+const (
+	paramQuality     = "quality"
+	paramBlockWidth  = "blockWidth"
+	paramBlockHeight = "blockHeight"
+	paramNumLevels   = "numLevels"
+)
+
 // Parameters contains parameters for HTJ2K (High-Throughput JPEG 2000) compression
 type Parameters struct {
 	// Quality controls lossy compression quality (1-100)
@@ -63,13 +70,13 @@ func NewHTJ2KLosslessParameters() *Parameters {
 // GetParameter retrieves a parameter by name (implements codec.Parameters)
 func (p *Parameters) GetParameter(name string) interface{} {
 	switch name {
-	case "quality":
+	case paramQuality:
 		return p.Quality
-	case "blockWidth":
+	case paramBlockWidth:
 		return p.BlockWidth
-	case "blockHeight":
+	case paramBlockHeight:
 		return p.BlockHeight
-	case "numLevels":
+	case paramNumLevels:
 		return p.NumLevels
 	default:
 		// Check custom parameters
@@ -80,19 +87,19 @@ func (p *Parameters) GetParameter(name string) interface{} {
 // SetParameter sets a parameter value (implements codec.Parameters)
 func (p *Parameters) SetParameter(name string, value interface{}) {
 	switch name {
-	case "quality":
+	case paramQuality:
 		if v, ok := value.(int); ok {
 			p.Quality = v
 		}
-	case "blockWidth":
+	case paramBlockWidth:
 		if v, ok := value.(int); ok {
 			p.BlockWidth = v
 		}
-	case "blockHeight":
+	case paramBlockHeight:
 		if v, ok := value.(int); ok {
 			p.BlockHeight = v
 		}
-	case "numLevels":
+	case paramNumLevels:
 		if v, ok := value.(int); ok {
 			p.NumLevels = v
 		}

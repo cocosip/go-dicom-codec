@@ -3,9 +3,9 @@ package lossless
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestCodecInterface verifies the codec implements the interface
@@ -43,7 +43,7 @@ func TestCodecTransferSyntax(t *testing.T) {
 
 	// The UID should be 1.2.840.10008.1.2.4.90
 	uid := ts.UID().UID()
-	expected := "1.2.840.10008.1.2.4.90"
+	expected := jpeg2000LosslessUID
 	if uid != expected {
 		t.Errorf("Transfer Syntax UID = %s, want %s", uid, expected)
 	}

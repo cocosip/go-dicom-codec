@@ -31,7 +31,7 @@ func TestCodecRegistration(t *testing.T) {
 		t.Fatal("Transfer syntax is nil")
 	}
 
-	expectedUID := "1.2.840.10008.1.2.4.90"
+	expectedUID := jpeg2000LosslessUID
 	if ts.UID().UID() != expectedUID {
 		t.Errorf("Expected UID %s, got %s", expectedUID, ts.UID().UID())
 	}
@@ -103,7 +103,7 @@ func TestCodecMetadata(t *testing.T) {
 		{
 			name:     "Transfer Syntax UID",
 			getValue: func() interface{} { return c.TransferSyntax().UID().UID() },
-			expected: "1.2.840.10008.1.2.4.90",
+			expected: jpeg2000LosslessUID,
 		},
 	}
 

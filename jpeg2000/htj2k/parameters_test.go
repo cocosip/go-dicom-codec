@@ -44,10 +44,10 @@ func TestHTJ2KParameters_GetParameter(t *testing.T) {
 		param string
 		want  interface{}
 	}{
-		{"quality", "quality", 90},
-		{"blockWidth", "blockWidth", 32},
-		{"blockHeight", "blockHeight", 32},
-		{"numLevels", "numLevels", 3},
+		{paramQuality, paramQuality, 90},
+		{paramBlockWidth, paramBlockWidth, 32},
+		{paramBlockHeight, paramBlockHeight, 32},
+		{paramNumLevels, paramNumLevels, 3},
 	}
 
 	for _, tt := range tests {
@@ -70,26 +70,26 @@ func TestHTJ2KParameters_SetParameter(t *testing.T) {
 		check func() interface{}
 	}{
 		{
-			name:  "quality",
-			param: "quality",
+			name:  paramQuality,
+			param: paramQuality,
 			value: 50,
 			check: func() interface{} { return params.Quality },
 		},
 		{
-			name:  "blockWidth",
-			param: "blockWidth",
+			name:  paramBlockWidth,
+			param: paramBlockWidth,
 			value: 128,
 			check: func() interface{} { return params.BlockWidth },
 		},
 		{
-			name:  "blockHeight",
-			param: "blockHeight",
+			name:  paramBlockHeight,
+			param: paramBlockHeight,
 			value: 128,
 			check: func() interface{} { return params.BlockHeight },
 		},
 		{
-			name:  "numLevels",
-			param: "numLevels",
+			name:  paramNumLevels,
+			param: paramNumLevels,
 			value: 6,
 			check: func() interface{} { return params.NumLevels },
 		},

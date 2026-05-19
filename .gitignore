@@ -32,8 +32,9 @@ Thumbs.db
 
 # Test data
 testdata/output/
-/.claude
+.claude/
 
-/fo-dicom-codec-code
-/toolstmpclaude-*
-/tools
+fo-dicom-codec-code/
+toolstmpclaude-*/
+tools/
+.codex-go-cache/

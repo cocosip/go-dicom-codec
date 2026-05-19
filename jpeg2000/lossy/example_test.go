@@ -29,7 +29,7 @@ func ExampleCodec_Encode() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -72,7 +72,7 @@ func ExampleCodec_Encode_withRateParameter() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -127,8 +127,8 @@ func ExampleCodec_Encode_withRateParameter() {
 	}
 
 	// Expected approximate results (may vary slightly):
-	// Rate 100: Compression ~3:1, Max error: ≤1
-	// Rate 80: Compression ~3-4:1, Max error: ≤3
+	// Rate 100: Compression ~3:1, Max error: 鈮?
+	// Rate 80: Compression ~3-4:1, Max error: 鈮?
 	// Rate 50: Compression ~5-6:1, Max error: ~12-15
 }
 
@@ -152,7 +152,7 @@ func ExampleCodec_Decode() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)

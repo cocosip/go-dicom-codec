@@ -45,7 +45,7 @@ func TestHTJ2KLosslessRoundTrip(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 			src := codecHelpers.NewTestPixelData(frameInfo)
 			if err := src.AddFrame(testData); err != nil {
@@ -126,7 +126,7 @@ func TestHTJ2KLosslessRPCLRoundTrip(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(testData); err != nil {
@@ -198,7 +198,7 @@ func TestHTJ2KLossyRoundTrip(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 			src := codecHelpers.NewTestPixelData(frameInfo)
 			if err := src.AddFrame(testData); err != nil {
@@ -278,7 +278,7 @@ func TestHTJ2KRGBRoundTrip(t *testing.T) {
 		SamplesPerPixel:           3,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(testData); err != nil {
@@ -343,7 +343,7 @@ func TestHTJ2K12BitRoundTrip(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(testData); err != nil {

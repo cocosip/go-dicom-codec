@@ -10,11 +10,11 @@ func TestProgressionOrderRoundTrip(t *testing.T) {
 		name  string
 		order uint8
 	}{
-		{"LRCP", 0},
-		{"RLCP", 1},
-		{"RPCL", 2},
-		{"PCRL", 3},
-		{"CPRL", 4},
+		{progressionLRCPName, 0},
+		{progressionRLCPName, 1},
+		{progressionRPCLName, 2},
+		{progressionPCRLName, 3},
+		{progressionCPRLName, 4},
 	}
 
 	imageConfigs := []struct {
@@ -114,7 +114,7 @@ func TestProgressionOrderRoundTrip(t *testing.T) {
 					t.Errorf("%s: %d mismatches, max error: %d",
 						po.name, mismatchCount, maxError)
 				} else {
-					t.Logf("%s: ✓ Perfect reconstruction", po.name)
+					t.Logf("%s: 鉁?Perfect reconstruction", po.name)
 				}
 			})
 		}
@@ -127,11 +127,11 @@ func TestProgressionOrderMultiComponent(t *testing.T) {
 		name  string
 		order uint8
 	}{
-		{"LRCP", 0},
-		{"RLCP", 1},
-		{"RPCL", 2},
-		{"PCRL", 3},
-		{"CPRL", 4},
+		{progressionLRCPName, 0},
+		{progressionRLCPName, 1},
+		{progressionRPCLName, 2},
+		{progressionPCRLName, 3},
+		{progressionCPRLName, 4},
 	}
 
 	width, height := 64, 64
@@ -207,7 +207,7 @@ func TestProgressionOrderMultiComponent(t *testing.T) {
 					t.Errorf("%s Component %d: %d mismatches, max error: %d",
 						po.name, c, mismatchCount, maxError)
 				} else {
-					t.Logf("%s Component %d: ✓ Perfect", po.name, c)
+					t.Logf("%s Component %d: 鉁?Perfect", po.name, c)
 				}
 			}
 		})
@@ -220,11 +220,11 @@ func TestProgressionOrderWithPrecincts(t *testing.T) {
 		name  string
 		order uint8
 	}{
-		{"LRCP", 0},
-		{"RLCP", 1},
-		{"RPCL", 2},
-		{"PCRL", 3},
-		{"CPRL", 4},
+		{progressionLRCPName, 0},
+		{progressionRLCPName, 1},
+		{progressionRPCLName, 2},
+		{progressionPCRLName, 3},
+		{progressionCPRLName, 4},
 	}
 
 	width, height := 128, 128
@@ -248,7 +248,7 @@ func TestProgressionOrderWithPrecincts(t *testing.T) {
 			params.NumLevels = 3
 			params.NumLayers = 2
 			params.ProgressionOrder = po.order
-			params.PrecinctWidth = 64  // 2x2 precincts
+			params.PrecinctWidth = 64 // 2x2 precincts
 			params.PrecinctHeight = 64
 
 			encoder := NewEncoder(params)
@@ -295,7 +295,7 @@ func TestProgressionOrderWithPrecincts(t *testing.T) {
 				t.Errorf("%s with precincts: %d mismatches, max error: %d",
 					po.name, mismatchCount, maxError)
 			} else {
-				t.Logf("%s with precincts: ✓ Perfect reconstruction", po.name)
+				t.Logf("%s with precincts: 鉁?Perfect reconstruction", po.name)
 			}
 		})
 	}
@@ -317,11 +317,11 @@ func TestProgressionOrderComparison(t *testing.T) {
 		name  string
 		order uint8
 	}{
-		{"LRCP", 0},
-		{"RLCP", 1},
-		{"RPCL", 2},
-		{"PCRL", 3},
-		{"CPRL", 4},
+		{progressionLRCPName, 0},
+		{progressionRLCPName, 1},
+		{progressionRPCLName, 2},
+		{progressionPCRLName, 3},
+		{progressionCPRLName, 4},
 	}
 
 	results := make(map[string]int)
@@ -345,7 +345,7 @@ func TestProgressionOrderComparison(t *testing.T) {
 
 	// All progression orders should produce the same compressed size
 	// (since they only change the packet order, not the compression)
-	firstSize := results["LRCP"]
+	firstSize := results[progressionLRCPName]
 	for name, size := range results {
 		if size != firstSize {
 			t.Logf("Note: %s size (%d) differs from LRCP (%d) - this is acceptable as packet ordering may affect size slightly",

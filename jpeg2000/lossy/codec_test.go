@@ -68,7 +68,7 @@ func TestBasicEncodeDecode(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -184,7 +184,7 @@ func TestLargerImage(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -256,7 +256,7 @@ func TestRGBImage(t *testing.T) {
 		SamplesPerPixel:           3,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -309,13 +309,12 @@ func TestRGBImage(t *testing.T) {
 	}
 }
 
-// TestRateControlAndLayers verifies TargetRatio、多层、显式量化步长的组合可正常工作。
+// TestRateControlAndLayers verifies rate control and progressive layer encoding.
 func TestRateControlAndLayers(t *testing.T) {
 	width := uint16(64)
 	height := uint16(64)
 	numPixels := int(width) * int(height)
 
-	// 构造简单梯度
 	pixelData := make([]byte, numPixels)
 	for i := 0; i < numPixels; i++ {
 		pixelData[i] = byte((i * 7) % 256)
@@ -330,7 +329,7 @@ func TestRateControlAndLayers(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -338,12 +337,10 @@ func TestRateControlAndLayers(t *testing.T) {
 		t.Fatalf("AddFrame failed: %v", err)
 	}
 
-	// 自定义参数：目标压缩比 5:1，多层，量化倍率 1.2，并提供显式子带步长（长度需匹配 3*numLevels+1）。
 	params := NewLossyParameters().
 		WithNumLayers(3).
 		WithTargetRatio(5.0).
 		WithQuantStepScale(1.2)
-	// 默认 NumLevels=5，但小图会被 clamp；按 clamp 后的层数构造步长表。
 	clampedLevels := 0
 	minDim := int(width)
 	if int(height) < minDim {
@@ -355,7 +352,7 @@ func TestRateControlAndLayers(t *testing.T) {
 	expectedSubbands := 3*clampedLevels + 1
 	steps := make([]float64, expectedSubbands)
 	for i := range steps {
-		steps[i] = 2.0 + float64(i) // 简单递增的步长
+		steps[i] = 2.0 + float64(i)
 	}
 	params.WithSubbandSteps(steps)
 
@@ -372,7 +369,7 @@ func TestRateControlAndLayers(t *testing.T) {
 
 	ratio := float64(len(pixelData)) / float64(len(encodedData))
 	t.Logf("Target ratio: %.2f, actual: %.2f", params.TargetRatio, ratio)
-	// 验证压缩比接近目标（容差 50% 内）
+	// 楠岃瘉鍘嬬缉姣旀帴杩戠洰鏍囷紙瀹瑰樊 50% 鍐咃級
 	if math.Abs(ratio-params.TargetRatio) > params.TargetRatio*0.5 {
 		t.Fatalf("Ratio too far from target: got %.2f, want ~%.2f", ratio, params.TargetRatio)
 	}

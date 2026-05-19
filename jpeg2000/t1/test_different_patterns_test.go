@@ -16,7 +16,7 @@ func TestDifferentPatterns_5x5(t *testing.T) {
 			gen:  func(i int) int32 { return int32(i - 128) },
 		},
 		{
-			name: "All zeros",
+			name: testNameAllZeros,
 			gen:  func(_ int) int32 { return 0 },
 		},
 		{
@@ -84,4 +84,3 @@ func TestDifferentPatterns_5x5(t *testing.T) {
 		})
 	}
 }
-

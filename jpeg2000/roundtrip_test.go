@@ -14,14 +14,14 @@ func TestEncoderDecoderRoundTrip(t *testing.T) {
 		height    int
 		bitDepth  int
 		numLevels int
-		pattern   string // "gradient", "solid", "checker"
+		pattern   string // patternGradient, patternSolid, patternChecker
 	}{
-		{"8x8 0-level gradient", 8, 8, 8, 0, "gradient"},
-		{"16x16 0-level gradient", 16, 16, 8, 0, "gradient"},
-		{"32x32 0-level gradient", 32, 32, 8, 0, "gradient"},
-		{"64x64 0-level gradient", 64, 64, 8, 0, "gradient"},
-		{"8x8 0-level solid", 8, 8, 8, 0, "solid"},
-		{"16x16 0-level checker", 16, 16, 8, 0, "checker"},
+		{"8x8 0-level gradient", 8, 8, 8, 0, patternGradient},
+		{"16x16 0-level gradient", 16, 16, 8, 0, patternGradient},
+		{"32x32 0-level gradient", 32, 32, 8, 0, patternGradient},
+		{"64x64 0-level gradient", 64, 64, 8, 0, patternGradient},
+		{"8x8 0-level solid", 8, 8, 8, 0, patternSolid},
+		{"16x16 0-level checker", 16, 16, 8, 0, patternChecker},
 	}
 
 	for _, tt := range tests {
@@ -33,18 +33,18 @@ func TestEncoderDecoderRoundTrip(t *testing.T) {
 
 			// Fill with test pattern
 			switch tt.pattern {
-			case "gradient":
+			case patternGradient:
 				for y := 0; y < tt.height; y++ {
 					for x := 0; x < tt.width; x++ {
 						idx := y*tt.width + x
 						componentData[0][idx] = int32((x + y) % 256)
 					}
 				}
-			case "solid":
+			case patternSolid:
 				for i := range componentData[0] {
 					componentData[0][i] = 128
 				}
-			case "checker":
+			case patternChecker:
 				for y := 0; y < tt.height; y++ {
 					for x := 0; x < tt.width; x++ {
 						idx := y*tt.width + x
@@ -125,7 +125,7 @@ func TestEncoderDecoderRoundTrip(t *testing.T) {
 					100.0*float64(mismatchCount)/float64(len(componentData[0])),
 					maxError)
 			} else {
-				t.Log("✓ Perfect reconstruction (lossless)")
+				t.Log("鉁?Perfect reconstruction (lossless)")
 			}
 		})
 	}
@@ -195,7 +195,7 @@ func TestEncoderDecoderRoundTripMultiComponent(t *testing.T) {
 			t.Errorf("Component %d: %d / %d pixels mismatch",
 				c, mismatchCount, len(componentData[c]))
 		} else {
-			t.Logf("Component %d: ✓ Perfect reconstruction", c)
+			t.Logf("Component %d: 鉁?Perfect reconstruction", c)
 		}
 	}
 }
@@ -251,7 +251,7 @@ func TestEncoderDecoderRoundTripLarger(t *testing.T) {
 			}
 
 			compressionRatio := float64(numPixels) / float64(len(encoded))
-			t.Logf("Compression: %d → %d bytes (%.2f:1)",
+			t.Logf("Compression: %d 鈫?%d bytes (%.2f:1)",
 				numPixels, len(encoded), compressionRatio)
 
 			// Decode
@@ -286,7 +286,7 @@ func TestEncoderDecoderRoundTripLarger(t *testing.T) {
 				t.Logf("First mismatches:\n%s", strings.Join(firstMismatches, "\n"))
 				t.Errorf("Found %d total mismatches", mismatchCount)
 			} else {
-				t.Log("✓ Perfect reconstruction")
+				t.Log("鉁?Perfect reconstruction")
 			}
 		})
 	}

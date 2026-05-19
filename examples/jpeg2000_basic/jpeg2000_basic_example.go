@@ -11,6 +11,8 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
+const photometricMonochrome2 = "MONOCHROME2"
+
 // This example demonstrates basic JPEG 2000 lossless and lossy compression
 
 func main() {
@@ -46,7 +48,7 @@ func losslessExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -104,7 +106,7 @@ func lossyQualityExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -162,7 +164,7 @@ func lossyRatioExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {

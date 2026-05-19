@@ -4,11 +4,11 @@ import "testing"
 
 func TestEncodeUVLC(t *testing.T) {
 	tests := []struct {
-		name      string
-		u         uint32
-		wantUPfx  uint8
-		wantUSfx  uint8
-		wantUExt  uint8
+		name       string
+		u          uint32
+		wantUPfx   uint8
+		wantUSfx   uint8
+		wantUExt   uint8
 		wantPfxLen int
 		wantSfxLen int
 		wantExtLen int
@@ -44,7 +44,7 @@ func TestEncodeUVLC(t *testing.T) {
 			wantExtLen: 0,
 		},
 		{
-			name:       "u=3",
+			name:       testNameU3,
 			u:          3,
 			wantUPfx:   3,
 			wantUSfx:   0,
@@ -54,7 +54,7 @@ func TestEncodeUVLC(t *testing.T) {
 			wantExtLen: 0,
 		},
 		{
-			name:       "u=4",
+			name:       testNameU4,
 			u:          4,
 			wantUPfx:   3,
 			wantUSfx:   1,
@@ -162,12 +162,12 @@ func TestEncodeUVLCInitialPair(t *testing.T) {
 			want: 0, // Encode 0
 		},
 		{
-			name: "u=3",
+			name: testNameU3,
 			u:    3,
 			want: 1, // Encode 1
 		},
 		{
-			name: "u=4",
+			name: testNameU4,
 			u:    4,
 			want: 2, // Encode 2
 		},
@@ -208,25 +208,25 @@ func TestEncodePrefixBits(t *testing.T) {
 		{
 			name:       "u_pfx=1: '1'",
 			uPfx:       1,
-			wantBits:   0b1, // "1": bit0=1 → 0x1
+			wantBits:   0b1, // "1": bit0=1 鈫?0x1
 			wantLength: 1,
 		},
 		{
 			name:       "u_pfx=2: '01'",
 			uPfx:       2,
-			wantBits:   0b10, // "01": bit0=0, bit1=1 → 0x2
+			wantBits:   0b10, // "01": bit0=0, bit1=1 鈫?0x2
 			wantLength: 2,
 		},
 		{
 			name:       "u_pfx=3: '001'",
 			uPfx:       3,
-			wantBits:   0b100, // "001": bit0=0, bit1=0, bit2=1 → 0x4
+			wantBits:   0b100, // "001": bit0=0, bit1=0, bit2=1 鈫?0x4
 			wantLength: 3,
 		},
 		{
 			name:       "u_pfx=5: '000'",
 			uPfx:       5,
-			wantBits:   0b000, // "000": bit0=0, bit1=0, bit2=0 → 0x0
+			wantBits:   0b000, // "000": bit0=0, bit1=0, bit2=0 鈫?0x0
 			wantLength: 3,
 		},
 	}

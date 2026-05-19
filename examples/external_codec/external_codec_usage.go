@@ -1,4 +1,4 @@
-// Package main provides examples demonstrating "外部编解码器" usage with JPEG Lossless.
+// Package main provides examples demonstrating "澶栭儴缂栬В鐮佸櫒" usage with JPEG Lossless.
 package main
 
 import (
@@ -10,6 +10,8 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
+
+const photometricMonochrome2 = "MONOCHROME2"
 
 func main() {
 	fmt.Println("=== JPEG Lossless Codec Usage Example (External Interface) ===")
@@ -50,7 +52,7 @@ func directUsage() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -94,9 +96,9 @@ func directUsage() {
 	}
 
 	if errors == 0 {
-		fmt.Printf("✓ Perfect lossless reconstruction: all %d pixels match\n", len(srcData))
+		fmt.Printf("鉁?Perfect lossless reconstruction: all %d pixels match\n", len(srcData))
 	} else {
-		fmt.Printf("✗ Reconstruction errors: %d pixels differ\n", errors)
+		fmt.Printf("鉁?Reconstruction errors: %d pixels differ\n", errors)
 	}
 }
 
@@ -130,7 +132,7 @@ func registryUsage() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -169,9 +171,9 @@ func registryUsage() {
 	}
 
 	if errors == 0 {
-		fmt.Println("✓ Registry codec works perfectly")
+		fmt.Println("鉁?Registry codec works perfectly")
 	} else {
-		fmt.Printf("✗ Errors: %d\n", errors)
+		fmt.Printf("鉁?Errors: %d\n", errors)
 	}
 }
 
@@ -197,7 +199,7 @@ func parametersUsage() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -242,8 +244,8 @@ func parametersUsage() {
 	}
 
 	if errors == 0 {
-		fmt.Println("✓ Parameters override works correctly")
+		fmt.Println("鉁?Parameters override works correctly")
 	} else {
-		fmt.Printf("✗ Errors: %d\n", errors)
+		fmt.Printf("鉁?Errors: %d\n", errors)
 	}
 }

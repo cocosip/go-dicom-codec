@@ -3,9 +3,9 @@ package lossy
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestTypeSafeParametersIntegration tests that type-safe parameters work with codec
@@ -27,7 +27,7 @@ func TestTypeSafeParametersIntegration(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -84,7 +84,7 @@ func TestBackwardCompatibility(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -179,7 +179,7 @@ func TestNilParameters(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)

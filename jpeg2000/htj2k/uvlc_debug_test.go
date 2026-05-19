@@ -12,8 +12,8 @@ func TestUVLCEncodeDecode(t *testing.T) {
 	}{
 		{"u=1", 1},
 		{"u=2", 2},
-		{"u=3", 3},
-		{"u=4", 4},
+		{testNameU3, 3},
+		{testNameU4, 4},
 		{"u=5", 5},
 		{"u=10", 10},
 	}

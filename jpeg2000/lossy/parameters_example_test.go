@@ -28,7 +28,7 @@ func Example_typeSafeParameters() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -74,7 +74,7 @@ func Example_legacyParameters() {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)

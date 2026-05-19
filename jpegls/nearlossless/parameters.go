@@ -7,6 +7,8 @@ import (
 // Ensure JPEGLSNearLosslessParameters implements codec.Parameters
 var _ codec.Parameters = (*JPEGLSNearLosslessParameters)(nil)
 
+const paramNear = "near"
+
 // JPEGLSNearLosslessParameters contains parameters for JPEG-LS Near-Lossless compression
 type JPEGLSNearLosslessParameters struct {
 	// NEAR controls the maximum allowed error per pixel (0-255)
@@ -33,7 +35,7 @@ func NewNearLosslessParameters() *JPEGLSNearLosslessParameters {
 // GetParameter retrieves a parameter by name (implements codec.Parameters)
 func (p *JPEGLSNearLosslessParameters) GetParameter(name string) interface{} {
 	switch name {
-	case "near":
+	case paramNear:
 		return p.NEAR
 	default:
 		// Check custom parameters
@@ -44,7 +46,7 @@ func (p *JPEGLSNearLosslessParameters) GetParameter(name string) interface{} {
 // SetParameter sets a parameter value (implements codec.Parameters)
 func (p *JPEGLSNearLosslessParameters) SetParameter(name string, value interface{}) {
 	switch name {
-	case "near":
+	case paramNear:
 		if v, ok := value.(int); ok {
 			p.NEAR = v
 		}

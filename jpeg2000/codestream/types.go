@@ -424,7 +424,7 @@ func (s SubbandType) String() string {
 	case SubbandHH:
 		return "HH"
 	default:
-		return "UNKNOWN"
+		return unknownString
 	}
 }
 

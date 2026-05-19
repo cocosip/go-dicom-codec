@@ -3,9 +3,9 @@ package nearlossless
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestSinglePixelImage tests encoding/decoding of a 1x1 image
@@ -37,7 +37,7 @@ func TestSinglePixelImage(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)
@@ -110,7 +110,7 @@ func TestSingleLineImage(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)
@@ -190,7 +190,7 @@ func TestSingleColumnImage(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)

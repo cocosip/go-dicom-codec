@@ -42,7 +42,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData
@@ -63,7 +63,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 
@@ -90,7 +90,7 @@ func TestExtendedCodecEncodeDecode8Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	decoded := codecHelpers.NewTestPixelData(decodedFrameInfo)
 
@@ -154,7 +154,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData
@@ -175,7 +175,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 
@@ -202,7 +202,7 @@ func TestExtendedCodecEncodeDecode12Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	decoded := codecHelpers.NewTestPixelData(decodedFrameInfo)
 
@@ -272,7 +272,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 		SamplesPerPixel:           uint16(components),
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 
 	// Create source PixelData
@@ -293,7 +293,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 		SamplesPerPixel:           uint16(components),
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 
@@ -320,7 +320,7 @@ func TestExtendedCodecRGB(t *testing.T) {
 		SamplesPerPixel:           uint16(components),
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 	decoded := codecHelpers.NewTestPixelData(decodedFrameInfo)
 
@@ -377,7 +377,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData
@@ -402,7 +402,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 
@@ -425,7 +425,7 @@ func TestExtendedCodecWithParameters(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	decoded := codecHelpers.NewTestPixelData(decodedFrameInfo)
 
@@ -484,7 +484,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData
@@ -503,7 +503,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 
@@ -521,7 +521,7 @@ func TestExtendedCodecRegistry(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	decoded := codecHelpers.NewTestPixelData(decodedFrameInfo)
 
@@ -546,7 +546,7 @@ func TestExtendedCodecRejects16Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -563,7 +563,7 @@ func TestExtendedCodecRejects16Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	encoded := codecHelpers.NewTestPixelData(encodedFrameInfo)
 

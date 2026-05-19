@@ -12,6 +12,11 @@ import (
 
 var _ codec.Codec = (*Codec)(nil)
 
+const (
+	codecNameHTJ2KLossless     = "HTJ2K Lossless"
+	codecNameHTJ2KLosslessRPCL = "HTJ2K Lossless RPCL"
+)
+
 // Codec implements the HTJ2K (High-Throughput JPEG 2000) codec
 // Reference: ITU-T T.814 | ISO/IEC 15444-15:2019
 //
@@ -57,9 +62,9 @@ func NewCodec(quality int) *Codec {
 func (c *Codec) Name() string {
 	if c.lossless {
 		if c.transferSyntax == transfer.HTJ2KLosslessRPCL {
-			return "HTJ2K Lossless RPCL"
+			return codecNameHTJ2KLosslessRPCL
 		}
-		return "HTJ2K Lossless"
+		return codecNameHTJ2KLossless
 	}
 	return fmt.Sprintf("HTJ2K (Quality %d)", c.quality)
 }
@@ -100,22 +105,22 @@ func (c *Codec) Encode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 		} else {
 			// Fallback: create from generic parameters
 			htj2kParams = NewHTJ2KParameters()
-			if q := parameters.GetParameter("quality"); q != nil {
+			if q := parameters.GetParameter(paramQuality); q != nil {
 				if qInt, ok := q.(int); ok {
 					htj2kParams.Quality = qInt
 				}
 			}
-			if bw := parameters.GetParameter("blockWidth"); bw != nil {
+			if bw := parameters.GetParameter(paramBlockWidth); bw != nil {
 				if bwInt, ok := bw.(int); ok {
 					htj2kParams.BlockWidth = bwInt
 				}
 			}
-			if bh := parameters.GetParameter("blockHeight"); bh != nil {
+			if bh := parameters.GetParameter(paramBlockHeight); bh != nil {
 				if bhInt, ok := bh.(int); ok {
 					htj2kParams.BlockHeight = bhInt
 				}
 			}
-			if nl := parameters.GetParameter("numLevels"); nl != nil {
+			if nl := parameters.GetParameter(paramNumLevels); nl != nil {
 				if nlInt, ok := nl.(int); ok {
 					htj2kParams.NumLevels = nlInt
 				}
@@ -223,12 +228,12 @@ func (c *Codec) Decode(oldPixelData imagetypes.PixelData, newPixelData imagetype
 		} else {
 			// Fallback: create from generic parameters
 			htj2kParams = NewHTJ2KParameters()
-			if bw := parameters.GetParameter("blockWidth"); bw != nil {
+			if bw := parameters.GetParameter(paramBlockWidth); bw != nil {
 				if bwInt, ok := bw.(int); ok {
 					htj2kParams.BlockWidth = bwInt
 				}
 			}
-			if bh := parameters.GetParameter("blockHeight"); bh != nil {
+			if bh := parameters.GetParameter(paramBlockHeight); bh != nil {
 				if bhInt, ok := bh.(int); ok {
 					htj2kParams.BlockHeight = bhInt
 				}

@@ -1,6 +1,8 @@
 // Package codestream defines JPEG 2000 codestream markers and helpers.
 package codestream
 
+const unknownString = "UNKNOWN"
+
 // JPEG 2000 Marker Codes
 // Reference: ISO/IEC 15444-1:2019 Table A.1
 
@@ -66,16 +68,16 @@ const (
 
 // Informational marker segments
 const (
-    // MarkerCRG - Component registration
-    MarkerCRG uint16 = 0xFF63
+	// MarkerCRG - Component registration
+	MarkerCRG uint16 = 0xFF63
 
-    // MarkerCOM - Comment
-    MarkerCOM uint16 = 0xFF64
+	// MarkerCOM - Comment
+	MarkerCOM uint16 = 0xFF64
 
-    // Part 2 Multi-component transform markers (ISO/IEC 15444-2)
-    MarkerMCT uint16 = 0xFF74 // Multi-component Transform
-    MarkerMCC uint16 = 0xFF75 // Multiple Component Collection
-    MarkerMCO uint16 = 0xFF77 // MCT ordering
+	// Part 2 Multi-component transform markers (ISO/IEC 15444-2)
+	MarkerMCT uint16 = 0xFF74 // Multi-component Transform
+	MarkerMCC uint16 = 0xFF75 // Multiple Component Collection
+	MarkerMCO uint16 = 0xFF77 // MCT ordering
 )
 
 // MarkerName returns the name of a marker code
@@ -121,23 +123,23 @@ func MarkerName(marker uint16) string {
 	case MarkerPPT:
 		return "PPT"
 
-    // Informational
-    case MarkerCRG:
-        return "CRG"
-    case MarkerCOM:
-        return "COM"
+	// Informational
+	case MarkerCRG:
+		return "CRG"
+	case MarkerCOM:
+		return "COM"
 
-    // Part 2 MCT/MCC
-    case MarkerMCT:
-        return "MCT"
-    case MarkerMCC:
-        return "MCC"
-    case MarkerMCO:
-        return "MCO"
+	// Part 2 MCT/MCC
+	case MarkerMCT:
+		return "MCT"
+	case MarkerMCC:
+		return "MCC"
+	case MarkerMCO:
+		return "MCO"
 
-    default:
-        return "UNKNOWN"
-    }
+	default:
+		return unknownString
+	}
 }
 
 // HasLength returns true if the marker has a length field

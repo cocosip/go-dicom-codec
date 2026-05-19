@@ -47,7 +47,7 @@ func TestT1EncodeDecodeRoundTrip(t *testing.T) {
 			numPasses: 10,
 		},
 		{
-			name:      "All zeros",
+			name:      testNameAllZeros,
 			width:     4,
 			height:    4,
 			data:      makeZeroData(4, 4),
@@ -108,7 +108,7 @@ func TestT1FindMaxBitplane(t *testing.T) {
 		expected int
 	}{
 		{
-			name:     "All zeros",
+			name:     testNameAllZeros,
 			data:     []int32{0, 0, 0, 0},
 			expected: -1,
 		},

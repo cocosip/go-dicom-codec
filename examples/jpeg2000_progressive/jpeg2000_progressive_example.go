@@ -12,6 +12,8 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 
+const photometricMonochrome2 = "MONOCHROME2"
+
 // This example demonstrates progressive/multi-layer JPEG 2000 encoding
 // Multi-layer encoding allows progressive refinement: start with low quality
 // preview and progressively improve as more layers are decoded
@@ -48,7 +50,7 @@ func basicMultiLayerExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -114,7 +116,7 @@ func multiLayerWithRatioExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -170,7 +172,7 @@ func progressiveDecodingExample(pixelData []byte, width, height int) {
 		BitsStored:                8,
 		HighBit:                   7,
 		PixelRepresentation:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 // TestAllNEARValues tests a comprehensive range of NEAR values
@@ -33,7 +33,7 @@ func TestAllNEARValues(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 
 			src := codecHelpers.NewTestPixelData(frameInfo)

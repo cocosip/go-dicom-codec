@@ -74,7 +74,7 @@ func TestParameterNearValues(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -128,7 +128,7 @@ func TestCodecEncode(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	tests := []struct {
@@ -216,7 +216,7 @@ func TestCodecDecode(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 	src := codecHelpers.NewTestPixelData(frameInfo)
 	if err := src.AddFrame(pixelData); err != nil {
@@ -287,7 +287,7 @@ func TestCodecDecodeInvalid(t *testing.T) {
 				SamplesPerPixel:           1,
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: "MONOCHROME2",
+				PhotometricInterpretation: photometricMonochrome2,
 			}
 			srcEnc := codecHelpers.NewTestPixelData(frameInfo)
 			if err := srcEnc.AddFrame(tt.data); err != nil {
@@ -338,7 +338,7 @@ func TestCodecRoundTrip(t *testing.T) {
 				SamplesPerPixel:           uint16(tt.components),
 				PixelRepresentation:       0,
 				PlanarConfiguration:       0,
-				PhotometricInterpretation: map[int]string{1: "MONOCHROME2", 3: "RGB"}[tt.components],
+				PhotometricInterpretation: map[int]string{1: photometricMonochrome2, 3: "RGB"}[tt.components],
 			}
 			src := codecHelpers.NewTestPixelData(frameInfo)
 			if err := src.AddFrame(pixelData); err != nil {

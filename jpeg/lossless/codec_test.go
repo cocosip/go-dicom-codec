@@ -3,10 +3,10 @@ package lossless
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 func TestLosslessCodecInterface(t *testing.T) {
@@ -54,7 +54,7 @@ func TestLosslessCodecEncodeDecode(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData using helper
@@ -166,7 +166,7 @@ func TestLosslessCodecRGB(t *testing.T) {
 		SamplesPerPixel:           uint16(components),
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 
 	// Create source PixelData using helper
@@ -238,7 +238,7 @@ func TestLosslessCodecWithParameters(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData using helper
@@ -324,7 +324,7 @@ func TestCodecRegistry(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	// Create source PixelData using helper

@@ -3,10 +3,10 @@ package lossless14sv1
 import (
 	"testing"
 
+	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
 )
 
 func TestLosslessSV1CodecInterface(t *testing.T) {
@@ -54,7 +54,7 @@ func TestLosslessSV1CodecEncodeDecode(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -151,7 +151,7 @@ func TestLosslessSV1CodecRGB(t *testing.T) {
 		SamplesPerPixel:           uint16(components),
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "RGB",
+		PhotometricInterpretation: photometricRGB,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -250,7 +250,7 @@ func TestLosslessSV1CodecRegistry(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
@@ -288,7 +288,7 @@ func TestLosslessSV1CodecRegistry(t *testing.T) {
 
 func TestLosslessSV116Bit(t *testing.T) {
 	// Test 16-bit data with extended Huffman tables
-	// Extended DC Huffman tables support categories 0-16 (±65535 range)
+	// Extended DC Huffman tables support categories 0-16 (卤65535 range)
 
 	// Test 16-bit data
 	width, height := 32, 32
@@ -299,7 +299,7 @@ func TestLosslessSV116Bit(t *testing.T) {
 		for x := 0; x < width; x++ {
 			val := ((x + y*2) * 16) % 4096 // 12-bit value
 			offset := (y*width + x) * 2
-			pixelData[offset] = byte(val & 0xFF)         // Low byte
+			pixelData[offset] = byte(val & 0xFF)          // Low byte
 			pixelData[offset+1] = byte((val >> 8) & 0xFF) // High byte
 		}
 	}
@@ -314,7 +314,7 @@ func TestLosslessSV116Bit(t *testing.T) {
 		SamplesPerPixel:           1,
 		PixelRepresentation:       0,
 		PlanarConfiguration:       0,
-		PhotometricInterpretation: "MONOCHROME2",
+		PhotometricInterpretation: photometricMonochrome2,
 	}
 
 	src := codecHelpers.NewTestPixelData(frameInfo)
