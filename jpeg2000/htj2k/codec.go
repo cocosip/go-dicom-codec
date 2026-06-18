@@ -1,3 +1,4 @@
+// Package htj2k implements High-Throughput JPEG 2000 codecs.
 package htj2k
 
 import (

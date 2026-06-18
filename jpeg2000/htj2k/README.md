@@ -101,6 +101,41 @@ To achieve full HTJ2K compliance:
    - Test against reference HTJ2K implementations (OpenJPH, OpenJPEG)
    - Validate with conformance test images
 
+## Image Interoperability Fixtures
+
+HTJ2K interoperability in this package is validated at the image codec layer:
+
+```text
+raw image samples + image parameters <-> HTJ2K codestream
+```
+
+The fixture tests intentionally do not validate DICOM datasets, transfer syntax
+metadata, pixel-data encapsulation, frame item padding, or tag rewriting. Those
+concerns belong to the DICOM integration layer that consumes this codec package.
+
+Reference codestreams live under the repository-level
+`test-data/htj2k/interop` directory and are described by
+`test-data/htj2k/interop/manifest.json`. The manifest records image geometry,
+bit depth, signedness, raw sample layout, byte order, and the reference
+codestream files generated offline by fo-dicom.Codecs/OpenJPH.
+
+The in-repo Go tests verify:
+
+1. Go decoding of fo-dicom.Codecs/OpenJPH reference codestreams.
+2. Lossless decoded samples are byte-identical to the reference raw files.
+3. Reference codestreams carry HTJ2K profile signals such as SIZ Rsiz bit 14,
+   CAP, COD HT code-block style, and normal COD signalling.
+
+Go encoder output is not expected to be byte-identical to fo-dicom.Codecs output.
+JPEG 2000 codestreams can differ while remaining interoperable. Encoder
+interoperability should be checked by an offline acceptance pass:
+
+1. Generate `go_*.j2c` files from the current Go encoder.
+2. Decode those files with fo-dicom.Codecs/OpenJPH outside this Go test suite.
+3. Compare the decoded raw samples with the manifest `inputRaw` files.
+4. Add or update committed reference fixtures only after the offline result is
+   understood and reproducible.
+
 ## References
 
 - **ISO/IEC 15444-15:2019**: Information technology — JPEG 2000 image coding system — Part 15: High-Throughput JPEG 2000
