@@ -647,6 +647,8 @@ func sameSelection(a, b []int) bool {
 	return true
 }
 
+// MeasureOpenJPEGLayerSelectionBytes measures packet bytes for a candidate
+// OpenJPEG-style layer selection without mutating the final block assignments.
 func MeasureOpenJPEGLayerSelectionBytes(packetEncs []*t2.PacketEncoder, blocks []*t2.PrecinctCodeBlock, numLayers int, layer int, selected []int, committed [][]int) (int, error) {
 	snapshots := snapshotLayerAssignments(blocks)
 	applyCandidateLayerAssignments(blocks, numLayers, layer, selected, committed)

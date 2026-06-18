@@ -94,32 +94,6 @@ func Forward97_1DFloat32WithParity(data []float32, even bool) {
 	deinterleaveH97Float32(data, dn, sn, even)
 }
 
-// encodeStep2_97 implements OpenJPEG's opj_dwt_encode_step2 for 9/7 wavelet
-// Direct translation to match exact behavior
-func encodeStep2_97(data []float64, flStart, fwStart int32, end, m int32, c float64) {
-	imax := min32(end, m)
-
-	if imax > 0 {
-		// First iteration (special case)
-		fw := fwStart
-		fl := flStart
-		data[fw-1] += (data[fl] + data[fw]) * c
-		fw += 2
-
-		// Main loop
-		for i := int32(1); i < imax; i++ {
-			data[fw-1] += (data[fw-2] + data[fw]) * c
-			fw += 2
-		}
-	}
-
-	// Boundary case
-	if m < end {
-		fw := fwStart + 2*m
-		data[fw-1] += (2 * data[fw-2]) * c
-	}
-}
-
 func encodeStep2_97Float32(data []float32, flStart, fwStart int32, end, m int32, c float64) {
 	imax := min32(end, m)
 	c32 := float32(c)
@@ -142,26 +116,6 @@ func encodeStep2_97Float32(data []float32, flStart, fwStart int32, end, m int32,
 	}
 }
 
-// encodeStep1Combined97 implements OpenJPEG's opj_dwt_encode_step1_combined
-// Applies normalization factors to interleaved data
-func encodeStep1Combined97(data []float64, itersC1, itersC2 int32, c1, c2 float64) {
-	itersCommon := min32(itersC1, itersC2)
-
-	var i int32
-	fw := int32(0)
-	for i = 0; i < itersCommon; i++ {
-		data[fw] *= c1
-		data[fw+1] *= c2
-		fw += 2
-	}
-
-	if i < itersC1 {
-		data[fw] *= c1
-	} else if i < itersC2 {
-		data[fw+1] *= c2
-	}
-}
-
 func encodeStep1Combined97Float32(data []float32, itersC1, itersC2 int32, c1, c2 float64) {
 	itersCommon := min32(itersC1, itersC2)
 	c1f := float32(c1)
@@ -180,32 +134,6 @@ func encodeStep1Combined97Float32(data []float32, itersC1, itersC2 int32, c1, c2
 	} else if i < itersC2 {
 		data[fw+1] *= c2f
 	}
-}
-
-// deinterleaveH97 separates interleaved data into [low | high] format
-func deinterleaveH97(data []float64, dn, sn int32, even bool) {
-	width := int(dn + sn)
-	tmp := make([]float64, width)
-
-	if even {
-		// cas == 0: even indices are low-pass
-		for i := int32(0); i < sn; i++ {
-			tmp[i] = data[2*i]
-		}
-		for i := int32(0); i < dn; i++ {
-			tmp[sn+i] = data[2*i+1]
-		}
-	} else {
-		// cas == 1: odd indices are low-pass
-		for i := int32(0); i < sn; i++ {
-			tmp[i] = data[2*i+1]
-		}
-		for i := int32(0); i < dn; i++ {
-			tmp[sn+i] = data[2*i]
-		}
-	}
-
-	copy(data, tmp)
 }
 
 func deinterleaveH97Float32(data []float32, dn, sn int32, even bool) {
@@ -292,32 +220,6 @@ func Inverse97_1DOpenJPEGWithParity(data []float32, even bool) {
 	decodeStep2OpenJPEG97Float32(data, a, b+1, dn, min32(dn, sn-b), float32(-gamma97))
 	decodeStep2OpenJPEG97Float32(data, b, a+1, sn, min32(sn, dn-a), float32(-beta97))
 	decodeStep2OpenJPEG97Float32(data, a, b+1, dn, min32(dn, sn-b), float32(-alpha97))
-}
-
-// interleaveH97 converts [low | high] format back to interleaved
-func interleaveH97(data []float64, dn, sn int32, even bool) {
-	width := int(dn + sn)
-	tmp := make([]float64, width)
-
-	if even {
-		// cas == 0: even indices are low-pass, odd are high-pass
-		for i := int32(0); i < sn; i++ {
-			tmp[2*i] = data[i]
-		}
-		for i := int32(0); i < dn; i++ {
-			tmp[2*i+1] = data[sn+i]
-		}
-	} else {
-		// cas == 1: odd indices are low-pass, even are high-pass
-		for i := int32(0); i < sn; i++ {
-			tmp[2*i+1] = data[i]
-		}
-		for i := int32(0); i < dn; i++ {
-			tmp[2*i] = data[sn+i]
-		}
-	}
-
-	copy(data, tmp)
 }
 
 func interleaveH97Float32(data []float32, dn, sn int32, even bool) {

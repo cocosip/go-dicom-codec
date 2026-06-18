@@ -1508,15 +1508,13 @@ func (e *Encoder) quantizationInfo() quantizationInfo {
 		info.expn = expn
 	} else {
 		info.style = 2
-		guardBits := 2
 		quantParams := e.lossyQuantizationParams()
-		guardBits = quantParams.GuardBits
 		steps := quantParams.EncodedSteps
 		expn := make([]int, len(steps))
 		for i, step := range steps {
 			expn[i] = int((step >> 11) & 0x1F)
 		}
-		info.guardBits = guardBits
+		info.guardBits = quantParams.GuardBits
 		info.expn = expn
 		info.steps = steps
 	}

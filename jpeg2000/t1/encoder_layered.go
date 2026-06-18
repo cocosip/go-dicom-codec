@@ -19,26 +19,6 @@ type PassData struct {
 	Distortion  float64 // Cumulative distortion (for rate-distortion optimization)
 }
 
-// isLayerBoundary checks if a pass index is a layer boundary
-func isLayerBoundary(passIdx int, layerBoundaries []int) bool {
-	for _, boundary := range layerBoundaries {
-		if passIdx == boundary-1 { // boundary is 1-indexed (num passes), passIdx is 0-indexed
-			return true
-		}
-	}
-	return false
-}
-
-func shouldTerminateLayer(passIdx int, layerBoundaries []int, cblksty uint8) bool {
-	if (cblksty & CblkStyleTermAll) != 0 {
-		return true
-	}
-	if len(layerBoundaries) > 1 && isLayerBoundary(passIdx, layerBoundaries) {
-		return true
-	}
-	return false
-}
-
 // EncodeLayered encodes a code-block with per-pass data separation
 // This enables layer allocation for quality-progressive encoding
 // Following OpenJPEG's implementation
@@ -54,7 +34,7 @@ func shouldTerminateLayer(passIdx int, layerBoundaries []int, cblksty uint8) boo
 // - passes: array of PassData with rate/distortion info
 // - encodedData: complete MQ-encoded data for all passes
 // - error: any encoding error
-func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, layerBoundaries []int, cblksty uint8) ([]PassData, []byte, error) {
+func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, _ []int, cblksty uint8) ([]PassData, []byte, error) {
 	if len(data) != t1.width*t1.height {
 		return nil, nil, fmt.Errorf("data size mismatch: expected %d, got %d",
 			t1.width*t1.height, len(data))
@@ -237,82 +217,4 @@ func normalizePassRates(passes []PassData, data []byte) {
 			passes[i].ActualBytes = passes[i].Rate
 		}
 	}
-}
-
-// calculateDistortion computes accurate distortion based on reconstruction error.
-// This follows the JPEG 2000 standard approach (ISO/IEC 15444-1 Annex J).
-//
-// Distortion is measured as the sum of squared errors (SSE) between original
-// and reconstructed coefficients. After encoding bitplane b, the reconstructed
-// value has precision down to bitplane b, and all bits below b are unknown (set to 0).
-//
-// The distortion is: D = sum((original - reconstructed)^2) for all coefficients.
-// Where reconstructed value has all bits below current bitplane masked to 0.
-//
-// Parameters:
-//   - data: original coefficient data (with padding)
-//   - width, height: code-block dimensions (without padding)
-//   - currentBitplane: bitplane just encoded (0 = LSB)
-//   - passType: 0=SPP, 1=MRP, 2=CP (affects which bits are considered refined)
-//
-// Returns: total distortion (SSE) remaining after this pass
-func calculateDistortion(data []int32, width, height int, currentBitplane int, passType int) float64 {
-	if currentBitplane < 0 {
-		// All bits encoded, distortion is 0
-		return 0.0
-	}
-
-	paddedWidth := width + 2
-	distortion := 0.0
-
-	// For each coefficient, calculate the error due to unencoded bits
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			idx := (y+1)*paddedWidth + (x + 1)
-			original := data[idx]
-
-			// Reconstructed value: original with bits below current bitplane masked to 0
-			// After encoding bitplane b, we have precision down to bit b
-			// Bits b-1, b-2, ..., 0 are still unknown (contribute to distortion)
-
-			// Mask for bits below current bitplane
-			var reconstructed int32
-			if currentBitplane < 31 {
-				// Keep sign and all bits at or above current bitplane
-				sign := int32(0)
-				if original < 0 {
-					sign = -1
-					original = -original
-				}
-
-				// Mask to keep bits >= currentBitplane
-				// For bitplane b, we want to keep bits [31..b] and zero out [b-1..0]
-				mask := int32(-1) << uint(currentBitplane)
-				reconstructed = (original & mask)
-
-				// For MRP and CP within a bitplane, we have better reconstruction
-				// SPP only codes significance, MRP/CP refine the magnitude
-				// Add a correction for refinement passes
-				if passType > 0 && currentBitplane > 0 {
-					// Refinement passes reduce uncertainty in current bitplane
-					// Approximate reconstructed value at bitplane center
-					correction := int32(1) << uint(currentBitplane-1)
-					reconstructed |= correction
-				}
-
-				if sign < 0 {
-					reconstructed = -reconstructed
-					original = -original // Restore
-				}
-			} else {
-				reconstructed = original // All bits encoded
-			}
-
-			// Squared error
-			diff := float64(original - reconstructed)
-			distortion += diff * diff
-		}
-	}
-
-	return distortion
 }

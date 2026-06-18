@@ -17,7 +17,9 @@ func TestOpenJPEGLossyDefaultRateBuildsFoDicomLayerRates(t *testing.T) {
 		PixelRepresentation: 0,
 	}
 	params := NewLossyParameters()
-	params.Validate()
+	if err := params.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
 	encParams := jpeg2000.DefaultEncodeParams(
 		int(frameInfo.Width),
 		int(frameInfo.Height),
@@ -58,7 +60,9 @@ func TestOpenJPEGLossyDefaultRateScalesFinalLayerByStoredBits(t *testing.T) {
 		PixelRepresentation: 0,
 	}
 	params := NewLossyParameters()
-	params.Validate()
+	if err := params.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
 	encParams := jpeg2000.DefaultEncodeParams(
 		int(frameInfo.Width),
 		int(frameInfo.Height),

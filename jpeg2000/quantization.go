@@ -65,7 +65,8 @@ func qualityScale(quality int) float64 {
 	return scale * 0.05
 }
 
-func subbandParams(idx, numLevels int) (resno, orient, level int) {
+func subbandParams(idx, numLevels int) (orient, level int) {
+	resno := 0
 	if idx == 0 {
 		resno = 0
 		orient = 0
@@ -77,7 +78,7 @@ func subbandParams(idx, numLevels int) (resno, orient, level int) {
 	if level < 0 {
 		level = 0
 	}
-	return resno, orient, level
+	return orient, level
 }
 
 func calcOpenJPEGStepSizes97(numLevels int, scale float64) []float64 {
@@ -87,7 +88,7 @@ func calcOpenJPEGStepSizes97(numLevels int, scale float64) []float64 {
 	numSubbands := 3*numLevels + 1
 	steps := make([]float64, numSubbands)
 	for idx := 0; idx < numSubbands; idx++ {
-		_, orient, level := subbandParams(idx, numLevels)
+		orient, level := subbandParams(idx, numLevels)
 		norm := dwtNorm97(level, orient)
 		if norm <= 0 {
 			steps[idx] = scale
@@ -139,7 +140,7 @@ func decodeQuantizationStepWithGain(encoded uint16, bitDepth, log2Gain int) floa
 func OpenJPEGRuntimeQuantizationSteps(encoded []uint16, numLevels, bitDepth int) []float64 {
 	steps := make([]float64, len(encoded))
 	for idx, step := range encoded {
-		_, orient, _ := subbandParams(idx, numLevels)
+		orient, _ := subbandParams(idx, numLevels)
 		log2Gain := 0
 		switch orient {
 		case 3:
@@ -221,7 +222,7 @@ func CalculateOpenJPEGQuantizationParams(numLevels, bitDepth int) *QuantizationP
 	}
 
 	for bandno := 0; bandno < numSubbands; bandno++ {
-		_, orient, level := subbandParams(bandno, numLevels)
+		orient, level := subbandParams(bandno, numLevels)
 		norm := dwtNorm97(level, orient)
 		stepsize := 1.0
 		if norm > 0 {
