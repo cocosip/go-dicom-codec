@@ -181,8 +181,11 @@ func (enc *Encoder) writeSOS(writer *standard.Writer) error {
 	// NEAR parameter (0 for lossless)
 	data[length-3] = 0
 
-	// ILV (interleave mode): 0 = non-interleaved, 1 = line interleaved, 2 = sample interleaved
-	data[length-2] = 0
+	// DICOM RGB frames are interleaved (RGBRGB...), so emit a sample-interleaved
+	// JPEG-LS scan. A multi-component scan with ILV=0 is not a valid substitute.
+	if enc.components > 1 {
+		data[length-2] = 2
+	}
 
 	// Point transform (0)
 	data[length-1] = 0
@@ -198,11 +201,16 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error 
 
 	// Convert pixel data to integers
 	pixels := enc.pixelsToIntegers(pixelData)
-
-	// Encode each component separately (non-interleaved mode)
-	for comp := 0; comp < enc.components; comp++ {
-		if err := enc.encodeComponent(gw, pixels, comp); err != nil {
+	if enc.components > 1 {
+		if err := enc.encodeSampleInterleaved(gw, pixels); err != nil {
 			return err
+		}
+	} else {
+		// Grayscale has one component and is encoded as a single scan.
+		for comp := 0; comp < enc.components; comp++ {
+			if err := enc.encodeComponent(gw, pixels, comp); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -214,6 +222,146 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error 
 	// Write scan data directly (it's already byte-stuffed by GolombWriter)
 	_, err := writer.Write(scanBuf.Bytes())
 	return err
+}
+
+func (enc *Encoder) encodeSampleInterleaved(gw *GolombWriter, pixels []int) error {
+	var previousLineFirst, previousPreviousLineFirst [3]int
+	for y := 0; y < enc.height; y++ {
+		x := 0
+		for x < enc.width {
+			var ra, rb, rc, rd [3]int
+			var qs [3]int
+			for comp := 0; comp < enc.components; comp++ {
+				ra[comp], rb[comp], rc[comp], rd[comp] = enc.sampleNeighbors(pixels, x, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+				q1, q2, q3 := enc.quantizer.ComputeContext(ra[comp], rb[comp], rc[comp], rd[comp])
+				qs[comp] = ComputeContextID(q1, q2, q3)
+			}
+
+			if qs[0] == 0 && qs[1] == 0 && qs[2] == 0 {
+				processed, err := enc.encodeSampleRunMode(gw, pixels, x, y, previousLineFirst, previousPreviousLineFirst)
+				if err != nil {
+					return err
+				}
+				x += processed
+				continue
+			}
+
+			for comp := 0; comp < enc.components; comp++ {
+				if err := enc.encodeRegularSample(gw, pixels, x, y, comp, qs[comp], ra[comp], rb[comp], rc[comp]); err != nil {
+					return err
+				}
+			}
+			x++
+		}
+		for comp := 0; comp < enc.components; comp++ {
+			previousPreviousLineFirst[comp] = previousLineFirst[comp]
+			previousLineFirst[comp] = pixels[(y*enc.width)*enc.components+comp]
+		}
+	}
+
+	return nil
+}
+
+func (enc *Encoder) encodeRegularSample(gw *GolombWriter, pixels []int, x, y, comp, qs, ra, rb, rc int) error {
+	sign := BitwiseSign(qs)
+	contextIdx := ApplySign(qs, sign)
+	if contextIdx < 0 || contextIdx >= len(enc.contextTable.contexts) {
+		return fmt.Errorf("context index %d out of bounds [0, %d)", contextIdx, len(enc.contextTable.contexts))
+	}
+	ctx := enc.contextTable.contexts[contextIdx]
+	k := ctx.ComputeGolombParameter()
+	predicted := Predict(ra, rb, rc)
+	predictedValue := enc.traits.CorrectPrediction(predicted + ApplySign(ctx.C, sign))
+	idx := (y*enc.width+x)*enc.components + comp
+	errorValue := enc.computeErrorValue(ApplySign(pixels[idx]-predictedValue, sign))
+	mappedError := MapErrorValue(ctx.GetErrorCorrection(k, 0) ^ errorValue)
+	if err := gw.EncodeMappedValue(k, mappedError, enc.traits.Limit, enc.traits.Qbpp); err != nil {
+		return err
+	}
+	ctx.UpdateContext(errorValue, 0, enc.traits.Reset)
+	pixels[idx] = enc.traits.ComputeReconstructedSample(predictedValue, ApplySign(errorValue, sign))
+	return nil
+}
+
+func (enc *Encoder) encodeSampleRunMode(gw *GolombWriter, pixels []int, x, y int, previousLineFirst, previousPreviousLineFirst [3]int) (int, error) {
+	remaining := enc.width - x
+	runLength := 0
+	for runLength < remaining {
+		var left [3]int
+		isRunPixel := true
+		for comp := 0; comp < enc.components; comp++ {
+			left[comp], _, _, _ = enc.sampleNeighbors(pixels, x+runLength, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+			idx := ((y*enc.width)+(x+runLength))*enc.components + comp
+			if pixels[idx] != left[comp] {
+				isRunPixel = false
+				break
+			}
+		}
+		if !isRunPixel {
+			break
+		}
+		for comp := 0; comp < enc.components; comp++ {
+			idx := ((y*enc.width)+(x+runLength))*enc.components + comp
+			pixels[idx] = left[comp]
+		}
+		runLength++
+	}
+	return enc.finishSampleRun(gw, pixels, x, y, runLength, previousLineFirst, previousPreviousLineFirst)
+}
+
+func (enc *Encoder) finishSampleRun(gw *GolombWriter, pixels []int, x, y, runLength int, previousLineFirst, previousPreviousLineFirst [3]int) (int, error) {
+	remaining := enc.width - x
+	endOfLine := runLength == remaining
+	if err := enc.runModeScanner.EncodeRunLength(gw, runLength, endOfLine); err != nil {
+		return 0, err
+	}
+	if endOfLine {
+		return runLength, nil
+	}
+
+	idx := ((y * enc.width) + (x + runLength)) * enc.components
+	for comp := 0; comp < enc.components; comp++ {
+		left, above, _, _ := enc.sampleNeighbors(pixels, x+runLength, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+		xSample := pixels[idx+comp]
+		sign := signInt(above - left)
+		errorValue := enc.computeErrorValue(sign * (xSample - above))
+		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], errorValue); err != nil {
+			return 0, err
+		}
+		pixels[idx+comp] = enc.traits.ComputeReconstructedSample(above, errorValue*sign)
+	}
+	enc.runModeScanner.DecRunIndex()
+	return runLength + 1, nil
+}
+
+func (enc *Encoder) sampleNeighbors(pixels []int, x, y, comp, previousLineFirst, previousPreviousLineFirst int) (left, above, aboveLeft, aboveRight int) {
+	if x == 0 {
+		left = previousLineFirst
+		if y > 0 {
+			above = previousLineFirst
+		}
+		aboveLeft = previousPreviousLineFirst
+		if y > 0 && enc.width > 1 {
+			aboveRight = pixels[((y-1)*enc.width+1)*enc.components+comp]
+		} else {
+			aboveRight = above
+		}
+		return
+	}
+
+	above = 0
+	if y > 0 {
+		above = pixels[((y-1)*enc.width+x)*enc.components+comp]
+	}
+	left = pixels[(y*enc.width+x-1)*enc.components+comp]
+	aboveLeft = 0
+	if y > 0 {
+		aboveLeft = pixels[((y-1)*enc.width+x-1)*enc.components+comp]
+		aboveRight = pixels[((y-1)*enc.width+min(x+1, enc.width-1))*enc.components+comp]
+	} else {
+		aboveRight = above
+	}
+	return
 }
 
 // encodeComponent encodes a single component

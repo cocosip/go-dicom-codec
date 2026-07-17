@@ -171,8 +171,11 @@ func (enc *Encoder) writeSOS(writer *standard.Writer) error {
 	// NEAR parameter (key difference from lossless!)
 	data[length-3] = byte(enc.near)
 
-	// ILV (interleave mode)
-	data[length-2] = 0
+	// DICOM RGB frames are interleaved (RGBRGB...), so emit a sample-interleaved
+	// JPEG-LS scan rather than a multi-component ILV=0 scan.
+	if enc.components > 1 {
+		data[length-2] = 2
+	}
 
 	// Point transform
 	data[length-1] = 0
@@ -192,10 +195,15 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error 
 	encodingPixels := make([]int, len(pixels))
 	copy(encodingPixels, pixels)
 
-	// Encode each component
-	for comp := 0; comp < enc.components; comp++ {
-		if err := enc.encodeComponent(gw, encodingPixels, comp); err != nil {
+	if enc.components > 1 {
+		if err := enc.encodeSampleInterleaved(gw, encodingPixels); err != nil {
 			return err
+		}
+	} else {
+		for comp := 0; comp < enc.components; comp++ {
+			if err := enc.encodeComponent(gw, encodingPixels, comp); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -205,6 +213,137 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, pixelData []byte) error 
 
 	_, err := writer.Write(scanBuf.Bytes())
 	return err
+}
+
+func (enc *Encoder) encodeSampleInterleaved(gw *lossless.GolombWriter, pixels []int) error {
+	var previousLineFirst, previousPreviousLineFirst [3]int
+	for y := 0; y < enc.height; y++ {
+		x := 0
+		for x < enc.width {
+			var ra, rb, rc, rd [3]int
+			var q1, q2, q3 [3]int
+			var qs [3]int
+			for comp := 0; comp < enc.components; comp++ {
+				ra[comp], rb[comp], rc[comp], rd[comp] = enc.sampleNeighbors(pixels, x, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+				q1[comp], q2[comp], q3[comp] = enc.quantizer.ComputeContext(ra[comp], rb[comp], rc[comp], rd[comp])
+				qs[comp] = lossless.ComputeContextID(q1[comp], q2[comp], q3[comp])
+			}
+
+			if qs[0] == 0 && qs[1] == 0 && qs[2] == 0 {
+				processed, err := enc.encodeSampleRunMode(gw, pixels, x, y, previousLineFirst, previousPreviousLineFirst)
+				if err != nil {
+					return err
+				}
+				x += processed
+				continue
+			}
+
+			for comp := 0; comp < enc.components; comp++ {
+				if err := enc.encodeRegularSample(gw, pixels, x, y, comp, qs[comp], q1[comp], q2[comp], q3[comp], ra[comp], rb[comp], rc[comp]); err != nil {
+					return err
+				}
+			}
+			x++
+		}
+		for comp := 0; comp < enc.components; comp++ {
+			previousPreviousLineFirst[comp] = previousLineFirst[comp]
+			previousLineFirst[comp] = pixels[(y*enc.width)*enc.components+comp]
+		}
+	}
+	return nil
+}
+
+func (enc *Encoder) encodeRegularSample(gw *lossless.GolombWriter, pixels []int, x, y, comp, qs, q1, q2, q3, ra, rb, rc int) error {
+	sign := lossless.BitwiseSign(qs)
+	ctx := enc.contextTable.GetContext(q1, q2, q3)
+	k := ctx.ComputeGolombParameter()
+	predictedValue := enc.correctPrediction(lossless.Predict(ra, rb, rc) + lossless.ApplySign(ctx.GetPredictionCorrection(), sign))
+	idx := (y*enc.width+x)*enc.components + comp
+	errorValue := enc.traits.ComputeErrorValue(lossless.ApplySign(pixels[idx]-predictedValue, sign))
+	mappedError := lossless.MapErrorValue(ctx.GetErrorCorrection(k, enc.near) ^ errorValue)
+	if err := gw.EncodeMappedValue(k, mappedError, enc.traits.Limit, enc.traits.Qbpp); err != nil {
+		return err
+	}
+	ctx.UpdateContext(errorValue, enc.near, enc.traits.Reset)
+	pixels[idx] = enc.traits.ComputeReconstructedSample(predictedValue, lossless.ApplySign(errorValue, sign))
+	return nil
+}
+
+func (enc *Encoder) encodeSampleRunMode(gw *lossless.GolombWriter, pixels []int, x, y int, previousLineFirst, previousPreviousLineFirst [3]int) (int, error) {
+	remaining := enc.width - x
+	runLength := 0
+	for runLength < remaining {
+		var left [3]int
+		isRunPixel := true
+		for comp := 0; comp < enc.components; comp++ {
+			left[comp], _, _, _ = enc.sampleNeighbors(pixels, x+runLength, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+			idx := ((y*enc.width)+(x+runLength))*enc.components + comp
+			if runmode.Abs(pixels[idx]-left[comp]) > enc.near {
+				isRunPixel = false
+				break
+			}
+		}
+		if !isRunPixel {
+			break
+		}
+		for comp := 0; comp < enc.components; comp++ {
+			pixels[((y*enc.width)+(x+runLength))*enc.components+comp] = left[comp]
+		}
+		runLength++
+	}
+
+	endOfLine := runLength == remaining
+	if err := enc.runModeScanner.EncodeRunLength(gw, runLength, endOfLine); err != nil {
+		return 0, err
+	}
+	if endOfLine {
+		return runLength, nil
+	}
+
+	idx := ((y * enc.width) + (x + runLength)) * enc.components
+	for comp := 0; comp < enc.components; comp++ {
+		left, above, _, _ := enc.sampleNeighbors(pixels, x+runLength, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+		xSample := pixels[idx+comp]
+		sign := runmode.Sign(above - left)
+		errorValue := enc.traits.ComputeErrorValue(sign * (xSample - above))
+		if err := enc.runModeScanner.EncodeRunInterruption(gw, enc.runModeScanner.RunModeContexts[0], errorValue); err != nil {
+			return 0, err
+		}
+		pixels[idx+comp] = enc.traits.ComputeReconstructedSample(above, errorValue*sign)
+	}
+	enc.runModeScanner.DecRunIndex()
+	return runLength + 1, nil
+}
+
+func (enc *Encoder) sampleNeighbors(pixels []int, x, y, comp, previousLineFirst, previousPreviousLineFirst int) (left, above, aboveLeft, aboveRight int) {
+	if x == 0 {
+		left = previousLineFirst
+		if y > 0 {
+			above = previousLineFirst
+		}
+		aboveLeft = previousPreviousLineFirst
+		if y > 0 && enc.width > 1 {
+			aboveRight = pixels[((y-1)*enc.width+1)*enc.components+comp]
+		} else {
+			aboveRight = above
+		}
+		return
+	}
+
+	if y > 0 {
+		above = pixels[((y-1)*enc.width+x)*enc.components+comp]
+		aboveLeft = pixels[((y-1)*enc.width+x-1)*enc.components+comp]
+		aboveX := x + 1
+		if aboveX >= enc.width {
+			aboveX = enc.width - 1
+		}
+		aboveRight = pixels[((y-1)*enc.width+aboveX)*enc.components+comp]
+	}
+	left = pixels[(y*enc.width+x-1)*enc.components+comp]
+	if y == 0 {
+		aboveRight = above
+	}
+	return
 }
 
 // encodeComponent encodes a single component

@@ -16,6 +16,7 @@ type Decoder struct {
 	components int
 	bitDepth   int
 	maxVal     int
+	interleave int
 	traits     Traits
 
 	contextTable   *ContextTable
@@ -201,13 +202,20 @@ func (dec *Decoder) parseSOS(reader *standard.Reader) error {
 		return err
 	}
 
-	if len(data) < 1 {
+	if len(data) < 4 {
 		return standard.ErrInvalidSOS
 	}
 
 	numComponents := int(data[0])
 	if numComponents != dec.components {
 		return fmt.Errorf("SOS component count mismatch")
+	}
+	dec.interleave = int(data[len(data)-2])
+	if dec.components == 1 && dec.interleave != 0 {
+		return fmt.Errorf("invalid JPEG-LS interleave mode %d for grayscale scan", dec.interleave)
+	}
+	if dec.components > 1 && dec.interleave != 2 {
+		return fmt.Errorf("unsupported JPEG-LS interleave mode %d for RGB scan", dec.interleave)
 	}
 
 	return nil
@@ -261,15 +269,134 @@ func (dec *Decoder) decodeScan(reader *standard.Reader) ([]byte, error) {
 	totalPixels := dec.width * dec.height * dec.components
 	pixels := make([]int, totalPixels)
 
-	// Decode each component
-	for comp := 0; comp < dec.components; comp++ {
-		if err := dec.decodeComponent(gr, pixels, comp); err != nil {
+	if dec.components > 1 {
+		if err := dec.decodeSampleInterleaved(gr, pixels); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := dec.decodeComponent(gr, pixels, 0); err != nil {
 			return nil, err
 		}
 	}
 
 	// Convert integers to bytes
 	return dec.integersToPixels(pixels), nil
+}
+
+func (dec *Decoder) decodeSampleInterleaved(gr *GolombReader, pixels []int) error {
+	var previousLineFirst, previousPreviousLineFirst [3]int
+	for y := 0; y < dec.height; y++ {
+		x := 0
+		for x < dec.width {
+			var ra, rb, rc, rd [3]int
+			var qs [3]int
+			for comp := 0; comp < dec.components; comp++ {
+				ra[comp], rb[comp], rc[comp], rd[comp] = dec.sampleNeighbors(pixels, x, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+				q1, q2, q3 := dec.quantizer.ComputeContext(ra[comp], rb[comp], rc[comp], rd[comp])
+				qs[comp] = ComputeContextID(q1, q2, q3)
+			}
+
+			if qs[0] == 0 && qs[1] == 0 && qs[2] == 0 {
+				processed, err := dec.decodeSampleRunMode(gr, pixels, x, y, previousLineFirst, previousPreviousLineFirst)
+				if err != nil {
+					return err
+				}
+				x += processed
+				continue
+			}
+
+			for comp := 0; comp < dec.components; comp++ {
+				if err := dec.decodeRegularSample(gr, pixels, x, y, comp, qs[comp], ra[comp], rb[comp], rc[comp]); err != nil {
+					return err
+				}
+			}
+			x++
+		}
+		for comp := 0; comp < dec.components; comp++ {
+			previousPreviousLineFirst[comp] = previousLineFirst[comp]
+			previousLineFirst[comp] = pixels[(y*dec.width)*dec.components+comp]
+		}
+	}
+	return nil
+}
+
+func (dec *Decoder) decodeRegularSample(gr *GolombReader, pixels []int, x, y, comp, qs, ra, rb, rc int) error {
+	sign := BitwiseSign(qs)
+	contextIdx := ApplySign(qs, sign)
+	if contextIdx < 0 || contextIdx >= len(dec.contextTable.contexts) {
+		return fmt.Errorf("context index %d out of bounds [0, %d)", contextIdx, len(dec.contextTable.contexts))
+	}
+	ctx := dec.contextTable.contexts[contextIdx]
+	k := ctx.ComputeGolombParameter()
+	predictedValue := dec.traits.CorrectPrediction(Predict(ra, rb, rc) + ApplySign(ctx.C, sign))
+	mappedError, err := gr.DecodeValue(k, dec.traits.Limit, dec.traits.Qbpp)
+	if err != nil {
+		return fmt.Errorf("decode regular at x=%d y=%d comp=%d (bits=%d): %w", x, y, comp, gr.bitsRead, err)
+	}
+	errorValue := UnmapErrorValue(mappedError)
+	if k == 0 {
+		errorValue ^= ctx.GetErrorCorrection(k, 0)
+	}
+	ctx.UpdateContext(errorValue, 0, dec.traits.Reset)
+	idx := (y*dec.width+x)*dec.components + comp
+	pixels[idx] = dec.traits.ComputeReconstructedSample(predictedValue, ApplySign(errorValue, sign))
+	return nil
+}
+
+func (dec *Decoder) decodeSampleRunMode(gr *GolombReader, pixels []int, x, y int, previousLineFirst, previousPreviousLineFirst [3]int) (int, error) {
+	remaining := dec.width - x
+	runLength, err := dec.runModeScanner.DecodeRunLength(gr, remaining)
+	if err != nil {
+		return 0, err
+	}
+	for i := 0; i < runLength; i++ {
+		for comp := 0; comp < dec.components; comp++ {
+			left, _, _, _ := dec.sampleNeighbors(pixels, x, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+			pixels[((y*dec.width)+(x+i))*dec.components+comp] = left
+		}
+	}
+	if runLength == remaining {
+		return runLength, nil
+	}
+
+	idx := ((y * dec.width) + (x + runLength)) * dec.components
+	for comp := 0; comp < dec.components; comp++ {
+		left, above, _, _ := dec.sampleNeighbors(pixels, x+runLength, y, comp, previousLineFirst[comp], previousPreviousLineFirst[comp])
+		errorValue, err := dec.runModeScanner.DecodeRunInterruption(gr, dec.runModeScanner.RunModeContexts[0])
+		if err != nil {
+			return 0, err
+		}
+		pixels[idx+comp] = dec.traits.ComputeReconstructedSample(above, errorValue*signInt(above-left))
+	}
+	dec.runModeScanner.DecRunIndex()
+	return runLength + 1, nil
+}
+
+func (dec *Decoder) sampleNeighbors(pixels []int, x, y, comp, previousLineFirst, previousPreviousLineFirst int) (left, above, aboveLeft, aboveRight int) {
+	if x == 0 {
+		left = previousLineFirst
+		if y > 0 {
+			above = previousLineFirst
+		}
+		aboveLeft = previousPreviousLineFirst
+		if y > 0 && dec.width > 1 {
+			aboveRight = pixels[((y-1)*dec.width+1)*dec.components+comp]
+		} else {
+			aboveRight = above
+		}
+		return
+	}
+
+	if y > 0 {
+		above = pixels[((y-1)*dec.width+x)*dec.components+comp]
+		aboveLeft = pixels[((y-1)*dec.width+x-1)*dec.components+comp]
+		aboveRight = pixels[((y-1)*dec.width+min(x+1, dec.width-1))*dec.components+comp]
+	}
+	left = pixels[(y*dec.width+x-1)*dec.components+comp]
+	if y == 0 {
+		aboveRight = above
+	}
+	return
 }
 
 // decodeComponent decodes a single component with RUN mode support

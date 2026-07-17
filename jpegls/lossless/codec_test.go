@@ -1,6 +1,7 @@
 package lossless
 
 import (
+	"bytes"
 	"testing"
 
 	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
@@ -8,6 +9,51 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
+
+func TestCodecRGBUsesSampleInterleave(t *testing.T) {
+	const (
+		width  = 4
+		height = 3
+	)
+
+	pixelData := make([]byte, width*height*3)
+	for i := range pixelData {
+		pixelData[i] = byte(i * 13)
+	}
+	frameInfo := &imagetypes.FrameInfo{
+		Width:                     width,
+		Height:                    height,
+		BitsAllocated:             8,
+		BitsStored:                8,
+		HighBit:                   7,
+		SamplesPerPixel:           3,
+		PlanarConfiguration:       0,
+		PhotometricInterpretation: photometricRGB,
+	}
+	src := codecHelpers.NewTestPixelData(frameInfo)
+	if err := src.AddFrame(pixelData); err != nil {
+		t.Fatalf("AddFrame failed: %v", err)
+	}
+	encoded := codecHelpers.NewTestPixelData(frameInfo)
+	if err := NewJPEGLSLosslessCodec().Encode(src, encoded, nil); err != nil {
+		t.Fatalf("Encode failed: %v", err)
+	}
+	frame, err := encoded.GetFrame(0)
+	if err != nil {
+		t.Fatalf("GetFrame failed: %v", err)
+	}
+
+	sos := bytes.Index(frame, []byte{0xFF, 0xDA})
+	if sos < 0 || len(frame) < sos+14 {
+		t.Fatalf("encoded frame does not contain a complete SOS segment")
+	}
+	if got := frame[sos+4]; got != 3 {
+		t.Errorf("SOS component count = %d, want 3", got)
+	}
+	if got := frame[sos+12]; got != 2 {
+		t.Errorf("SOS ILV = %d, want 2 (sample interleaved)", got)
+	}
+}
 
 // TestCodecInterface tests the Codec interface implementation for JPEGLSLosslessCodec
 func TestCodecInterface(t *testing.T) {
