@@ -21,7 +21,7 @@ type JPEGLSNearLosslessCodec struct {
 // defaultNEAR: default error bound (0=lossless, 1-255=near-lossless)
 func NewJPEGLSNearLosslessCodec(defaultNEAR int) *JPEGLSNearLosslessCodec {
 	if defaultNEAR < 0 || defaultNEAR > 255 {
-		defaultNEAR = 2 // Default near-lossless value
+		defaultNEAR = 3 // Default near-lossless value used by fo-dicom
 	}
 	return &JPEGLSNearLosslessCodec{
 		transferSyntax: transfer.JPEGLSNearLossless,
@@ -192,5 +192,5 @@ func RegisterJPEGLSNearLosslessCodec(defaultNEAR int) {
 }
 
 func init() {
-	RegisterJPEGLSNearLosslessCodec(2)
+	RegisterJPEGLSNearLosslessCodec(3)
 }

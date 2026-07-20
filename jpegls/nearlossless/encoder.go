@@ -80,11 +80,6 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Write JPEG-LS parameters marker (LSE) with NEAR
-	if err := enc.writeLSE(writer); err != nil {
-		return nil, err
-	}
-
 	// Write SOS marker with NEAR parameter
 	if err := enc.writeSOS(writer); err != nil {
 		return nil, err
@@ -126,33 +121,6 @@ func (enc *Encoder) writeSOF55(writer *standard.Writer) error {
 	}
 
 	return writer.WriteSegment(0xFFF7, data)
-}
-
-// writeLSE writes JPEG-LS parameters (LSE marker) with NEAR
-// Format matches CharLS jpeg_stream_writer.cpp:149-158
-// LSE segment data: 11 bytes = 1 (ID) + 5*2 (five uint16 values)
-func (enc *Encoder) writeLSE(writer *standard.Writer) error {
-	data := make([]byte, 11) // ID (1) + MAXVAL (2) + T1 (2) + T2 (2) + T3 (2) + RESET (2)
-	data[0] = 1              // ID = 1 (preset parameters)
-
-	// MAXVAL
-	maxVal := uint16(enc.maxVal)
-	data[1] = byte(maxVal >> 8)
-	data[2] = byte(maxVal & 0xFF)
-
-	// T1, T2, T3 (thresholds) - use defaults for near-lossless
-	data[3] = byte(enc.quantizer.T1 >> 8)
-	data[4] = byte(enc.quantizer.T1 & 0xFF)
-	data[5] = byte(enc.quantizer.T2 >> 8)
-	data[6] = byte(enc.quantizer.T2 & 0xFF)
-	data[7] = byte(enc.quantizer.T3 >> 8)
-	data[8] = byte(enc.quantizer.T3 & 0xFF)
-
-	// RESET interval
-	data[9] = byte(enc.traits.Reset >> 8)
-	data[10] = byte(enc.traits.Reset & 0xFF)
-
-	return writer.WriteSegment(0xFFF8, data)
 }
 
 // writeSOS writes Start of Scan marker with NEAR parameter

@@ -83,11 +83,6 @@ func (enc *Encoder) encode(pixelData []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Write JPEG-LS parameters marker (LSE)
-	if err := enc.writeLSE(writer); err != nil {
-		return nil, err
-	}
-
 	// Write SOS marker
 	if err := enc.writeSOS(writer); err != nil {
 		return nil, err
@@ -130,38 +125,6 @@ func (enc *Encoder) writeSOF55(writer *standard.Writer) error {
 	}
 
 	return writer.WriteSegment(0xFFF7, data)
-}
-
-// writeLSE writes JPEG-LS parameters (LSE marker)
-func (enc *Encoder) writeLSE(writer *standard.Writer) error {
-	// LSE = 0xFFF8
-	// Write default parameters (11 bytes of data, WriteSegment adds 2-byte length field)
-	data := make([]byte, 11)
-	data[0] = 1 // ID = 1 (preset parameters)
-
-	// MAXVAL (maximum sample value)
-	maxVal := uint16(enc.maxVal)
-	data[1] = byte(maxVal >> 8)
-	data[2] = byte(maxVal & 0xFF)
-
-	// T1, T2, T3 (thresholds) from traits to keep encode/decode in sync
-	t1 := uint16(enc.traits.T1)
-	t2 := uint16(enc.traits.T2)
-	t3 := uint16(enc.traits.T3)
-
-	data[3] = byte(t1 >> 8)
-	data[4] = byte(t1 & 0xFF)
-	data[5] = byte(t2 >> 8)
-	data[6] = byte(t2 & 0xFF)
-	data[7] = byte(t3 >> 8)
-	data[8] = byte(t3 & 0xFF)
-
-	// RESET interval
-	reset := uint16(enc.traits.Reset)
-	data[9] = byte(reset >> 8)
-	data[10] = byte(reset & 0xFF)
-
-	return writer.WriteSegment(0xFFF8, data)
 }
 
 // writeSOS writes Start of Scan marker

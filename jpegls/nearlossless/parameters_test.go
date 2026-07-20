@@ -9,8 +9,8 @@ import (
 func TestNewNearLosslessParameters(t *testing.T) {
 	params := NewNearLosslessParameters()
 
-	if params.NEAR != 2 {
-		t.Errorf("Default NEAR = %d, want 2", params.NEAR)
+	if params.NEAR != 3 {
+		t.Errorf("Default NEAR = %d, want 3", params.NEAR)
 	}
 
 	if params.params == nil {
@@ -58,8 +58,8 @@ func TestNearLosslessParameters_SetParameter(t *testing.T) {
 
 func TestNearLosslessParameters_Validate(t *testing.T) {
 	tests := []struct {
-		name        string
-		inputNEAR   int
+		name         string
+		inputNEAR    int
 		expectedNEAR int
 	}{
 		{"Valid NEAR 0", 0, 0},
@@ -67,9 +67,9 @@ func TestNearLosslessParameters_Validate(t *testing.T) {
 		{"Valid NEAR 2", 2, 2},
 		{"Valid NEAR 10", 10, 10},
 		{"Valid NEAR 255", 255, 255},
-		{"Invalid NEAR -1", -1, 2}, // Reset to default
-		{"Invalid NEAR 256", 256, 2}, // Reset to default
-		{"Invalid NEAR 1000", 1000, 2}, // Reset to default
+		{"Invalid NEAR -1", -1, 3},     // Reset to default
+		{"Invalid NEAR 256", 256, 3},   // Reset to default
+		{"Invalid NEAR 1000", 1000, 3}, // Reset to default
 	}
 
 	for _, tt := range tests {

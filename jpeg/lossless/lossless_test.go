@@ -24,6 +24,25 @@ func TestEncodeUsesOptimizedHuffmanTables(t *testing.T) {
 	}
 }
 
+func TestEncodeOmitsJFIFAPP0ToMatchFoDicom(t *testing.T) {
+	encoded, err := Encode(make([]byte, 8*8), 8, 8, 1, 8, 1)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if bytes.Contains(encoded, []byte{0xff, 0xe0}) {
+		t.Fatal("Encode() emitted JFIF APP0, want fo-dicom-compatible marker layout")
+	}
+}
+
+func TestLosslessDifferenceDoesNotWrapAcrossSampleRange(t *testing.T) {
+	if got := losslessDifference(255, 0); got != 255 {
+		t.Errorf("losslessDifference(255, 0) = %d, want 255", got)
+	}
+	if got := losslessDifference(0, 255); got != -255 {
+		t.Errorf("losslessDifference(0, 255) = %d, want -255", got)
+	}
+}
+
 func TestRGBEncodeUsesOneSharedHuffmanTable(t *testing.T) {
 	pixels := make([]byte, 16*16*3)
 	for i := range pixels {

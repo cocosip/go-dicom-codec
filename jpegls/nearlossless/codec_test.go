@@ -59,15 +59,42 @@ func TestCodecRGBUsesSampleInterleave(t *testing.T) {
 	}
 }
 
+func TestDefaultEncodeOmitsLSEPresetParameters(t *testing.T) {
+	encoded, err := Encode(make([]byte, 8*8), 8, 8, 1, 8, 3)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if bytes.Contains(encoded, []byte{0xff, 0xf8}) {
+		t.Fatal("Encode() emitted an LSE preset-parameter segment for standard defaults")
+	}
+}
+
+func TestEncodeEndsAtEOI(t *testing.T) {
+	encoded, err := Encode([]byte{0, 8, 16, 24, 32, 40}, 3, 2, 1, 8, 3)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if len(encoded) < 2 || !bytes.Equal(encoded[len(encoded)-2:], []byte{0xff, 0xd9}) {
+		t.Errorf("raw JPEG-LS output must end at EOI, got suffix %x", encoded[max(0, len(encoded)-4):])
+	}
+}
+
 // TestCodecInterface verifies that Codec implements codec.Codec
 func TestCodecInterface(_ *testing.T) {
 	var _ codec.Codec = (*JPEGLSNearLosslessCodec)(nil)
 }
 
+func TestDefaultCodecUsesFoDicomNearLosslessErrorBound(t *testing.T) {
+	params := NewNearLosslessParameters()
+	if params.NEAR != 3 {
+		t.Fatalf("default NEAR = %d, want 3 to match fo-dicom", params.NEAR)
+	}
+}
+
 // TestCodecRegistration tests that the codec is registered in the global registry
 func TestCodecRegistration(t *testing.T) {
 	// Ensure codec is registered
-	RegisterJPEGLSNearLosslessCodec(2)
+	RegisterJPEGLSNearLosslessCodec(3)
 
 	// Retrieve from global registry
 	registry := codec.GetGlobalRegistry()

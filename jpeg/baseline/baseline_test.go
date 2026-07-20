@@ -92,6 +92,29 @@ func TestQuantizationTablesMatchFoDicomQuality90(t *testing.T) {
 	}
 }
 
+func TestGrayscaleComponentIdentifierMatchesFoDicom(t *testing.T) {
+	jpegData, err := Encode(make([]byte, 8*8), 8, 8, 1, 90)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	sofOffset := bytes.Index(jpegData, []byte{0xff, 0xc0})
+	if sofOffset < 0 || len(jpegData) <= sofOffset+10 {
+		t.Fatal("encoded JPEG is missing a complete SOF0 segment")
+	}
+	if got := jpegData[sofOffset+10]; got != 0 {
+		t.Errorf("SOF0 grayscale component identifier = %d, want 0", got)
+	}
+
+	sosOffset := bytes.Index(jpegData, []byte{0xff, 0xda})
+	if sosOffset < 0 || len(jpegData) <= sosOffset+5 {
+		t.Fatal("encoded JPEG is missing a complete SOS segment")
+	}
+	if got := jpegData[sosOffset+5]; got != 0 {
+		t.Errorf("SOS grayscale component identifier = %d, want 0", got)
+	}
+}
+
 func TestQuantizeBlockRoundsNegativeCoefficientsSymmetrically(t *testing.T) {
 	encoder := &Encoder{}
 	encoder.qtables[0] = standard.ScaleQuantTable(standard.DefaultLuminanceQuantTable, 90)
@@ -99,6 +122,21 @@ func TestQuantizeBlockRoundsNegativeCoefficientsSymmetrically(t *testing.T) {
 	coef := encoder.quantizeBlock(bytes.Repeat([]byte{127}, 8*8), 0, 0, 8, 0)
 	if coef[0] != -3 {
 		t.Errorf("quantized DC coefficient = %d, want -3", coef[0])
+	}
+}
+
+func TestQuantizeBlockExtendsEdgeSamples(t *testing.T) {
+	encoder := &Encoder{}
+	encoder.qtables[0] = standard.ScaleQuantTable(standard.DefaultLuminanceQuantTable, 90)
+
+	coef := encoder.quantizeBlock([]byte{200}, 0, 0, 1, 0)
+	if coef[0] != 192 {
+		t.Errorf("quantized DC coefficient = %d, want 192", coef[0])
+	}
+	for index := 1; index < len(coef); index++ {
+		if coef[index] != 0 {
+			t.Errorf("quantized AC coefficient %d = %d, want 0", index, coef[index])
+		}
 	}
 }
 

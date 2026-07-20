@@ -67,7 +67,7 @@ func NewLossyParameters() *JPEG2000LossyParameters {
 
 	return &JPEG2000LossyParameters{
 		Irreversible:                      true,
-		Rate:                              20,
+		Rate:                              16,
 		RateLevels:                        levels,
 		IsVerbose:                         false,
 		AllowMCT:                          true,
@@ -176,7 +176,7 @@ func (p *JPEG2000LossyParameters) SetParameter(name string, value interface{}) {
 // Validate checks if the parameters are valid and normalizes values.
 func (p *JPEG2000LossyParameters) Validate() error {
 	if p.Rate <= 0 {
-		p.Rate = 20
+		p.Rate = 16
 	}
 	if len(p.RateLevels) == 0 {
 		p.RateLevels = make([]int, len(defaultRateLevels))

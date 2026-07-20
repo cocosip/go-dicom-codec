@@ -26,3 +26,20 @@ func TestApplyBaselinePhotometricInterpretationMatchesFoDicom(t *testing.T) {
 		t.Errorf("PhotometricInterpretation = %q, want YBR_FULL_422", got)
 	}
 }
+
+func TestApplyLossyImageCompressionMetadataMatchesTransferSyntax(t *testing.T) {
+	ds := dataset.New()
+	if err := applyLossyImageCompressionMetadata(ds, transfer.JPEGBaseline8Bit, 1243, 200); err != nil {
+		t.Fatalf("applyLossyImageCompressionMetadata() error = %v", err)
+	}
+
+	if got := ds.TryGetString(tag.LossyImageCompression); got != "01" {
+		t.Errorf("LossyImageCompression = %q, want 01", got)
+	}
+	if got := ds.TryGetString(tag.LossyImageCompressionRatio); got != "6.215" {
+		t.Errorf("LossyImageCompressionRatio = %q, want 6.215", got)
+	}
+	if got := ds.TryGetString(tag.LossyImageCompressionMethod); got != "ISO_10918_1" {
+		t.Errorf("LossyImageCompressionMethod = %q, want ISO_10918_1", got)
+	}
+}

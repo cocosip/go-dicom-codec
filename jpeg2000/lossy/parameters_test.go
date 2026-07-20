@@ -12,8 +12,8 @@ func TestNewLossyParameters(t *testing.T) {
 	if !params.Irreversible {
 		t.Fatal("Default Irreversible should be true")
 	}
-	if params.Rate != 20 {
-		t.Errorf("Default rate should be 20, got %d", params.Rate)
+	if params.Rate != 16 {
+		t.Errorf("Default rate should be 16, got %d", params.Rate)
 	}
 	if len(params.RateLevels) != 9 {
 		t.Errorf("Default rateLevels length should be 9, got %d", len(params.RateLevels))
@@ -65,8 +65,8 @@ func TestValidate(t *testing.T) {
 	if err := params.Validate(); err != nil {
 		t.Fatalf("Validate failed: %v", err)
 	}
-	if params.Rate != 20 {
-		t.Errorf("After validation, Rate = %d, want 20", params.Rate)
+	if params.Rate != 16 {
+		t.Errorf("After validation, Rate = %d, want 16", params.Rate)
 	}
 	if params.NumLevels != 5 {
 		t.Errorf("After validation, NumLevels = %d, want 5", params.NumLevels)

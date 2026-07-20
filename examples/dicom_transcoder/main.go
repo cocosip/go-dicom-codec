@@ -25,6 +25,7 @@ import (
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/dicom/vr"
 	"github.com/cocosip/go-dicom/pkg/dicom/writer"
+	"github.com/cocosip/go-dicom/pkg/imaging"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -251,6 +252,9 @@ func transcodeDICOMFile(ds *dataset.Dataset, outputPath string, sourceTS, target
 	if err := applyBaselinePhotometricInterpretation(newDS, targetTS); err != nil {
 		return fmt.Errorf("failed to update JPEG Baseline photometric interpretation: %w", err)
 	}
+	if err := applyLossyImageCompressionMetadataFromPixelData(newDS, targetTS); err != nil {
+		return fmt.Errorf("failed to update lossy image compression metadata: %w", err)
+	}
 
 	// Note: Codec layer automatically handles signed pixel data (PR=1) correctly:
 	// - During encoding: adds offset for signed data if needed
@@ -272,6 +276,46 @@ func applyBaselinePhotometricInterpretation(ds *dataset.Dataset, targetTS *trans
 	}
 
 	return ds.AddOrUpdate(element.NewString(tag.PhotometricInterpretation, vr.CS, []string{"YBR_FULL_422"}))
+}
+
+func applyLossyImageCompressionMetadataFromPixelData(ds *dataset.Dataset, targetTS *transfer.Syntax) error {
+	if !targetTS.IsLossy() {
+		return nil
+	}
+
+	pixelData, err := imaging.CreatePixelData(ds)
+	if err != nil {
+		return fmt.Errorf("read transcoded pixel data: %w", err)
+	}
+
+	compressedBytes := 0
+	for frame := 0; frame < pixelData.FrameCount(); frame++ {
+		data, err := pixelData.GetFrame(frame)
+		if err != nil {
+			return fmt.Errorf("read compressed frame %d: %w", frame, err)
+		}
+		compressedBytes += len(data)
+	}
+
+	return applyLossyImageCompressionMetadata(ds, targetTS, pixelData.Info.TotalUncompressedSize(), compressedBytes)
+}
+
+func applyLossyImageCompressionMetadata(ds *dataset.Dataset, targetTS *transfer.Syntax, uncompressedBytes, compressedBytes int) error {
+	if !targetTS.IsLossy() {
+		return nil
+	}
+	if uncompressedBytes <= 0 || compressedBytes <= 0 {
+		return fmt.Errorf("invalid compression sizes: uncompressed=%d compressed=%d", uncompressedBytes, compressedBytes)
+	}
+
+	ratio := float64(uncompressedBytes) / float64(compressedBytes)
+	if err := ds.AddOrUpdate(element.NewString(tag.LossyImageCompression, vr.CS, []string{"01"})); err != nil {
+		return err
+	}
+	if err := ds.AddOrUpdate(element.NewString(tag.LossyImageCompressionRatio, vr.DS, []string{fmt.Sprintf("%.3f", ratio)})); err != nil {
+		return err
+	}
+	return ds.AddOrUpdate(element.NewString(tag.LossyImageCompressionMethod, vr.CS, []string{targetTS.LossyCompressionMethod()}))
 }
 
 // getFileSize returns the size of a file in bytes

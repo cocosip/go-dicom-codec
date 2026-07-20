@@ -152,7 +152,7 @@ func (enc *Encoder) writeSOF0(writer *standard.Writer) error {
 
 	if enc.components == 1 {
 		// Grayscale
-		data[6] = 1    // Component ID
+		data[6] = 0    // Component ID used by fo-dicom Native for grayscale
 		data[7] = 0x11 // Sampling factors: 1x1
 		data[8] = 0    // Quantization table 0
 	} else {
@@ -232,7 +232,7 @@ func (enc *Encoder) writeSOS(writer *standard.Writer, pixelData []byte) error {
 	data[0] = byte(enc.components)
 
 	if enc.components == 1 {
-		data[1] = 1    // Component ID
+		data[1] = 0    // Component ID used by fo-dicom Native for grayscale
 		data[2] = 0x00 // DC table 0, AC table 0
 	} else {
 		data[1] = 1    // Y component ID
@@ -348,9 +348,11 @@ func (enc *Encoder) rgbToYCbCr(rgb []byte) *YCbCrData {
 	cb := make([]byte, stride*height)
 	cr := make([]byte, stride*height)
 
-	for row := 0; row < enc.height; row++ {
-		for col := 0; col < enc.width; col++ {
-			offset := (row*enc.width + col) * 3
+	for row := 0; row < height; row++ {
+		sourceRow := min(row, enc.height-1)
+		for col := 0; col < stride; col++ {
+			sourceCol := min(col, enc.width-1)
+			offset := (sourceRow*enc.width + sourceCol) * 3
 			r := int(rgb[offset+0])
 			g := int(rgb[offset+1])
 			b := int(rgb[offset+2])
@@ -438,18 +440,12 @@ func (enc *Encoder) encodeBlock(huffEnc *standard.HuffmanEncoder, data []byte, b
 func (enc *Encoder) quantizeBlock(data []byte, blockX, blockY, stride, tableIdx int) [64]int32 {
 	// Extract 8x8 block
 	var block [64]byte
+	dataHeight := len(data) / stride
 	for y := 0; y < 8; y++ {
-		srcY := blockY*8 + y
-		if srcY >= len(data)/stride {
-			break
-		}
+		srcY := min(blockY*8+y, dataHeight-1)
 		for x := 0; x < 8; x++ {
-			srcX := blockX*8 + x
-			if srcX < stride && srcY*stride+srcX < len(data) {
-				block[y*8+x] = data[srcY*stride+srcX]
-			} else {
-				block[y*8+x] = 0
-			}
+			srcX := min(blockX*8+x, stride-1)
+			block[y*8+x] = data[srcY*stride+srcX]
 		}
 	}
 

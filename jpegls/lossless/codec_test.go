@@ -55,6 +55,26 @@ func TestCodecRGBUsesSampleInterleave(t *testing.T) {
 	}
 }
 
+func TestDefaultEncodeOmitsLSEPresetParameters(t *testing.T) {
+	encoded, err := Encode(make([]byte, 8*8), 8, 8, 1, 8)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if bytes.Contains(encoded, []byte{0xff, 0xf8}) {
+		t.Fatal("Encode() emitted an LSE preset-parameter segment for standard defaults")
+	}
+}
+
+func TestEncodeEndsAtEOI(t *testing.T) {
+	encoded, err := Encode([]byte{0, 8, 16, 24, 32, 40}, 3, 2, 1, 8)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if len(encoded) < 2 || !bytes.Equal(encoded[len(encoded)-2:], []byte{0xff, 0xd9}) {
+		t.Errorf("raw JPEG-LS output must end at EOI, got suffix %x", encoded[max(0, len(encoded)-4):])
+	}
+}
+
 // TestCodecInterface tests the Codec interface implementation for JPEGLSLosslessCodec
 func TestCodecInterface(t *testing.T) {
 	c := NewJPEGLSLosslessCodec()

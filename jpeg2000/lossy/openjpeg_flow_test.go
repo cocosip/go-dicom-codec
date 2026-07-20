@@ -30,7 +30,7 @@ func TestOpenJPEGLossyDefaultRateBuildsFoDicomLayerRates(t *testing.T) {
 
 	NewCodec().configureBasicEncodeParams(encParams, frameInfo, params, 0)
 
-	wantRates := []float64{1280, 640, 320, 160, 80, 40, 20}
+	wantRates := []float64{1280, 640, 320, 160, 80, 40, 20, 16}
 	if encParams.Lossless {
 		t.Fatalf("lossy OpenJPEG flow must use irreversible 9/7, got Lossless=true")
 	}
@@ -73,7 +73,7 @@ func TestOpenJPEGLossyDefaultRateScalesFinalLayerByStoredBits(t *testing.T) {
 
 	NewCodec().configureBasicEncodeParams(encParams, frameInfo, params, 0)
 
-	wantRates := []float64{1280, 640, 320, 160, 80, 40, 15}
+	wantRates := []float64{1280, 640, 320, 160, 80, 40, 20, 12}
 	if encParams.NumLayers != len(wantRates) {
 		t.Fatalf("NumLayers = %d, want %d", encParams.NumLayers, len(wantRates))
 	}

@@ -58,11 +58,6 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 		return nil, err
 	}
 
-	// Write APP0 (JFIF) marker - required for compatibility with libjpeg-based decoders
-	if err := enc.writeAPP0(writer); err != nil {
-		return nil, err
-	}
-
 	// Write SOF3 (Lossless)
 	if err := enc.writeSOF3(writer); err != nil {
 		return nil, err
@@ -88,8 +83,6 @@ func Encode(pixelData []byte, width, height, components, bitDepth int) ([]byte, 
 
 func (enc *Encoder) optimizeHuffmanTables(samples [][]int) {
 	var frequencies [256]uint64
-	modulus := 1 << uint(enc.precision)
-	halfModulus := modulus / 2
 	defaultVal := 1 << uint(enc.precision-1)
 
 	for row := 0; row < enc.height; row++ {
@@ -102,12 +95,7 @@ func (enc *Encoder) optimizeHuffmanTables(samples [][]int) {
 				} else if col > 0 {
 					predicted = samples[comp][row*enc.width+col-1]
 				}
-				diff := sample - predicted
-				if diff >= halfModulus {
-					diff -= modulus
-				} else if diff < -halfModulus {
-					diff += modulus
-				}
+				diff := losslessDifference(sample, predicted)
 
 				frequencies[diffCategory(diff)]++
 			}
@@ -145,19 +133,6 @@ func (enc *Encoder) writeSOF3(writer *standard.Writer) error {
 	}
 
 	return writer.WriteSegment(standard.MarkerSOF3, data)
-}
-
-// writeAPP0 writes JFIF APP0 marker
-func (enc *Encoder) writeAPP0(writer *standard.Writer) error {
-	data := []byte{
-		'J', 'F', 'I', 'F', 0, // JFIF identifier
-		1, 1, // Version 1.1
-		0,    // Density units (0 = no units)
-		0, 1, // X density = 1
-		0, 1, // Y density = 1
-		0, 0, // Thumbnail width/height = 0
-	}
-	return writer.WriteSegment(standard.MarkerAPP0, data)
 }
 
 // writeDHT writes Define Huffman Table segments
@@ -220,10 +195,6 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, samples [][]int) error {
 	var scanBuf bytes.Buffer
 	huffEnc := standard.NewHuffmanEncoder(&scanBuf)
 
-	// Compute modulus for wrapping differences to signed P-bit range
-	modulus := 1 << uint(enc.precision)
-	halfModulus := modulus / 2
-
 	// Encode line by line, interleaved
 	for row := 0; row < enc.height; row++ {
 		// Predictor values for each component
@@ -249,14 +220,7 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, samples [][]int) error {
 					predicted = preds[comp]
 				}
 
-				// Calculate difference with wrapping to signed P-bit range
-				diff := sample - predicted
-				// Wrap to range [-2^(P-1), 2^(P-1)-1]
-				if diff >= halfModulus {
-					diff -= modulus
-				} else if diff < -halfModulus {
-					diff += modulus
-				}
+				diff := losslessDifference(sample, predicted)
 
 				// Encode difference
 				cat, bits := huffEnc.EncodeCategory(diff)
@@ -282,6 +246,10 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, samples [][]int) error {
 
 	// Write scan data
 	return writer.WriteBytes(scanBuf.Bytes())
+}
+
+func losslessDifference(sample, predicted int) int {
+	return sample - predicted
 }
 
 // pixelsToSamples converts byte array to sample arrays

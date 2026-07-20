@@ -17,6 +17,16 @@ func TestCodecName(t *testing.T) {
 	}
 }
 
+func TestDefaultCodecUsesFoDicomRate(t *testing.T) {
+	params, ok := NewCodec().GetDefaultParameters().(*JPEG2000LossyParameters)
+	if !ok {
+		t.Fatalf("GetDefaultParameters returned %T, want *JPEG2000LossyParameters", NewCodec().GetDefaultParameters())
+	}
+	if params.Rate != 16 {
+		t.Fatalf("default Rate = %d, want 16 to match fo-dicom", params.Rate)
+	}
+}
+
 func TestGetDefaultParametersUsesCodecRate(t *testing.T) {
 	c := NewCodecWithRate(80)
 	params, ok := c.GetDefaultParameters().(*JPEG2000LossyParameters)

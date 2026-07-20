@@ -13,7 +13,7 @@ import (
 
 var _ codec.Codec = (*Codec)(nil)
 
-const defaultRate = 20
+const defaultRate = 16
 
 // Codec implements the JPEG 2000 Lossy codec
 // Transfer Syntax UID: 1.2.840.10008.1.2.4.91

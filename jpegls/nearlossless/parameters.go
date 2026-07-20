@@ -27,7 +27,7 @@ type JPEGLSNearLosslessParameters struct {
 // NewNearLosslessParameters creates a new JPEGLSNearLosslessParameters with default values
 func NewNearLosslessParameters() *JPEGLSNearLosslessParameters {
 	return &JPEGLSNearLosslessParameters{
-		NEAR:   2, // Default near-lossless error bound
+		NEAR:   3, // Default near-lossless error bound used by fo-dicom
 		params: make(map[string]interface{}),
 	}
 }
@@ -60,7 +60,7 @@ func (p *JPEGLSNearLosslessParameters) SetParameter(name string, value interface
 func (p *JPEGLSNearLosslessParameters) Validate() error {
 	// NEAR must be in range 0-255
 	if p.NEAR < 0 || p.NEAR > 255 {
-		p.NEAR = 2 // Reset to default
+		p.NEAR = 3 // Reset to default
 	}
 	return nil
 }
