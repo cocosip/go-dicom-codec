@@ -5,8 +5,8 @@ import (
 	"image"
 	"image/jpeg"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/baseline"
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/baseline"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 // EncodeSimple encodes 8-bit JPEG Extended input through the Baseline encoder.

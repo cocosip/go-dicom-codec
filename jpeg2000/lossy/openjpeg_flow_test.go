@@ -3,7 +3,7 @@ package lossy
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 

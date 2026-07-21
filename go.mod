@@ -1,4 +1,4 @@
-module github.com/cocosip/go-dicom-codec
+module github.com/cocosip/go-dicom-codecs
 
 go 1.25.0
 

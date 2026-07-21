@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
+	"github.com/cocosip/go-dicom-codecs/jpegls/runmode"
 )
 
 func TestRunInterruptionSymmetry(t *testing.T) {

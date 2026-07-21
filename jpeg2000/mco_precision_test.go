@@ -1,7 +1,7 @@
 package jpeg2000
 
 import (
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 	"testing"
 )
 

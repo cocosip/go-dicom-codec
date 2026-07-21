@@ -3,7 +3,7 @@ package jpeg2000
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/wavelet"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/wavelet"
 )
 
 // TestDirectCoefficientComparison directly compares coefficients

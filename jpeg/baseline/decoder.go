@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 // Component represents a color component in the image

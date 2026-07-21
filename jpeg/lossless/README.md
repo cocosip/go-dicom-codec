@@ -37,7 +37,7 @@ Where:
 
 ```go
 import (
-    "github.com/cocosip/go-dicom-codec/jpeg/lossless"
+    "github.com/cocosip/go-dicom-codecs/jpeg/lossless"
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
@@ -102,7 +102,7 @@ err := losslessCodec.Encode(src, encoded, params)
 ### Direct Encoder/Decoder Functions
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg/lossless"
+import "github.com/cocosip/go-dicom-codecs/jpeg/lossless"
 
 // Encode with specific predictor
 jpegData, err := lossless.Encode(

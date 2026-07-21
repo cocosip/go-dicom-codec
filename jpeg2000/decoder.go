@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/colorspace"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/colorspace"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t2"
 )
 
 // Decoder implements JPEG 2000 decoding

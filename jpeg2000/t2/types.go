@@ -1,6 +1,6 @@
 package t2
 
-import "github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+import "github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
 
 // Tier-2 Package Data Structures
 // Reference: ISO/IEC 15444-1:2019 Annex B

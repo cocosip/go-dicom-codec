@@ -61,7 +61,7 @@ JPEG Extended (SOF1) 支持：
 ## 使用示例
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg/extended"
+import "github.com/cocosip/go-dicom-codecs/jpeg/extended"
 
 // 编码 12-bit 灰度图像
 jpegData, err := extended.Encode(pixelData, width, height, 1, 12, 85)
@@ -79,7 +79,7 @@ decoded, err := codec.Decode(encoded)
 
 ```go
 import (
-    "github.com/cocosip/go-dicom-codec/jpeg/extended"
+    "github.com/cocosip/go-dicom-codecs/jpeg/extended"
     "github.com/cocosip/go-dicom/pkg/dicom/transfer"
 )
 

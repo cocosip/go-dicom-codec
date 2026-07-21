@@ -4,7 +4,7 @@ package lossless
 import (
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"

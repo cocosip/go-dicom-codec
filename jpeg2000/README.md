@@ -22,7 +22,7 @@ Production-ready encoder/decoder (lossless & lossy) with multi-quality-layer sup
 
 ```go
 import (
-    "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
+    "github.com/cocosip/go-dicom-codecs/jpeg2000/lossless"
     "github.com/cocosip/go-dicom/pkg/imaging/codec"
 )
 
@@ -46,7 +46,7 @@ err := codec.Encode(src, dst, nil)
 ### Lossy Compression (Configurable Quality)
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
+import "github.com/cocosip/go-dicom-codecs/jpeg2000/lossy"
 
 // Method 1: Using quality parameter (1-100)
 params := lossy.NewLossyParameters().
@@ -306,7 +306,7 @@ Test coverage:
 
 ## Contributing
 
-This is part of the `go-dicom-codec` project. See the main repository for contribution guidelines.
+This is part of the `go-dicom-codecs` project. See the main repository for contribution guidelines.
 
 ## References
 
@@ -317,7 +317,7 @@ This is part of the `go-dicom-codec` project. See the main repository for contri
 
 ## License
 
-Same as parent project `go-dicom-codec`.
+Same as parent project `go-dicom-codecs`.
 
 ## Acknowledgments
 

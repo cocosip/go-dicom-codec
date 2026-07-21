@@ -6,9 +6,9 @@ import (
 
 	"math/rand"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/lossy"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
-	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpegls/runmode"
 )
 
 // Encoder represents a JPEG-LS lossless encoder

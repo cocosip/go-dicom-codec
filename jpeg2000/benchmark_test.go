@@ -4,7 +4,7 @@ package jpeg2000
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/testdata"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/testdata"
 )
 
 // BenchmarkDecoderSmallImage benchmarks decoding a small 8x8 image

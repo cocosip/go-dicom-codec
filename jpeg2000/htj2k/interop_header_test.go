@@ -3,8 +3,8 @@ package htj2k
 import (
 	"testing"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 )
 

@@ -3,7 +3,7 @@ package t1
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/mqc"
 )
 
 // TestTERMALLDetailed provides detailed debugging of TERMALL decoding

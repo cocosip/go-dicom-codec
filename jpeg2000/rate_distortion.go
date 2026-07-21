@@ -4,8 +4,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t2"
 )
 
 // LayerAllocation represents pass allocation for quality layers

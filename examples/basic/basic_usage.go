@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/baseline"
+	"github.com/cocosip/go-dicom-codecs/jpeg/baseline"
 )
 
 func main() {

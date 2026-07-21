@@ -3,7 +3,7 @@ package htj2k
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
 )
 
 // TestBaselineEBCOT tests that EBCOT T1 works correctly (baseline)

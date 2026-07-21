@@ -26,7 +26,7 @@ go build ./...
 
 ## Architecture
 
-This is a pure-Go DICOM image codec library (`github.com/cocosip/go-dicom-codec`). It implements encode/decode for JPEG, JPEG-LS, and JPEG 2000 families as required for DICOM transfer syntaxes. The library handles only codec logic — DICOM encapsulation and metadata are handled externally by `github.com/cocosip/go-dicom`.
+This is a pure-Go DICOM image codec library (`github.com/cocosip/go-dicom-codecs`). It implements encode/decode for JPEG, JPEG-LS, and JPEG 2000 families as required for DICOM transfer syntaxes. The library handles only codec logic — DICOM encapsulation and metadata are handled externally by `github.com/cocosip/go-dicom`.
 
 ### Package Layout
 
@@ -72,7 +72,7 @@ Each codec package follows this structure:
 
 Auto-registration happens via blank imports. Including any codec package side-effect registers it:
 ```go
-import _ "github.com/cocosip/go-dicom-codec/jpeg/baseline"
+import _ "github.com/cocosip/go-dicom-codecs/jpeg/baseline"
 ```
 
 ### JPEG 2000 Internals

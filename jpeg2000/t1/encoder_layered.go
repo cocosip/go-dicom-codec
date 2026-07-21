@@ -3,7 +3,7 @@ package t1
 import (
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/mqc"
 )
 
 // PassData represents encoded data for a single coding pass

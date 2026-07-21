@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 // Decoder represents a JPEG Lossless decoder

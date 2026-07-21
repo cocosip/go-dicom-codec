@@ -48,7 +48,7 @@ JPEG-LS (ISO/IEC 14495-1 / ITU-T T.87) 基于 LOCO-I 算法：
 ## 使用示例
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+import "github.com/cocosip/go-dicom-codecs/jpegls/lossless"
 
 // 编码
 jpegLSData, err := lossless.Encode(pixelData, width, height, components, bitDepth)

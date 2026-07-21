@@ -3,7 +3,7 @@ package testdata
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 )
 
 // TestGenerateMultiTileJ2K tests multi-tile JPEG 2000 generation

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
 )
 
 // TestAllocateLayersSimple tests the simple layer allocation algorithm

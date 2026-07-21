@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
 )
 
 func TestOpenJPEGLosslessMultiLayerCODDoesNotEnableTERMALL(t *testing.T) {

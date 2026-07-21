@@ -3,7 +3,7 @@ package baseline
 import (
 	"bytes"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 // Encoder represents a JPEG Baseline encoder

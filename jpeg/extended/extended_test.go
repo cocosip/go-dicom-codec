@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/baseline"
+	"github.com/cocosip/go-dicom-codecs/jpeg/baseline"
 )
 
 func TestEncodeUsesNativeBaselineSOF0ForEightBitSequential(t *testing.T) {

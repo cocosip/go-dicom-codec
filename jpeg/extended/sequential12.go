@@ -6,7 +6,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 const sequential12Precision = 12

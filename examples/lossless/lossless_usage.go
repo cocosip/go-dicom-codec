@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
+	"github.com/cocosip/go-dicom-codecs/jpeg/lossless14sv1"
 )
 
 func main() {

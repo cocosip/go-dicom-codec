@@ -4,8 +4,8 @@ package main
 import (
 	"fmt"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
-	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg2000/lossless"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
@@ -48,7 +48,7 @@ func registryUsageExample() {
 	// 3. Decode to get uncompressed pixel data
 
 	fmt.Println("Example workflow:")
-	fmt.Println("  1. Import package: _ \"github.com/cocosip/go-dicom-codec/jpeg2000/lossless\"")
+	fmt.Println("  1. Import package: _ \"github.com/cocosip/go-dicom-codecs/jpeg2000/lossless\"")
 	fmt.Println("  2. Get codec: registry.GetCodec(transfer.JPEG2000Lossless)")
 	fmt.Println("  3. Create src PixelData with compressed JPEG 2000 data")
 	fmt.Println("  4. Call codec.Decode(src, dst, nil)")

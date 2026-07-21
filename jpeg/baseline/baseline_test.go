@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
 )
 
 func TestDefaultQualityMatchesFoDicom(t *testing.T) {

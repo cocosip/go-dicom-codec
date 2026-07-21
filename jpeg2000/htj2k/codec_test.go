@@ -7,7 +7,7 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
 )
 
 func TestHTJ2KCodec_Name(t *testing.T) {

@@ -3,7 +3,7 @@ package t2
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
 )
 
 type countingPacketBitWriter struct {

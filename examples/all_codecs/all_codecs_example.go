@@ -4,10 +4,10 @@ package main
 import (
 	"fmt"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
-	"github.com/cocosip/go-dicom-codec/jpeg/baseline"
-	"github.com/cocosip/go-dicom-codec/jpeg/lossless"
-	"github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
+	"github.com/cocosip/go-dicom-codecs/jpeg/baseline"
+	"github.com/cocosip/go-dicom-codecs/jpeg/lossless"
+	"github.com/cocosip/go-dicom-codecs/jpeg/lossless14sv1"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"

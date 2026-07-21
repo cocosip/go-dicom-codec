@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/mqc"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/mqc"
 )
 
 // Encoder implements EBCOT Tier-1 encoding

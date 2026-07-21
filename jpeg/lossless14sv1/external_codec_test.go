@@ -3,7 +3,7 @@ package lossless14sv1
 import (
 	"testing"
 
-	codecHelpers "github.com/cocosip/go-dicom-codec/codec"
+	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
 	"github.com/cocosip/go-dicom/pkg/dicom/transfer"
 	"github.com/cocosip/go-dicom/pkg/imaging/codec"
 	"github.com/cocosip/go-dicom/pkg/imaging/imagetypes"

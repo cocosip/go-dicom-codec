@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t2"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t2"
 )
 
 type interopManifest struct {

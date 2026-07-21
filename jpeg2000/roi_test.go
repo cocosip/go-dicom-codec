@@ -3,7 +3,7 @@ package jpeg2000
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 )
 
 func TestEncodeAddsRGNSegment(t *testing.T) {

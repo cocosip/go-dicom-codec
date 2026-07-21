@@ -3,7 +3,7 @@ package nearlossless
 import (
 	"testing"
 
-	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
+	"github.com/cocosip/go-dicom-codecs/jpegls/runmode"
 )
 
 // TestEncodeDecodeNEAR0 tests with NEAR=0 (should be lossless)

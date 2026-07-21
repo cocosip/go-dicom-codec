@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 )
 
 func main() {

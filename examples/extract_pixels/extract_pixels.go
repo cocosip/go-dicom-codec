@@ -13,13 +13,13 @@ import (
 	"github.com/cocosip/go-dicom/pkg/imaging"
 
 	// Register codecs
-	_ "github.com/cocosip/go-dicom-codec/jpeg/baseline"
-	_ "github.com/cocosip/go-dicom-codec/jpeg/extended"
-	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless"
-	_ "github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
-	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossless"
-	_ "github.com/cocosip/go-dicom-codec/jpeg2000/lossy"
-	_ "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg/baseline"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg/extended"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg/lossless"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg/lossless14sv1"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg2000/lossless"
+	_ "github.com/cocosip/go-dicom-codecs/jpeg2000/lossy"
+	_ "github.com/cocosip/go-dicom-codecs/jpegls/lossless"
 )
 
 func main() {

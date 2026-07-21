@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000"
 )
 
 // This example demonstrates Region of Interest (ROI) encoding

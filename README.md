@@ -1,4 +1,4 @@
-# go-dicom-codec
+# go-dicom-codecs
 
 A Go library providing image compression/decompression codecs for medical imaging (DICOM), including JPEG, JPEG-LS, and JPEG 2000 families.
 
@@ -34,7 +34,7 @@ A Go library providing image compression/decompression codecs for medical imagin
 ## Installation
 
 ```bash
-go get github.com/cocosip/go-dicom-codec
+go get github.com/cocosip/go-dicom-codecs
 ```
 
 ## Architecture
@@ -61,8 +61,8 @@ The library is organized into the following packages:
 package main
 
 import (
-    "github.com/cocosip/go-dicom-codec/codec"
-    _ "github.com/cocosip/go-dicom-codec/jpeg/baseline" // Auto-register
+    "github.com/cocosip/go-dicom-codecs/codec"
+    _ "github.com/cocosip/go-dicom-codecs/jpeg/baseline" // Auto-register
 )
 
 func main() {
@@ -98,7 +98,7 @@ func main() {
 ### Direct Package Usage
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg/baseline"
+import "github.com/cocosip/go-dicom-codecs/jpeg/baseline"
 
 func main() {
     // Encode with quality 85
@@ -118,7 +118,7 @@ func main() {
 ### JPEG Lossless (All Predictors)
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg/lossless"
+import "github.com/cocosip/go-dicom-codecs/jpeg/lossless"
 
 func main() {
     // Lossless encoding with predictor 4 (best compression)
@@ -139,7 +139,7 @@ func main() {
 ### JPEG Lossless SV1 (Predictor 1 only)
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpeg/lossless14sv1"
+import "github.com/cocosip/go-dicom-codecs/jpeg/lossless14sv1"
 
 func main() {
     // Lossless encoding (perfect reconstruction)
@@ -159,7 +159,7 @@ func main() {
 ### JPEG-LS Lossless
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpegls/lossless"
+import "github.com/cocosip/go-dicom-codecs/jpegls/lossless"
 
 func main() {
     // JPEG-LS lossless encoding (LOCO-I algorithm)
@@ -179,7 +179,7 @@ func main() {
 ### JPEG-LS Near-Lossless
 
 ```go
-import "github.com/cocosip/go-dicom-codec/jpegls/nearlossless"
+import "github.com/cocosip/go-dicom-codecs/jpegls/nearlossless"
 
 func main() {
     // JPEG-LS near-lossless encoding with NEAR=3

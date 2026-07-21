@@ -1,7 +1,7 @@
 // Package t2 contains Tier-2 packet coding helpers.
 package t2
 
-import "github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
+import "github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
 
 func subbandIndex(numLevels, res, band int) int {
 	if res < 0 || res > numLevels {

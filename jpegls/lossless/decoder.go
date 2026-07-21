@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cocosip/go-dicom-codec/jpeg/standard"
-	"github.com/cocosip/go-dicom-codec/jpegls/runmode"
+	"github.com/cocosip/go-dicom-codecs/jpeg/standard"
+	"github.com/cocosip/go-dicom-codecs/jpegls/runmode"
 )
 
 // Decoder represents a JPEG-LS lossless decoder

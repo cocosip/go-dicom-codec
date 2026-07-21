@@ -5,9 +5,9 @@ import (
 	"math"
 	"sort"
 
-	"github.com/cocosip/go-dicom-codec/jpeg2000/codestream"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/t1"
-	"github.com/cocosip/go-dicom-codec/jpeg2000/wavelet"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/codestream"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/t1"
+	"github.com/cocosip/go-dicom-codecs/jpeg2000/wavelet"
 )
 
 // BlockDecoder is an interface for T1 block decoders (EBCOT or HTJ2K)

@@ -1,6 +1,6 @@
 package lossless
 
-import "github.com/cocosip/go-dicom-codec/jpegls/runmode"
+import "github.com/cocosip/go-dicom-codecs/jpegls/runmode"
 
 // MED (Median Edge Detection) predictor for JPEG-LS
 // This is the LOCO-I predictor that detects horizontal or vertical edges
