@@ -40,6 +40,30 @@ func TestOpenJPEGLayeredDistortionUsesNMSEReductionLookup(t *testing.T) {
 	}
 }
 
+func TestOpenJPEGLayeredDistortionUsesNativeWeightedMSEOperationOrder(t *testing.T) {
+	enc := NewT1Encoder(1, 1, 0)
+	enc.SetNMSEDecFractionalBits(6)
+	enc.SetOpenJPEGDistortionParameters(1.805, 2.022, 0.8671875, 1)
+
+	passes, _, err := enc.EncodeLayered([]int32{1 << 6}, 1, 0, nil, 0x00)
+	if err != nil {
+		t.Fatalf("EncodeLayered failed: %v", err)
+	}
+	if len(passes) != 1 {
+		t.Fatalf("passes = %d, want 1", len(passes))
+	}
+
+	// Match opj_t1_getwmsedec: w1 * w2 * stepsize * 2^bpno, then square.
+	mctNorm := float64(1.805)
+	dwtNorm := float64(2.022)
+	stepSize := float64(0.8671875)
+	wmsedec := mctNorm * dwtNorm * (stepSize / float64(2))
+	want := wmsedec * (wmsedec * 8192.0 / 8192.0)
+	if got := passes[0].Distortion; got != want {
+		t.Fatalf("distortion = %.17g, want OpenJPEG operation order %.17g", got, want)
+	}
+}
+
 func TestOpenJPEGLayeredAllZeroBlockHasNoPasses(t *testing.T) {
 	enc := NewT1Encoder(4, 4, 0)
 	passes, data, err := enc.EncodeLayered(make([]int32, 16), 1, 0, nil, 0x00)
@@ -51,5 +75,21 @@ func TestOpenJPEGLayeredAllZeroBlockHasNoPasses(t *testing.T) {
 	}
 	if len(data) != 0 {
 		t.Fatalf("all-zero block data length = %d, want 0", len(data))
+	}
+}
+
+func TestOpenJPEGLayeredSubFractionalCoefficientHasNoPasses(t *testing.T) {
+	enc := NewT1Encoder(1, 1, 0)
+	enc.SetNMSEDecFractionalBits(6)
+
+	passes, data, err := enc.EncodeLayered([]int32{38}, 1, 0, nil, 0x00)
+	if err != nil {
+		t.Fatalf("EncodeLayered failed: %v", err)
+	}
+	if len(passes) != 0 {
+		t.Fatalf("pass count = %d, want 0 for a coefficient below 1<<6", len(passes))
+	}
+	if len(data) != 0 {
+		t.Fatalf("data length = %d, want 0", len(data))
 	}
 }

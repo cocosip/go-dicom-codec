@@ -571,9 +571,19 @@ func AllocateLayersOpenJPEGThresholdMeasured(passesPerBlock [][]t1.PassData, lay
 		if layer < len(layerBudgets) {
 			budget = layerBudgets[layer]
 		}
-		if budget <= 0 || budget >= fullRate {
+		if budget <= 0 {
 			for cb, passes := range passesPerBlock {
 				selected[cb] = len(passes)
+				alloc.CodeBlockPasses[cb][layer] = selected[cb]
+			}
+			continue
+		}
+		if budget >= fullRate {
+			// A positive OpenJPEG rate target still applies the threshold rule.
+			// This retains all rate-bearing passes while excluding trailing passes
+			// with neither bytes nor distortion reduction.
+			copy(selected, selectOpenJPEGThreshold(passesPerBlock, selected, 0))
+			for cb := range passesPerBlock {
 				alloc.CodeBlockPasses[cb][layer] = selected[cb]
 			}
 			continue

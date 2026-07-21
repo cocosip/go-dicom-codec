@@ -40,3 +40,4 @@ tools/
 .codex-go-cache/
 artifacts/
 .cache/
+.tmp/

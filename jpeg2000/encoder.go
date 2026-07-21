@@ -154,6 +154,7 @@ func DefaultEncodeParams(width, height, components, bitDepth int, isSigned bool)
 type Encoder struct {
 	params                  *EncodeParams
 	data                    [][]int32 // [component][pixel]
+	irreversibleMCTData     [][]float32
 	roiShifts               []int
 	RoiRects                [][]RoiRect // per-component rectangles
 	roiStyles               []byte      // per-component Srgn value: 0=MaxShift, 1=GeneralScaling
@@ -190,6 +191,7 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 	// Apply DC level shift BEFORE MCT (to match OpenJPEG order)
 	// OpenJPEG: DC shift -> MCT -> DWT -> T1
 	e.applyDCLevelShift()
+	e.irreversibleMCTData = nil
 
 	if e.params.EnableMCT {
 		if len(e.params.MCTBindings) > 0 {
@@ -201,8 +203,7 @@ func (e *Encoder) Encode(pixelData []byte) ([]byte, error) {
 				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			} else {
-				y, cb, cr := colorspace.ApplyICTToComponents(e.data[0], e.data[1], e.data[2])
-				e.data[0], e.data[1], e.data[2] = y, cb, cr
+				e.irreversibleMCTData = e.applyOpenJPEGIrreversibleMCT()
 			}
 		}
 	}
@@ -245,6 +246,7 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 	// Apply DC level shift BEFORE MCT (to match OpenJPEG order)
 	// OpenJPEG: DC shift -> MCT -> DWT -> T1
 	e.applyDCLevelShift()
+	e.irreversibleMCTData = nil
 
 	if e.params.EnableMCT {
 		if len(e.params.MCTBindings) > 0 {
@@ -256,8 +258,7 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 				y, cb, cr := colorspace.ApplyRCTToComponents(e.data[0], e.data[1], e.data[2])
 				e.data[0], e.data[1], e.data[2] = y, cb, cr
 			} else {
-				y, cb, cr := colorspace.ApplyICTToComponents(e.data[0], e.data[1], e.data[2])
-				e.data[0], e.data[1], e.data[2] = y, cb, cr
+				e.irreversibleMCTData = e.applyOpenJPEGIrreversibleMCT()
 			}
 		}
 	}
@@ -269,6 +270,21 @@ func (e *Encoder) EncodeComponents(componentData [][]int32) ([]byte, error) {
 	}
 
 	return codestream, nil
+}
+
+// applyOpenJPEGIrreversibleMCT keeps the irreversible ICT result in float32,
+// matching opj_tcd_dc_level_shift_encode and opj_mct_encode_real.
+func (e *Encoder) applyOpenJPEGIrreversibleMCT() [][]float32 {
+	r := wavelet.ConvertInt32ToFloat32(e.data[0])
+	g := wavelet.ConvertInt32ToFloat32(e.data[1])
+	b := wavelet.ConvertInt32ToFloat32(e.data[2])
+	for i := range r {
+		red, green, blue := r[i], g[i], b[i]
+		r[i] = (red*0.299 + green*0.587) + blue*0.114
+		g[i] = (red*-0.16875 + green*-0.331260) + blue*0.5
+		b[i] = (red*0.5 + green*-0.41869) + blue*-0.08131
+	}
+	return [][]float32{r, g, b}
 }
 
 // validateParams validates encoding parameters
@@ -1910,19 +1926,7 @@ func (e *Encoder) writeTilesWithGlobalRateDistortion(buf *bytes.Buffer, tileWidt
 		actualWidth := x1 - x0
 		actualHeight := y1 - y0
 
-		// Extract tile data
-		tileData := make([][]int32, e.params.Components)
-		for c := 0; c < e.params.Components; c++ {
-			tileData[c] = make([]int32, actualWidth*actualHeight)
-			for ty := 0; ty < actualHeight; ty++ {
-				srcIdx := (y0+ty)*e.params.Width + x0
-				dstIdx := ty * actualWidth
-				copy(tileData[c][dstIdx:dstIdx+actualWidth], e.data[c][srcIdx:srcIdx+actualWidth])
-			}
-		}
-
-		// Apply wavelet transform
-		transformedData := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
+		transformedData := e.transformTile(x0, y0, actualWidth, actualHeight)
 
 		packetEnc, blocks := e.buildTilePacketEncoder(transformedData, actualWidth, actualHeight)
 		tileEncodings = append(tileEncodings, tileEncoding{
@@ -1991,19 +1995,7 @@ func (e *Encoder) writeTile(buf *bytes.Buffer, tileIdx, tileWidth, tileHeight, n
 	actualWidth := x1 - x0
 	actualHeight := y1 - y0
 
-	// Extract tile data
-	tileData := make([][]int32, e.params.Components)
-	for c := 0; c < e.params.Components; c++ {
-		tileData[c] = make([]int32, actualWidth*actualHeight)
-		for ty := 0; ty < actualHeight; ty++ {
-			srcIdx := (y0+ty)*e.params.Width + x0
-			dstIdx := ty * actualWidth
-			copy(tileData[c][dstIdx:dstIdx+actualWidth], e.data[c][srcIdx:srcIdx+actualWidth])
-		}
-	}
-
-	// Apply wavelet transform
-	transformedData := e.applyWaveletTransform(tileData, actualWidth, actualHeight, x0, y0)
+	transformedData := e.transformTile(x0, y0, actualWidth, actualHeight)
 
 	// Encode tile data
 	tileBytes := e.encodeTileData(transformedData, actualWidth, actualHeight)
@@ -2058,17 +2050,57 @@ func (e *Encoder) applyWaveletTransform(tileData [][]int32, width, height, x0, y
 		}
 		return transformed
 	}
-	// Apply 9/7 irreversible wavelet transform (lossy)
+	floatData := make([][]float32, len(tileData))
+	for c := range tileData {
+		floatData[c] = wavelet.ConvertInt32ToFloat32(tileData[c])
+	}
+	return e.applyIrreversibleWaveletTransform(floatData, width, height, x0, y0)
+}
+
+func (e *Encoder) transformTile(x0, y0, width, height int) [][]int32 {
+	if e.irreversibleMCTData != nil {
+		tileData := make([][]float32, e.params.Components)
+		for c := range tileData {
+			tileData[c] = make([]float32, width*height)
+			for ty := 0; ty < height; ty++ {
+				srcIdx := (y0+ty)*e.params.Width + x0
+				dstIdx := ty * width
+				copy(tileData[c][dstIdx:dstIdx+width], e.irreversibleMCTData[c][srcIdx:srcIdx+width])
+			}
+		}
+		return e.applyIrreversibleWaveletTransform(tileData, width, height, x0, y0)
+	}
+
+	tileData := make([][]int32, e.params.Components)
+	for c := range tileData {
+		tileData[c] = make([]int32, width*height)
+		for ty := 0; ty < height; ty++ {
+			srcIdx := (y0+ty)*e.params.Width + x0
+			dstIdx := ty * width
+			copy(tileData[c][dstIdx:dstIdx+width], e.data[c][srcIdx:srcIdx+width])
+		}
+	}
+	return e.applyWaveletTransform(tileData, width, height, x0, y0)
+}
+
+func (e *Encoder) applyIrreversibleWaveletTransform(tileData [][]float32, width, height, x0, y0 int) [][]int32 {
+	if e.params.NumLevels == 0 {
+		transformed := make([][]int32, len(tileData))
+		for c := range tileData {
+			transformed[c] = wavelet.ConvertFloat32ToInt32OpenJPEG(tileData[c])
+		}
+		return transformed
+	}
+
 	transformed := make([][]int32, len(tileData))
 	quantParams := e.lossyQuantizationParams()
 	stepSizes := OpenJPEGRuntimeQuantizationSteps(quantParams.EncodedSteps, e.params.NumLevels, e.params.BitDepth)
 	for c := 0; c < len(tileData); c++ {
 		// OpenJPEG stores irreversible tile samples as OPJ_FLOAT32 through DWT and T1 input.
-		floatData := wavelet.ConvertInt32ToFloat32(tileData[c])
 		// Apply forward multilevel 9/7 DWT
-		wavelet.ForwardMultilevel97Float32WithParity(floatData, width, height, e.params.NumLevels, x0, y0)
+		wavelet.ForwardMultilevel97Float32WithParity(tileData[c], width, height, e.params.NumLevels, x0, y0)
 		// Apply quantization per subband using float coefficients
-		transformed[c] = e.applyQuantizationBySubbandFloat(floatData, width, height, x0, y0, stepSizes)
+		transformed[c] = e.applyQuantizationBySubbandFloat(tileData[c], width, height, x0, y0, stepSizes)
 	}
 	return transformed
 }
@@ -2557,7 +2589,8 @@ func (e *Encoder) openJPEGLayerBudgets(fullBudget float64) []float64 {
 			rate = e.params.LayerRates[i]
 		}
 		if rate <= 0 {
-			budgets[i] = fullBudget
+			// A zero rate explicitly requests the OpenJPEG all-pass layer.
+			budgets[i] = 0
 			continue
 		}
 		budget := (sizePixel * pixels) / (rate * bitsEmpty)
@@ -3116,7 +3149,7 @@ func (e *Encoder) encodeCodeBlock(cb codeBlockInfo, _ int) *t2.PrecinctCodeBlock
 	numPasses, zeroBitPlanes := e.codeBlockPassLayout(cblkNumbps, bandNumbps)
 
 	// Create block encoder (EBCOT T1 or HTJ2K)
-	blockEnc := e.newCodeBlockEncoder(actualWidth, actualHeight, cb.resLevel, cb.band, bandNumbps)
+	blockEnc := e.newCodeBlockEncoder(actualWidth, actualHeight, cb.compIdx, cb.resLevel, cb.band, bandNumbps)
 
 	// ROI handling: determine style/shift/inside and apply scaling/roishift
 	_, roiShift, inside := e.roiContext(cb)
@@ -3192,7 +3225,7 @@ func (e *Encoder) codeBlockPassLayout(cblkNumbps, bandNumbps int) (numPasses, ze
 	return numPasses, zeroBitPlanes
 }
 
-func (e *Encoder) newCodeBlockEncoder(width, height, res, band, bandNumbps int) BlockEncoder {
+func (e *Encoder) newCodeBlockEncoder(width, height, component, res, band, bandNumbps int) BlockEncoder {
 	var blockEnc BlockEncoder
 	if e.params.BlockEncoderFactory != nil {
 		blockEnc = e.params.BlockEncoderFactory(width, height)
@@ -3209,7 +3242,17 @@ func (e *Encoder) newCodeBlockEncoder(width, height, res, band, bandNumbps int) 
 			} else {
 				step := e.openJPEGRuntimeStepForBand(res, band)
 				level := e.params.NumLevels - res
-				t1Enc.SetDistortionWeight(openJPEGDistortionWeight(false, level, band, step))
+				mctNorm := 1.0
+				if e.irreversibleMCTData != nil {
+					mctNorm = openJPEGIrreversibleMCTNorm(component)
+				}
+				log2Gain := 0
+				if band == 3 {
+					log2Gain = 2
+				} else if band != 0 {
+					log2Gain = 1
+				}
+				t1Enc.SetOpenJPEGDistortionParameters(mctNorm, dwtNorm97(level, band), step, log2Gain)
 			}
 		}
 		blockEnc = t1Enc
@@ -3218,6 +3261,16 @@ func (e *Encoder) newCodeBlockEncoder(width, height, res, band, bandNumbps int) 
 		setter.SetKMax(bandNumbps)
 	}
 	return blockEnc
+}
+
+func openJPEGIrreversibleMCTNorm(component int) float64 {
+	// opj_mct_norms_real in OpenJPEG's mct.c.
+	const defaultNorm = 1.0
+	var norms = [...]float64{1.732, 1.805, 1.573}
+	if component < 0 || component >= len(norms) {
+		return defaultNorm
+	}
+	return norms[component]
 }
 
 func (e *Encoder) openJPEGRuntimeStepForBand(res, band int) float64 {

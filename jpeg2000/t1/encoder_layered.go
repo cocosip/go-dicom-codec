@@ -55,7 +55,7 @@ func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, _ []
 
 	// Determine maximum bit-plane
 	maxBitplane := t1.findMaxBitplane()
-	if maxBitplane < 0 {
+	if maxBitplane < t1.nmseDecFracBits {
 		return nil, []byte{}, nil
 	}
 
@@ -78,7 +78,7 @@ func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, _ []
 	passIdx := 0
 	passType := 2
 	prevTerminated := false
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+	for t1.bitplane = maxBitplane; t1.bitplane >= t1.nmseDecFracBits && passIdx < numPasses; {
 		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
 		if startBitplane {
 			// Clear VISIT flags at start of each bitplane
@@ -119,11 +119,15 @@ func (t1 *Encoder) EncodeLayered(data []int32, numPasses int, roishift int, _ []
 			}
 		}
 		bpno := t1.bitplane - t1.nmseDecFracBits
-		if bpno < 0 {
-			bpno = 0
-		}
 		bitplaneScale := float64(int64(1) << uint(bpno))
-		cumDistReduction += float64(nmsedec) * t1.distortionWeight * bitplaneScale * bitplaneScale
+		if t1.openJPEGDistortion.enabled {
+			gain := 1 << uint(t1.openJPEGDistortion.log2Gain)
+			stepSize := t1.openJPEGDistortion.stepSize / float64(gain)
+			wmsedec := t1.openJPEGDistortion.mctNorm * t1.openJPEGDistortion.dwtNorm * stepSize * bitplaneScale
+			cumDistReduction += wmsedec * (wmsedec * float64(nmsedec) / 8192.0)
+		} else {
+			cumDistReduction += float64(nmsedec) * t1.distortionWeight * bitplaneScale * bitplaneScale
+		}
 
 		shouldTerminate := isTerminatingPass(t1.bitplane, maxBitplane, passType, t1.cblkstyle)
 		if shouldTerminate {

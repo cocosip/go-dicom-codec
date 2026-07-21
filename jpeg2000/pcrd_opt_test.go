@@ -139,6 +139,19 @@ func TestAllocateLayersOpenJPEGThresholdAppendsFullFinalLayer(t *testing.T) {
 	}
 }
 
+func TestAllocateLayersOpenJPEGThresholdSkipsTrailingEmptyPassForPositiveBudget(t *testing.T) {
+	passes := [][]t1.PassData{{
+		{Rate: 10, Distortion: 100},
+		{Rate: 10, Distortion: 100},
+	}}
+
+	alloc := AllocateLayersOpenJPEGThreshold(passes, []float64{10})
+
+	if got := alloc.CodeBlockPasses[0][0]; got != 1 {
+		t.Fatalf("selected passes = %d, want 1 without the trailing empty pass", got)
+	}
+}
+
 func TestSelectOpenJPEGThresholdUsesDBLEpsilonMargin(t *testing.T) {
 	const dblEpsilon = 2.220446049250313e-16
 	threshold := 1.0

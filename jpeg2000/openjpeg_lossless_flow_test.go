@@ -110,7 +110,7 @@ func TestOpenJPEGLossyDistortionWeightUsesRuntimeStepAndDWTNorm(t *testing.T) {
 	params.NumLevels = 5
 	params.LayerRates = []float64{1280, 640, 320, 160, 80, 40, 20}
 	enc := NewEncoder(params)
-	blockEnc := enc.newCodeBlockEncoder(64, 64, 4, 1, 6)
+	blockEnc := enc.newCodeBlockEncoder(64, 64, 0, 4, 1, 6)
 	t1Enc, ok := blockEnc.(*t1.Encoder)
 	if !ok {
 		t.Fatalf("block encoder = %T, want *t1.Encoder", blockEnc)

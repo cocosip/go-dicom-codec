@@ -32,13 +32,20 @@ type Encoder struct {
 	orientation int
 
 	// Encoding parameters
-	roishift         int  // ROI shift value
-	cblkstyle        int  // Code-block style flags
-	resetctx         bool // Reset context on each pass
-	termall          bool // Terminate all passes
-	segmentation     bool // Use segmentation symbols
-	nmseDecFracBits  int  // Number of T1_NMSEDEC_FRACBITS already present in data
-	distortionWeight float64
+	roishift           int  // ROI shift value
+	cblkstyle          int  // Code-block style flags
+	resetctx           bool // Reset context on each pass
+	termall            bool // Terminate all passes
+	segmentation       bool // Use segmentation symbols
+	nmseDecFracBits    int  // Number of T1_NMSEDEC_FRACBITS already present in data
+	distortionWeight   float64
+	openJPEGDistortion struct {
+		enabled  bool
+		mctNorm  float64
+		dwtNorm  float64
+		stepSize float64
+		log2Gain int
+	}
 }
 
 func isLazyRawPass(bitplane int, maxBitplane int, passType int, cblkstyle int) bool {
@@ -118,6 +125,28 @@ func (t1 *Encoder) SetDistortionWeight(weight float64) {
 	t1.distortionWeight = weight
 }
 
+// SetOpenJPEGDistortionParameters configures opj_t1_getwmsedec-compatible
+// per-pass weighted MSE calculation for irreversible transforms.
+func (t1 *Encoder) SetOpenJPEGDistortionParameters(mctNorm, dwtNorm, stepSize float64, log2Gain int) {
+	if mctNorm <= 0 {
+		mctNorm = 1
+	}
+	if dwtNorm <= 0 {
+		dwtNorm = 1
+	}
+	if stepSize <= 0 {
+		stepSize = 1
+	}
+	if log2Gain < 0 {
+		log2Gain = 0
+	}
+	t1.openJPEGDistortion.enabled = true
+	t1.openJPEGDistortion.mctNorm = mctNorm
+	t1.openJPEGDistortion.dwtNorm = dwtNorm
+	t1.openJPEGDistortion.stepSize = stepSize
+	t1.openJPEGDistortion.log2Gain = log2Gain
+}
+
 // Encode encodes a code-block
 //
 // Performance notes:
@@ -149,10 +178,14 @@ func (t1 *Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, er
 	maxBitplane := t1.findMaxBitplane()
 
 	if maxBitplane < 0 {
-		// All coefficients are zero
+		// Preserve the single-layer encoder's established empty-block stream.
 		t1.mqe = mqc.NewMQEncoder(NUMCONTEXTS)
-		result := t1.mqe.Flush()
-		return result, nil
+		return t1.mqe.Flush(), nil
+	}
+	if maxBitplane < t1.nmseDecFracBits {
+		// OpenJPEG stores T1 coefficients with NMSEDEC fractional bits. A block
+		// with no magnitude bit above that scale has numbps == 0 and no passes.
+		return []byte{}, nil
 	}
 
 	// Initialize MQ encoder with OpenJPEG default context states
@@ -167,7 +200,7 @@ func (t1 *Encoder) Encode(data []int32, numPasses int, roishift int) ([]byte, er
 	passIdx := 0
 	passType := 2
 	prevTerminated := false
-	for t1.bitplane = maxBitplane; t1.bitplane >= 0 && passIdx < numPasses; {
+	for t1.bitplane = maxBitplane; t1.bitplane >= t1.nmseDecFracBits && passIdx < numPasses; {
 		startBitplane := passType == 0 || (passType == 2 && passIdx == 0)
 		if startBitplane {
 			// Clear VISIT flags at start of each bitplane.
