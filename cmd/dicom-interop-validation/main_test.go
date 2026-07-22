@@ -19,6 +19,35 @@ func TestParseOptionsRejectsInvalidParallelism(t *testing.T) {
 	}
 }
 
+func TestCLIConstantsRemainStable(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{name: "format option", got: optionFormat, want: "--format"},
+		{name: "stage option", got: optionStage, want: "--stage"},
+		{name: "input option", got: optionInput, want: "--input"},
+		{name: "output option", got: optionOutput, want: "--output"},
+		{name: "prepare stage", got: stagePrepare, want: "prepare"},
+		{name: "encode stage", got: stageEncode, want: "encode"},
+		{name: "decode stage", got: stageDecode, want: "decode"},
+		{name: "JPEG Process 1", got: formatJPEGProcess1, want: "jpeg-process-1"},
+		{name: "JPEG Process 2/4", got: formatJPEGProcess2_4, want: "jpeg-process-2-4"},
+		{name: "JPEG Lossless SV1", got: formatJPEGLosslessSV1, want: "jpeg-lossless-14-sv1"},
+		{name: "JPEG-LS lossless", got: formatJPEGLSLossless, want: "jpeg-ls-lossless"},
+		{name: "JPEG-LS near-lossless", got: formatJPEGLSNearLossless, want: "jpeg-ls-near-lossless"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.got != test.want {
+				t.Fatalf("constant = %q, want %q", test.got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseOptionsSelectsOneFormat(t *testing.T) {
 	got, err := parseOptions([]string{optionFormat, formatJPEGLosslessSV1})
 	if err != nil {
