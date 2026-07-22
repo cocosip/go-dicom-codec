@@ -313,7 +313,7 @@ func (d *Decoder) decodeScan(reader *standard.Reader) error {
 					return err
 				}
 
-				diff, err := huffDec.ReceiveExtend(int(ssss))
+				diff, err := huffDec.ReceiveLosslessDifference(int(ssss))
 				if err != nil {
 					return err
 				}

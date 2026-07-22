@@ -98,7 +98,7 @@ func (enc *Encoder) optimizeHuffmanTables(samples [][]int) {
 				} else if col > 0 {
 					predicted = samples[comp][row*enc.width+col-1]
 				}
-				diff := losslessDifference(sample, predicted)
+				diff := int(int16(losslessDifference(sample, predicted)))
 
 				frequencies[diffCategory(diff)]++
 			}
@@ -223,15 +223,15 @@ func (enc *Encoder) encodeScan(writer *standard.Writer, samples [][]int) error {
 					predicted = preds[comp]
 				}
 
-				diff := losslessDifference(sample, predicted)
+				diff := int(int16(losslessDifference(sample, predicted)))
 
 				// Encode difference
-				cat, bits := huffEnc.EncodeCategory(diff)
+				cat, bits := huffEnc.EncodeLosslessDifference(diff)
 				code := enc.dcCodes[0][cat]
 				if err := huffEnc.WriteBits(uint32(code.Code), code.Len); err != nil {
 					return err
 				}
-				if cat > 0 {
+				if cat > 0 && cat != 16 {
 					if err := huffEnc.WriteBits(bits, cat); err != nil {
 						return err
 					}

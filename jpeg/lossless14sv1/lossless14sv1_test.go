@@ -2,6 +2,7 @@ package lossless14sv1
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 )
 
@@ -405,6 +406,55 @@ func TestSigned16BitRoundTrip(t *testing.T) {
 			t.Fatalf("Pixel %d mismatch got=%d want=%d", i, decoded[i], pixelData[i])
 		}
 	}
+}
+
+func Test16BitSV1RoundTripAcrossJPEGDiffBoundary(t *testing.T) {
+	// The Process 14 SV1 entropy stream has the same signed 16-bit difference
+	// semantics as libjpeg's generic lossless path.
+	pixelData := []byte{
+		0x00, 0x00,
+		0xff, 0xff,
+		0x00, 0x00,
+		0xfe, 0xff,
+	}
+
+	jpegData, err := Encode(pixelData, 4, 1, 1, 16)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	if got, want := losslessDHTSymbols(jpegData), []byte{1, 2, 16}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DHT symbols = %v, want %v from libjpeg's signed 16-bit differences", got, want)
+	}
+
+	decoded, _, _, _, _, err := Decode(jpegData)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if !bytes.Equal(decoded, pixelData) {
+		t.Fatalf("Decode(Encode()) = %x, want %x", decoded, pixelData)
+	}
+}
+
+func losslessDHTSymbols(jpegData []byte) []byte {
+	for offset := 0; offset+4 <= len(jpegData); offset++ {
+		if jpegData[offset] != 0xff || jpegData[offset+1] != 0xc4 {
+			continue
+		}
+
+		length := int(jpegData[offset+2])<<8 | int(jpegData[offset+3])
+		payloadStart := offset + 4
+		payloadEnd := offset + 2 + length
+		if length < 19 || payloadEnd > len(jpegData) {
+			return nil
+		}
+
+		symbolCount := 0
+		for _, count := range jpegData[payloadStart+1 : payloadStart+17] {
+			symbolCount += int(count)
+		}
+		return append([]byte(nil), jpegData[payloadStart+17:payloadStart+17+symbolCount]...)
+	}
+	return nil
 }
 
 func BenchmarkEncode8bitGrayscale(b *testing.B) {

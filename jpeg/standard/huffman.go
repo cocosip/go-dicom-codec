@@ -204,3 +204,12 @@ func (d *HuffmanDecoder) ReceiveExtend(ssss int) (int, error) {
 
 	return val, nil
 }
+
+// ReceiveLosslessDifference decodes a JPEG process 14 signed 16-bit
+// difference. Category 16 represents -32768 without amplitude bits.
+func (d *HuffmanDecoder) ReceiveLosslessDifference(category int) (int, error) {
+	if category == 16 {
+		return -1 << 15, nil
+	}
+	return d.ReceiveExtend(category)
+}

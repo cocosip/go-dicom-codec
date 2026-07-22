@@ -269,9 +269,10 @@ func (d *Decoder) decodeScan(reader *standard.Reader) ([][]int, error) {
 				// Decode difference value
 				var diff int
 				if category > 0 {
-					// ReceiveExtend will call ReadBits internally
+					// JPEG lossless reserves category 16 for -32768 without
+					// reading amplitude bits.
 					var err error
-					diff, err = huffDec.ReceiveExtend(int(category))
+					diff, err = huffDec.ReceiveLosslessDifference(int(category))
 					if err != nil {
 						return nil, err
 					}

@@ -121,3 +121,13 @@ func (e *HuffmanEncoder) EncodeCategory(val int) (cat int, bits uint32) {
 
 	return cat, bits
 }
+
+// EncodeLosslessDifference encodes a signed 16-bit JPEG lossless difference.
+// JPEG process 14 reserves category 16 for -32768 and emits no amplitude bits
+// for that value, matching libjpeg's lossless Huffman encoder.
+func (e *HuffmanEncoder) EncodeLosslessDifference(diff int) (cat int, bits uint32) {
+	if diff == -1<<15 {
+		return 16, 0
+	}
+	return e.EncodeCategory(diff)
+}

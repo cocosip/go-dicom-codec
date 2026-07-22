@@ -152,65 +152,16 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 	if pe.htj2kMode {
 		return pe.encodeHTJ2KPacketHeader(precincts, layer)
 	}
-	cbIncls := make([]CodeBlockIncl, 0)
 	bitBuf := newBioWriter()
-
-	if len(precincts) == 0 {
-		bitBuf.writeBit(0)
-		return bitBuf.flush(), cbIncls, nil
-	}
-
-	hasBlocks := false
-
-	for _, precinct := range precincts {
-		if precinct != nil && len(precinct.CodeBlocks) > 0 {
-			hasBlocks = true
-			break
-		}
-	}
-
-	if !hasBlocks {
+	cbIncls := make([]CodeBlockIncl, 0)
+	if !hasCodeBlocks(precincts) {
 		bitBuf.writeBit(0)
 		return bitBuf.flush(), cbIncls, nil
 	}
 	bitBuf.writeBit(1)
 
 	for _, precinct := range precincts {
-		if precinct == nil || len(precinct.CodeBlocks) == 0 {
-			continue
-		}
-		sort.Slice(precinct.CodeBlocks, func(i, j int) bool {
-			ai := precinct.CodeBlocks[i]
-			aj := precinct.CodeBlocks[j]
-			if ai.CBY != aj.CBY {
-				return ai.CBY < aj.CBY
-			}
-			return ai.CBX < aj.CBX
-		})
-
-		if precinct.InclTree == nil || precinct.ZBPTree == nil ||
-			precinct.InclTree.Width() != precinct.NumCodeBlocksX ||
-			precinct.InclTree.Height() != precinct.NumCodeBlocksY {
-			precinct.InclTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
-			precinct.ZBPTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
-		}
-
-		if layer == 0 {
-			precinct.InclTree.ResetEncoding()
-			precinct.ZBPTree.ResetEncoding()
-		}
-
-		for _, cb := range precinct.CodeBlocks {
-			if !cb.Included {
-				included, _, _ := pe.layerContribution(cb, layer)
-				if included {
-					precinct.InclTree.SetValue(cb.CBX, cb.CBY, layer)
-				}
-			}
-			if layer == 0 {
-				precinct.ZBPTree.SetValue(cb.CBX, cb.CBY, cb.ZeroBitPlanes)
-			}
-		}
+		pe.preparePacketHeaderPrecinct(precinct, layer)
 	}
 
 	for _, precinct := range precincts {
@@ -219,51 +170,84 @@ func (pe *PacketEncoder) encodePacketHeaderWithTagTreeMulti(precincts []*Precinc
 		}
 
 		for _, cb := range precinct.CodeBlocks {
-			included, newPasses, layerData := pe.layerContribution(cb, layer)
-			firstIncl := !cb.Included && included
-
-			cbIncl := CodeBlockIncl{
-				Included:       included,
-				FirstInclusion: firstIncl,
-			}
-
-			proceed, err := pe.writeInclusionAndZBP(bitBuf, precinct, cb, layer, included)
+			cbIncl, err := pe.encodePacketHeaderCodeBlock(bitBuf, precinct, cb, layer)
 			if err != nil {
 				return nil, nil, err
 			}
-			if !proceed {
-				cbIncls = append(cbIncls, cbIncl)
-				continue
-			}
-
-			cbIncl.NumPasses = newPasses
-			if err := encodeNumPasses(bitBuf, newPasses); err != nil {
-				return nil, nil, fmt.Errorf("failed to encode number of passes: %w", err)
-			}
-
-			dataLen := len(layerData)
-			cbIncl.Data = layerData
-
-			cbIncl.PassLengths = pe.layerPassLengths(cb, layer)
-			cbIncl.UseTERMALL = cb.UseTERMALL
-
-			cbIncl.DataLength = dataLen
-
-			prevPasses, totalPasses := pe.computePrevAndTotalPasses(cb, layer, newPasses)
-
-			termAll := cb.UseTERMALL
-			passLens := buildPassLengths(cb.PassLengths, cb.Passes)
-			if termAll && (passLens == nil || totalPasses > len(passLens)) {
-				termAll = false
-			}
-
-			encodeCodeBlockLengths(bitBuf, cb, cbIncl.DataLength, prevPasses, newPasses, termAll, passLens)
-
 			cbIncls = append(cbIncls, cbIncl)
 		}
 	}
 
 	return bitBuf.flush(), cbIncls, nil
+}
+
+func hasCodeBlocks(precincts []*Precinct) bool {
+	for _, precinct := range precincts {
+		if precinct != nil && len(precinct.CodeBlocks) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (pe *PacketEncoder) preparePacketHeaderPrecinct(precinct *Precinct, layer int) {
+	if precinct == nil || len(precinct.CodeBlocks) == 0 {
+		return
+	}
+	sort.Slice(precinct.CodeBlocks, func(i, j int) bool {
+		ai := precinct.CodeBlocks[i]
+		aj := precinct.CodeBlocks[j]
+		if ai.CBY != aj.CBY {
+			return ai.CBY < aj.CBY
+		}
+		return ai.CBX < aj.CBX
+	})
+	if precinct.InclTree == nil || precinct.ZBPTree == nil ||
+		precinct.InclTree.Width() != precinct.NumCodeBlocksX ||
+		precinct.InclTree.Height() != precinct.NumCodeBlocksY {
+		precinct.InclTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
+		precinct.ZBPTree = NewTagTree(precinct.NumCodeBlocksX, precinct.NumCodeBlocksY)
+	}
+	if layer == 0 {
+		precinct.InclTree.ResetEncoding()
+		precinct.ZBPTree.ResetEncoding()
+	}
+	for _, cb := range precinct.CodeBlocks {
+		if !cb.Included {
+			included, _, _ := pe.layerContribution(cb, layer)
+			if included {
+				precinct.InclTree.SetValue(cb.CBX, cb.CBY, layer)
+			}
+		}
+		if layer == 0 {
+			precinct.ZBPTree.SetValue(cb.CBX, cb.CBY, cb.ZeroBitPlanes)
+		}
+	}
+}
+
+func (pe *PacketEncoder) encodePacketHeaderCodeBlock(bw *bioWriter, precinct *Precinct, cb *PrecinctCodeBlock, layer int) (CodeBlockIncl, error) {
+	included, newPasses, layerData := pe.layerContribution(cb, layer)
+	cbIncl := CodeBlockIncl{Included: included, FirstInclusion: !cb.Included && included}
+	proceed, err := pe.writeInclusionAndZBP(bw, precinct, cb, layer, included)
+	if err != nil || !proceed {
+		return cbIncl, err
+	}
+	cbIncl.NumPasses = newPasses
+	if err := encodeNumPasses(bw, newPasses); err != nil {
+		return CodeBlockIncl{}, fmt.Errorf("failed to encode number of passes: %w", err)
+	}
+	cbIncl.Data = layerData
+	cbIncl.DataLength = len(layerData)
+	cbIncl.PassLengths = pe.layerPassLengths(cb, layer)
+	cbIncl.UseTERMALL = cb.UseTERMALL
+	prevPasses, totalPasses := pe.computePrevAndTotalPasses(cb, layer, newPasses)
+	termAll := cb.UseTERMALL
+	passLens := buildPassLengths(cb.PassLengths, cb.Passes)
+	if termAll && (passLens == nil || totalPasses > len(passLens)) {
+		termAll = false
+	}
+	encodeCodeBlockLengths(bw, cb, cbIncl.DataLength, prevPasses, newPasses, termAll, passLens)
+	return cbIncl, nil
 }
 
 // encodeHTJ2KPacketHeader is a direct Go translation of OpenJPH's
