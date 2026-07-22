@@ -55,6 +55,80 @@ The library is organized into the following packages:
 
 ## Usage
 
+### Local Process-Isolated Validation
+
+`cmd/dicom-interop-validation` is a manually run diagnostic tool. It embeds
+five anonymized DICOM fixtures and validates Go encoders against fo-dicom
+Native Codecs. For every supported format, fo-dicom Native decodes the source
+fixture to uncompressed DICOM, Go encodes that image in a separate process,
+and fo-dicom Native decodes Go's output before the tool compares image metadata
+and samples. It is not part of the normal test suite or CI.
+
+Running it requires a .NET 10 SDK so that the bundled
+`cmd/fo-dicom-native-worker` project can restore and run fo-dicom Native
+Codecs. Use `--fo-native-project <path>` to select a different local Native
+worker project.
+
+#### Run locally
+
+From the repository root in PowerShell, first confirm that Go and a .NET 10
+SDK are available:
+
+```powershell
+go version
+dotnet --list-sdks
+```
+
+The first run restores the Worker NuGet packages automatically. To restore
+them explicitly before running the matrix:
+
+```powershell
+dotnet restore cmd\fo-dicom-native-worker\fo-dicom-native-worker.csproj
+```
+
+Run the full 12-format matrix and retain all produced DICOM files:
+
+```powershell
+go run ./cmd/dicom-interop-validation --parallel 4 --workdir artifacts\interop-validation
+```
+
+Run one format while investigating a failure:
+
+```powershell
+go run ./cmd/dicom-interop-validation --format jpeg-lossless-14-sv1 --parallel 1 --workdir artifacts\interop-jpeg-lossless-sv1
+```
+
+Use the bundled Native Worker by default, or provide a different local Worker
+project. List the supported arguments with `--help`:
+
+```powershell
+go run ./cmd/dicom-interop-validation --help
+go run ./cmd/dicom-interop-validation --fo-native-project D:\Code\fo-native-worker\fo-native-worker.csproj
+```
+
+Supported `--format` values are `rle`, `jpeg-process-1`,
+`jpeg-process-2-4`, `jpeg-lossless-14`, `jpeg-lossless-14-sv1`,
+`jpeg-ls-lossless`, `jpeg-ls-near-lossless`, `jpeg2000-lossless`,
+`jpeg2000-lossy`, `htj2k-lossless`, `htj2k-lossless-rpcl`, and `htj2k-lossy`.
+
+The output has these meanings:
+
+- `INTEROP|pass|format=...` means every executed fixture for that format was
+  accepted by fo-dicom Native and met the configured pixel tolerance.
+- `INTEROP|skip|...` means the fixture is intentionally outside the Native
+  decoder's known support, such as the JPEG-LS multi-frame Native baseline.
+- `INTEROP|fail|...` means fo-dicom Native decoded the Go output but detected
+  a metadata or sample mismatch. The command exits with code 1 and retains the
+  work directory for analysis; this is a codec interoperability result, not
+  necessarily a tool startup failure.
+
+Each retained fixture directory contains `prepared.dcm` (Native-decoded
+source), `encoded.dcm` (Go output), and `decoded.dcm` (Native-decoded Go
+output).
+
+The default run directory is removed after success and retained after failure.
+Use `--workdir` to retain compressed and decoded DICOM artifacts explicitly.
+
 ### Using the Codec Registry
 
 ```go
