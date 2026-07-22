@@ -79,9 +79,9 @@ func BenchmarkCodecEncode(b *testing.B) {
 		name  string
 		codec *Codec
 	}{
-		{name: "Lossless", codec: NewLosslessCodec()},
+		{name: losslessTestName, codec: NewLosslessCodec()},
 		{name: "LosslessRPCL", codec: NewLosslessRPCLCodec()},
-		{name: "Lossy", codec: NewCodec(80)},
+		{name: lossyTestName, codec: NewCodec(80)},
 	} {
 		b.Run(benchmark.name, func(b *testing.B) {
 			benchmarkCodecEncode(b, benchmark.codec)
@@ -94,9 +94,9 @@ func BenchmarkCodecDecode(b *testing.B) {
 		name  string
 		codec *Codec
 	}{
-		{name: "Lossless", codec: NewLosslessCodec()},
+		{name: losslessTestName, codec: NewLosslessCodec()},
 		{name: "LosslessRPCL", codec: NewLosslessRPCLCodec()},
-		{name: "Lossy", codec: NewCodec(80)},
+		{name: lossyTestName, codec: NewCodec(80)},
 	} {
 		b.Run(benchmark.name, func(b *testing.B) {
 			benchmarkCodecDecode(b, benchmark.codec)

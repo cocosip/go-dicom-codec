@@ -10,6 +10,11 @@ import (
 	codecHelpers "github.com/cocosip/go-dicom-codecs/codec"
 )
 
+const (
+	losslessTestName = "Lossless"
+	lossyTestName    = "Lossy"
+)
+
 func TestHTJ2KCodec_Name(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -17,7 +22,7 @@ func TestHTJ2KCodec_Name(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "Lossless",
+			name:  losslessTestName,
 			codec: NewLosslessCodec(),
 			want:  "HTJ2K Lossless",
 		},
@@ -55,7 +60,7 @@ func TestHTJ2KCodec_TransferSyntax(t *testing.T) {
 		want  *transfer.Syntax
 	}{
 		{
-			name:  "Lossless",
+			name:  losslessTestName,
 			codec: NewLosslessCodec(),
 			want:  transfer.HTJ2KLossless,
 		},
@@ -65,7 +70,7 @@ func TestHTJ2KCodec_TransferSyntax(t *testing.T) {
 			want:  transfer.HTJ2KLosslessRPCL,
 		},
 		{
-			name:  "Lossy",
+			name:  lossyTestName,
 			codec: NewCodec(80),
 			want:  transfer.HTJ2K,
 		},
@@ -110,7 +115,7 @@ func TestHTJ2KCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	}
 
 	// Test with lossless codec
-	t.Run("Lossless", func(t *testing.T) {
+	t.Run(losslessTestName, func(t *testing.T) {
 		htj2kCodec := NewLosslessCodec()
 
 		// Encode
@@ -149,7 +154,7 @@ func TestHTJ2KCodec_EncodeDecodeRoundTrip(t *testing.T) {
 	})
 
 	// Test with lossy codec
-	t.Run("Lossy", func(t *testing.T) {
+	t.Run(lossyTestName, func(t *testing.T) {
 		htj2kCodec := NewCodec(80)
 
 		// Encode
